@@ -1,0 +1,647 @@
+'use strict';
+// ------------------------------------------------------------ utilities
+const $ = (s, el = document) => el.querySelector(s);
+const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const S = { me: null, year: null, filter: 'all', weeks: [] };
+async function api(path, opts = {}) {
+  const r = await fetch('/api' + path, { method: opts.method || (opts.body ? 'POST' : 'GET'), headers: { 'Content-Type': 'application/json' }, body: opts.body ? JSON.stringify(opts.body) : undefined });
+  const data = await r.json().catch(() => ({}));
+  if (r.status === 401 && path !== '/login') { S.me = null; renderLogin(); throw new Error('Please log in'); }
+  if (!r.ok) throw new Error(data.error || 'Something went wrong');
+  return data;
+}
+function toast(msg, err) { const d = document.createElement('div'); d.textContent = msg; if (err) d.className = 'err'; $('#toast').append(d); setTimeout(() => d.remove(), err ? 6000 : 3500); }
+const guard = fn => async (...a) => { try { await fn(...a); } catch (e) { toast(e.message, true); } };
+const money = (n, dp) => S.me.settings.currency + Number(n || 0).toLocaleString('en-GB', { minimumFractionDigits: dp ?? (n % 1 ? 2 : 0), maximumFractionDigits: 2 });
+const dfmt = (d, o = { day: 'numeric', month: 'short' }) => new Date(d + 'T00:00:00Z').toLocaleDateString('en-GB', { ...o, timeZone: 'UTC' });
+const addDays = (d, n) => { const x = new Date(d + 'T00:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+const endOf = w => w.end_date || addDays(w.start_date, 7);
+const nights = w => Math.round((new Date(endOf(w)) - new Date(w.start_date)) / 864e5);
+const range = w => `${dfmt(w.start_date)} – ${dfmt(endOf(w))}`;
+const todayStr = () => new Date().toISOString().slice(0, 10);
+const roleName = r => ({ family_admin: 'Family admin', family_member: 'Family member', friend: 'Trusted friend' }[r] || r);
+const isFam = () => ['family_admin', 'family_member'].includes(S.me.user.role);
+const isFamAdmin = () => S.me.user.role === 'family_admin';
+const isSite = () => !!S.me.user.is_site_admin;
+const formData = f => Object.fromEntries([...new FormData(f).entries()]);
+const icon = {
+  bell: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>',
+  out: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>',
+  x: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>',
+  mark: '<svg width="18" height="18" viewBox="0 0 32 32"><path d="M5 24 L16 8 L27 24 Z" fill="#fff7ee"/><circle cx="23" cy="9" r="3" fill="#fff7ee"/></svg>',
+};
+
+// ------------------------------------------------------------ boot / routing
+async function boot() {
+  const hash = location.hash;
+  if (hash.startsWith('#/invite/')) return renderInvite(hash.split('/')[2]);
+  try { S.me = await api('/me'); } catch { return renderLogin(); }
+  if (!S.filterSet) { S.filter = S.me.user.role === 'friend' ? 'book' : 'all'; S.filterSet = true; }
+  if (!S.year) S.year = S.me.years.includes(new Date().getFullYear() + 1) && new Date().getMonth() >= 9 ? new Date().getFullYear() + 1 : (S.me.years.includes(new Date().getFullYear()) ? new Date().getFullYear() : S.me.years.at(-1));
+  route();
+}
+window.addEventListener('hashchange', () => { if (location.hash.startsWith('#/invite/')) return boot(); if (S.me) route(); });
+async function refreshMe() { S.me = await api('/me'); renderShell(currentTab()); }
+function currentTab() { return (location.hash.replace('#/', '').split('/')[0]) || 'calendar'; }
+async function route() {
+  closeOverlay(); const tab = currentTab(); renderShell(tab); const main = $('main');
+  const views = { calendar: viewCalendar, swaps: viewSwaps, bookings: viewBookings, account: viewAccount, people: viewPeople, admin: viewAdmin };
+  try { await (views[tab] || viewCalendar)(main); } catch (e) { main.innerHTML = `<div class="card empty">${esc(e.message)}</div>`; }
+}
+
+// ------------------------------------------------------------ login / invite
+function renderLogin(msg) {
+  $('#app').innerHTML = `<div class="login"><form class="card" id="lf">
+    <div class="row" style="margin-bottom:18px"><div class="brand-mark" style="width:40px;height:40px">${icon.mark}</div>
+    <div><h1 style="margin:0;font-size:24px">Nab Camas</h1><div class="muted small">Syndicate owners’ portal</div></div></div>
+    ${msg ? `<div class="notice" style="margin-bottom:14px">${esc(msg)}</div>` : ''}
+    <div class="field"><label>Email</label><input name="email" type="email" autocomplete="username" required autofocus></div>
+    <div class="field"><label>Password</label><input name="password" type="password" autocomplete="current-password" required></div>
+    <button class="btn primary block">Log in</button>
+    <p class="muted small" style="margin:16px 0 0">New here? Your family admin will send you an invitation link. Forgotten your password? Ask your family admin to resend your invitation.</p>
+  </form></div>`;
+  $('#lf').onsubmit = guard(async e => { e.preventDefault(); await api('/login', { body: formData(e.target) }); location.hash = '#/calendar'; boot(); });
+}
+async function renderInvite(tok) {
+  let inv; try { inv = await api('/invite/' + tok); } catch (e) { return renderLogin(e.message); }
+  $('#app').innerHTML = `<div class="login"><form class="card" id="inf">
+    <h1>Welcome, ${esc(inv.name.split(' ')[0])}</h1><p class="muted">Choose a password to finish setting up your login for <b>${esc(inv.email)}</b>.</p>
+    <div class="field"><label>New password (8+ characters)</label><input name="password" type="password" minlength="8" autocomplete="new-password" required></div>
+    <button class="btn primary block">Set password &amp; continue</button></form></div>`;
+  $('#inf').onsubmit = guard(async e => { e.preventDefault(); await api('/invite/' + tok, { body: formData(e.target) }); location.hash = '#/calendar'; boot(); });
+}
+
+// ------------------------------------------------------------ shell
+function renderShell(tab) {
+  const u = S.me.user; const fam = S.me.family;
+  const tabs = [['calendar', 'Calendar'], isFam() && ['swaps', `Swaps${S.me.pendingSwaps ? `<span class="dot-count">${S.me.pendingSwaps}</span>` : ''}`], ['bookings', 'Bookings'],
+    isFam() && ['account', 'Account'], ['people', u.role === 'friend' ? 'My details' : 'People'], isSite() && ['admin', 'Site admin']].filter(Boolean);
+  if (!$('main')) $('#app').innerHTML = '<header class="topbar"><div class="topbar-inner"></div></header><main></main>';
+  $('.topbar-inner').innerHTML = `
+    <a class="brand" href="#/calendar"><span class="brand-mark">${icon.mark}</span>${esc(S.me.settings.site_name)}</a>
+    <nav class="tabs">${tabs.map(([k, l]) => `<a href="#/${k}" class="${tab === k ? 'on' : ''}">${l}</a>`).join('')}</nav>
+    <button class="iconbtn" id="bell" title="Notifications">${icon.bell}${S.me.unread ? `<span class="dot-count">${S.me.unread}</span>` : ''}</button>
+    <div class="user-chip"><span class="avatar">${esc((u.name.match(/\b[A-Za-z]/g) || ['?']).join('').slice(0, 2).toUpperCase())}</span>
+      <span class="uname"><b style="color:var(--ink)">${esc(u.name)}</b><br>${roleName(u.role)}${fam ? ' · ' + esc(fam.name) : ''}${u.is_site_admin ? ' · Site admin' : ''}</span></div>
+    <button class="iconbtn" id="logout" title="Log out">${icon.out}</button>`;
+  $('#logout').onclick = guard(async () => { await api('/logout', { body: {} }); S.me = null; $('#app').innerHTML = ''; renderLogin(); });
+  $('#bell').onclick = guard(showNotifications);
+}
+async function showNotifications() {
+  if ($('.notif-pop')) return $('.notif-pop').remove();
+  const list = await api('/notifications');
+  const pop = document.createElement('div'); pop.className = 'notif-pop';
+  pop.innerHTML = list.length ? list.map(n => `<a href="${esc(n.link || '#/calendar')}" class="${n.read ? '' : 'unread'}">${esc(n.text)}<div class="tiny muted">${new Date(n.created_at + 'Z').toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}</div></a>`).join('') : '<div class="empty small">No notifications yet</div>';
+  $('.topbar').append(pop); pop.onclick = () => pop.remove();
+  if (S.me.unread) { await api('/notifications/read', { body: {} }); S.me.unread = 0; $('#bell .dot-count')?.remove(); }
+}
+
+// ------------------------------------------------------------ overlays
+function closeOverlay() { $('#drawer-root').innerHTML = ''; }
+function openDrawer(title, sub, bodyHtml) {
+  $('#drawer-root').innerHTML = `<div class="scrim"></div><aside class="drawer" role="dialog"><header><div class="grow">${title}${sub ? `<div class="muted small">${sub}</div>` : ''}</div><button class="iconbtn" data-close>${icon.x}</button></header><div class="body">${bodyHtml}</div></aside>`;
+  $('.scrim').onclick = closeOverlay; $('[data-close]').onclick = closeOverlay; return $('.drawer .body');
+}
+function openModal(html, wide) {
+  $('#drawer-root').innerHTML = `<div class="scrim"></div><div class="modal ${wide ? 'wide' : ''}" role="dialog">${html}</div>`;
+  $('.scrim').onclick = closeOverlay; $('#drawer-root').querySelectorAll('[data-close]').forEach(b => b.onclick = closeOverlay); return $('.modal');
+}
+
+// ------------------------------------------------------------ calendar
+function statusBadge(w) {
+  if (w.status === 'syndicate') return '<span class="badge">Syndicate</span>';
+  if (w.status === 'booked') return `<span class="badge blue">${w.booking?.mine ? 'Your booking' : 'Let'}</span>`;
+  if (w.status === 'pending') return `<span class="badge amber">${w.booking?.mine ? 'Awaiting your payment' : 'Reserved'}</span>`;
+  if (w.status === 'offered') {
+    const b = [];
+    if (w.offer_friends && (S.me.user.role !== 'friend' || w.can_book)) b.push(`<span class="badge green">${w.can_book || w.is_mine ? money(w.price) : 'For let'}</span>`);
+    if (w.offer_swap && S.me.user.role !== 'friend') b.push('<span class="badge accent">Swap</span>');
+    return b.join(' ');
+  }
+  return '';
+}
+function filterMatch(w) {
+  switch (S.filter) {
+    case 'book': return w.can_book;
+    case 'swap': return w.can_request_swap;
+    case 'mine': return w.is_mine || w.booking?.mine;
+    case 'offered': return w.status === 'offered';
+    default: return true;
+  }
+}
+async function viewCalendar(main) {
+  const years = S.me.years;
+  if (!years.length) { main.innerHTML = '<div class="card empty">No weeks have been set up yet. The site admin can create a year under Site admin → Weeks.</div>'; return; }
+  S.weeks = await api('/weeks?year=' + S.year);
+  const role = S.me.user.role;
+  const filters = [['all', 'All weeks'], ['book', role === 'friend' ? 'Available to book' : 'Available to buy'], isFam() && ['swap', 'Open to swap'], isFam() && ['mine', 'My family’s weeks'], role === 'friend' && ['mine', 'My bookings']].filter(Boolean);
+  const intro = role === 'friend' ? 'Weeks that syndicate families have made available to trusted friends are shown in green. Pick one to book.'
+    : role === 'family_member' ? 'See who has each week. Request a swap for weeks marked <b>Swap</b>, or buy weeks offered for letting.'
+      : 'Click any of your weeks to offer it to trusted friends or open it to swaps. Swap requests for your weeks appear under Swaps.';
+  const byMonth = {};
+  for (const w of S.weeks) (byMonth[w.start_date.slice(0, 7)] ||= []).push(w);
+  const fams = [...new Map(S.weeks.filter(w => w.family_id).map(w => [w.family_id, [w.family_name, w.family_color]])).values()].sort((a, b) => a[0].localeCompare(b[0]));
+  const visible = S.weeks.filter(filterMatch).length;
+  main.innerHTML = `
+    <div class="row between" style="margin-bottom:6px"><h1 style="margin:0">Availability ${S.year}</h1>
+      <div class="seg">${years.map(y => `<button data-year="${y}" class="${y === S.year ? 'on' : ''}">${y}</button>`).join('')}</div></div>
+    <p class="muted" style="margin-top:0">${intro}</p>
+    <div class="cal-toolbar"><div class="seg">${filters.map(([k, l]) => `<button data-filter="${k}" class="${S.filter === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+      <span class="muted small">${visible} week${visible === 1 ? '' : 's'}</span></div>
+    <div class="legend">${role === 'friend' ? '' : fams.map(([n, c]) => `<span><i class="swatch" style="background:${c}"></i>${esc(n)}</span>`).join('')}
+      <span><i class="season summer"></i>Summer ${money(S.me.settings.rate_summer)}</span><span><i class="season shoulder"></i>Shoulder ${money(S.me.settings.rate_shoulder)}</span><span><i class="season winter"></i>Winter ${money(S.me.settings.rate_winter)}</span></div>
+    <div class="months">${Object.entries(byMonth).map(([m, ws]) => `<section class="month"><h3>${dfmt(m + '-01', { month: 'long' })}<span class="tiny muted">${m.slice(0, 4) != S.year ? m.slice(0, 4) : ''}</span></h3>
+      ${ws.map(w => `<button class="week ${filterMatch(w) ? '' : 'dim'} ${w.is_mine ? 'mine' : ''} ${w.start_date < todayStr() ? 'past' : ''}" data-week="${w.id}">
+        <span class="bar" style="background:${role === 'friend' && !w.can_book && !w.booking?.mine ? 'var(--line)' : w.family_color}"></span>
+        <span class="no">Wk ${w.week_no}</span>
+        <span style="min-width:0"><div class="who">${role === 'friend' ? (w.can_book ? 'Available' : w.booking?.mine ? 'Your booking' : 'Not available') : esc(w.family_name)}</div><div class="when"><i class="season ${w.season}"></i> ${range(w)}${w.pending_swaps ? ' · ⇄ ' + w.pending_swaps : ''}</div>${w.comment ? `<div class="cmt">${esc(w.comment)}</div>` : ''}</span>
+        <span>${statusBadge(w)}</span></button>`).join('')}</section>`).join('')}</div>`;
+  main.querySelectorAll('[data-year]').forEach(b => b.onclick = () => { S.year = Number(b.dataset.year); viewCalendar(main); });
+  main.querySelectorAll('[data-filter]').forEach(b => b.onclick = () => { S.filter = b.dataset.filter; viewCalendar(main); });
+  main.querySelectorAll('[data-week]').forEach(b => b.onclick = () => openWeek(S.weeks.find(w => w.id == b.dataset.week)));
+}
+
+async function openWeek(w) {
+  const s = S.me.settings; const role = S.me.user.role;
+  const seasonName = { summer: 'Summer', shoulder: 'Shoulder', winter: 'Winter' }[w.season];
+  let html = `<dl class="kv"><dt>Dates</dt><dd>${dfmt(w.start_date, { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' })} → ${dfmt(endOf(w), { weekday: 'short', day: 'numeric', month: 'long' })}${nights(w) !== 7 ? `<div class="tiny muted">${nights(w)} nights (changeover day switches this week)</div>` : ''}</dd>
+    ${w.comment ? `<dt>Calendar note</dt><dd>${esc(w.comment)}</dd>` : ''}
+    <dt>Season</dt><dd><i class="season ${w.season}"></i> ${seasonName}</dd>
+    ${role !== 'friend' ? `<dt>Holder</dt><dd><i class="swatch" style="background:${w.family_color}"></i> ${esc(w.family_name)}${w.original_family_id && w.original_family_id !== w.family_id ? ' <span class="muted small">(swapped)</span>' : ''}</dd>` : ''}
+    ${w.status === 'offered' && (w.can_book || w.is_mine || (w.offer_friends && role !== 'friend')) && w.offer_friends ? `<dt>Price</dt><dd><b>${money(w.price)}</b>${w.price_override != null ? ' <span class="muted small">(set by family)</span>' : ` <span class="muted small">(${seasonName.toLowerCase()} rate)</span>`}</dd>` : ''}
+    ${w.note && role !== 'friend' ? `<dt>Note</dt><dd>${esc(w.note)}</dd>` : ''}
+    ${w.booking?.guest ? `<dt>Booking</dt><dd>${esc(w.booking.guest)} · <span class="badge ${w.booking.status === 'confirmed' ? 'blue' : 'amber'}">${w.booking.status === 'confirmed' ? 'Paid' : 'Awaiting payment'}</span><div class="tiny muted">Ref ${esc(w.booking.reference)}</div></dd>` : ''}</dl>`;
+  const past = w.start_date < todayStr();
+  if (w.status === 'syndicate') html += '<div class="section notice">This week is held by the syndicate (e.g. maintenance or the extra 53rd week) and isn’t allocated to a family.</div>';
+
+  if (w.can_manage && !['pending', 'booked'].includes(w.status) && !past) {
+    html += `<form class="section" id="offerForm"><h3>Offer this week</h3>
+      <p class="muted small" style="margin-top:0">Leave both unticked if your family is using the week.</p>
+      <label class="check"><input type="checkbox" name="offer_friends" ${w.offer_friends ? 'checked' : ''}><span><b>Offer for letting</b>Trusted friends (and other families) can book and pay the syndicate. The payment is credited to your account against next year’s service charge.</span></label>
+      <div id="letOpts" style="margin:10px 0 0 28px">
+        <div class="field"><label>Who can book?</label><select name="friend_scope"><option value="all" ${w.friend_scope === 'all' ? 'selected' : ''}>Any family’s trusted friends + other syndicate families</option><option value="own" ${w.friend_scope === 'own' ? 'selected' : ''}>Only my family’s trusted friends</option></select></div>
+        <div class="field"><label>Price for this week</label><input name="price_override" type="number" min="0" step="1" placeholder="Default ${money(s['rate_' + w.season])} (${seasonName.toLowerCase()} rate)" value="${w.price_override ?? ''}"><div class="tiny muted" style="margin-top:4px">Leave blank to use the site’s default ${seasonName.toLowerCase()} rate.</div></div>
+      </div>
+      <label class="check" style="margin-top:10px"><input type="checkbox" name="offer_swap" ${w.offer_swap ? 'checked' : ''}><span><b>Open to swap</b>Other families can propose one of their swappable weeks in exchange. You decide whether to accept.</span></label>
+      <div class="field" style="margin-top:12px"><label>Note for other families (optional)</label><input name="note" value="${esc(w.note || '')}" placeholder="e.g. Happy to swap for any October week"></div>
+      <button class="btn primary">Save</button></form>`;
+  } else if (w.can_manage && w.status === 'pending' && w.booking) {
+    html += `<div class="section notice warn">This week is reserved and the syndicate is waiting for payment. If the payment isn’t confirmed in ${s.hold_days} days the hold lapses automatically.</div>`;
+  }
+
+  if (w.can_book && !past) {
+    const allowAcct = isFam() && (isFamAdmin() || s.allow_member_account_charge);
+    html += `<form class="section" id="bookForm"><h3>Book this week · ${money(w.price)}</h3>
+      ${isFam() ? `<p class="muted small" style="margin-top:0">You’re buying this week from ${esc(w.family_name)}. ${w.offer_swap ? 'It’s also open to swaps, so check the swap option below first.' : ''}</p>` : ''}
+      <div class="grid-2" style="gap:12px"><div class="field"><label>Lead guest name</label><input name="guest_name" value="${esc(S.me.user.name)}" required></div>
+      <div class="field"><label>Number in party</label><input name="party_size" type="number" min="1" max="20" value="2"></div></div>
+      ${allowAcct ? `<div class="field"><label>How will you pay?</label>
+        <label class="check"><input type="radio" name="method" value="bank" checked><span><b>Bank transfer</b>Pay the syndicate account within ${s.hold_days} days.</span></label>
+        <label class="check" style="margin-top:8px"><input type="radio" name="method" value="account"><span><b>Charge to my family’s account</b>Added to ${esc(S.me.family.name)}’s balance and confirmed straight away.</span></label></div>` : `<input type="hidden" name="method" value="bank">
+        <p class="small muted">After you book, you’ll get the syndicate’s bank details and a payment reference. The week is held for you for <b>${s.hold_days} days</b> while the transfer arrives.</p>`}
+      <div class="field"><label>Anything the family should know? (optional)</label><textarea name="notes" rows="2"></textarea></div>
+      <button class="btn green">Reserve week</button></form>`;
+  }
+
+  if (w.can_request_swap && !past) {
+    const mine = (await Promise.all(S.me.years.filter(y => y >= S.year - 0 && y <= S.year + 1).map(y => y === S.year ? S.weeks : api('/weeks?year=' + y)))).flat()
+      .filter(x => x.is_mine && x.status === 'offered' && x.offer_swap && x.start_date >= todayStr());
+    html += `<form class="section" id="swapForm"><h3>Request a swap</h3>
+      ${mine.length ? `<p class="muted small" style="margin-top:0">Offer one of your family’s swappable weeks. ${esc(w.family_name)}’s admin will be notified and can accept or decline.</p>
+        <div class="field"><label>Your week to give in exchange</label><select name="offered_week_id">${mine.map(x => `<option value="${x.id}">Week ${x.week_no} ${x.year} · ${range(x)} · ${x.season}</option>`).join('')}</select></div>
+        <div class="field"><label>Message (optional)</label><textarea name="message" rows="2" placeholder="Hi — would you swap for our week?"></textarea></div>
+        <button class="btn primary">Send swap request</button>`
+        : `<div class="notice warn small">Your family doesn’t have any weeks marked “open to swap” yet. ${isFamAdmin() ? 'Open one of your weeks to swaps first (click it in the calendar).' : 'Ask your family admin to open one of your weeks to swaps.'}${w.can_book ? ' Alternatively you can buy this week above.' : ''}</div>`}</form>`;
+  }
+  if (w.booking?.mine && w.booking.status === 'pending') html += `<div class="section">${payBox(w.booking.reference, w.price)}</div>`;
+  if (role === 'friend' && !w.can_book && !w.booking?.mine) html += '<div class="section muted small">This week isn’t available to book.</div>';
+
+  const body = openDrawer(`<h2 style="margin:0">Week ${w.week_no}</h2>`, `${range(w)} ${w.year}`, html);
+  const of = $('#offerForm', body);
+  if (of) {
+    const sync = () => $('#letOpts', of).style.display = of.offer_friends.checked ? '' : 'none'; sync(); of.offer_friends.onchange = sync;
+    of.onsubmit = guard(async e => { e.preventDefault(); const d = formData(of); await api('/weeks/' + w.id, { method: 'PUT', body: { ...d, offer_friends: of.offer_friends.checked, offer_swap: of.offer_swap.checked } }); toast('Week updated'); closeOverlay(); viewCalendar($('main')); });
+  }
+  const bf = $('#bookForm', body);
+  if (bf) bf.onsubmit = guard(async e => { e.preventDefault(); const b = await api(`/weeks/${w.id}/book`, { body: formData(bf) });
+    if (b.status === 'confirmed') { toast('Booked and charged to your family account'); closeOverlay(); }
+    else openModal(`<h2>Week reserved</h2><p>Please pay within <b>${s.hold_days} days</b> to secure the week. You’ll be notified when the payment is confirmed.</p>${payBox(b.reference, b.amount)}<div class="row" style="margin-top:18px;justify-content:flex-end"><button class="btn primary" data-close>Done</button></div>`);
+    viewCalendar($('main')); await refreshMe(); });
+  const sf = $('#swapForm', body);
+  if (sf && sf.offered_week_id) sf.onsubmit = guard(async e => { e.preventDefault(); await api('/swaps', { body: { ...formData(sf), target_week_id: w.id } }); toast('Swap request sent'); closeOverlay(); viewCalendar($('main')); });
+}
+function payBox(ref, amount) {
+  const b = S.me.settings.bank;
+  return `<div class="pay-box"><div style="margin-bottom:8px;font-weight:600">Pay by bank transfer</div><dl class="kv">
+    <dt>Amount</dt><dd><code>${money(amount, 2)}</code></dd><dt>Reference</dt><dd><code>${esc(ref)}</code></dd>
+    <dt>Account name</dt><dd>${esc(b.account_name)}</dd><dt>Bank</dt><dd>${esc(b.name)}</dd>
+    ${b.sort_code ? `<dt>Sort code</dt><dd>${esc(b.sort_code)}</dd>` : ''}${b.account_no ? `<dt>Account no.</dt><dd>${esc(b.account_no)}</dd>` : ''}${b.iban ? `<dt>IBAN</dt><dd>${esc(b.iban)}</dd>` : ''}</dl>
+    <div class="tiny muted" style="margin-top:8px">Always use the reference so the treasurer can match your payment.</div></div>`;
+}
+
+// ------------------------------------------------------------ swaps
+async function viewSwaps(main) {
+  const list = await api('/swaps');
+  const wk = w => `<b>Week ${w.week_no}</b> ${w.year} <span class="muted">· ${range(w)}</span> <i class="season ${w.season}"></i>`;
+  const st = s => ({ pending: '<span class="badge amber">Waiting for reply</span>', accepted: '<span class="badge green">Accepted</span>', declined: '<span class="badge red">Declined</span>', cancelled: '<span class="badge">Withdrawn</span>', void: '<span class="badge">No longer possible</span>' }[s]);
+  const card = sw => `<div class="card flat" style="padding:16px"><div class="row between"><div>${sw.incoming ? `<b>${esc(sw.from_family)}</b> (${esc(sw.requester)}) would like your week` : `You asked <b>${esc(sw.to_family)}</b> for their week`}</div>${st(sw.status)}</div>
+    <div class="grid-2" style="margin-top:10px;gap:10px"><div><div class="tiny muted">${sw.incoming ? 'They want' : 'You want'}</div>${wk(sw.target)}</div><div><div class="tiny muted">${sw.incoming ? 'They offer' : 'You offer'}</div>${wk(sw.offered)}</div></div>
+    ${sw.message ? `<p class="small" style="margin:10px 0 0">“${esc(sw.message)}”</p>` : ''}
+    ${sw.can_respond || sw.can_cancel ? `<div class="row" style="margin-top:12px">${sw.can_respond ? `<button class="btn green sm" data-acc="${sw.id}">Accept swap</button><button class="btn sm" data-dec="${sw.id}">Decline</button>` : ''}${sw.can_cancel ? `<button class="btn sm danger" data-can="${sw.id}">Withdraw request</button>` : ''}</div>` : ''}
+    ${sw.incoming && sw.status === 'pending' && !sw.can_respond ? '<p class="tiny muted" style="margin:10px 0 0">Your family admin can accept or decline this.</p>' : ''}</div>`;
+  const inc = list.filter(s => s.incoming), out = list.filter(s => !s.incoming);
+  main.innerHTML = `<h1>Week swaps</h1><p class="muted">Swaps change which family holds each week for that year only. Next year’s allocation isn’t affected.</p>
+    <div class="grid-2"><section class="stack"><h2>Requests to you</h2>${inc.map(card).join('') || '<div class="card flat empty small">No requests yet</div>'}</section>
+    <section class="stack"><h2>Your requests</h2>${out.map(card).join('') || '<div class="card flat empty small">Find a week marked <b>Swap</b> on the calendar to make a request.</div>'}</section></div>`;
+  const act = (sel, fn) => main.querySelectorAll(sel).forEach(b => b.onclick = guard(async () => { await fn(b); viewSwaps(main); refreshMe(); }));
+  act('[data-acc]', b => confirm('Accept this swap? The two weeks will change hands immediately.') && api(`/swaps/${b.dataset.acc}/respond`, { body: { accept: true } }).then(() => toast('Swap agreed')));
+  act('[data-dec]', b => api(`/swaps/${b.dataset.dec}/respond`, { body: { accept: false } }));
+  act('[data-can]', b => api(`/swaps/${b.dataset.can}/cancel`, { body: {} }));
+}
+
+// ------------------------------------------------------------ bookings
+async function viewBookings(main) {
+  const list = await api('/bookings');
+  const st = b => ({ pending: '<span class="badge amber">Awaiting payment</span>', confirmed: '<span class="badge green">Confirmed</span>', cancelled: '<span class="badge">Cancelled</span>', expired: '<span class="badge red">Hold expired</span>' }[b.status]);
+  const mine = list.filter(b => b.mine), lets = list.filter(b => !b.mine);
+  const table = (rows, showBooker) => rows.length ? `<div class="table-wrap"><table><thead><tr><th>Week</th><th>Dates</th>${showBooker ? '<th>Booked by</th>' : '<th>From</th>'}<th>Guest</th><th class="r">Amount</th><th>Ref</th><th>Status</th><th></th></tr></thead><tbody>
+    ${rows.map(b => `<tr><td><b>${b.week.week_no}</b> <span class="muted">${b.week.year}</span></td><td>${range(b.week)}</td>
+      <td>${showBooker ? esc(b.booker) + (b.booker_contact ? `<div class="tiny muted">${esc(b.booker_contact.email || '')} ${esc(b.booker_contact.phone || '')}</div>` : '') : esc(b.seller)}</td>
+      <td>${esc(b.guest_name || '')}${b.party_size ? ` <span class="muted small">(${b.party_size})</span>` : ''}</td><td class="r num">${money(b.amount)}${b.method === 'account' ? '<div class="tiny muted">on account</div>' : ''}</td>
+      <td class="small"><code>${esc(b.reference)}</code></td><td>${st(b)}</td>
+      <td class="r">${b.status === 'pending' && b.mine ? `<button class="btn sm" data-pay="${b.id}">Pay</button> ` : ''}${b.status === 'pending' ? `<button class="btn sm danger" data-cancel="${b.id}">Cancel</button>` : ''}</td></tr>`).join('')}</tbody></table></div>` : '';
+  main.innerHTML = `<h1>Bookings</h1>
+    <section class="stack"><h2>Weeks you’ve booked</h2>${table(mine) || '<div class="card flat empty small">You haven’t booked any weeks. Look for green prices on the calendar.</div>'}</section>
+    ${isFam() ? `<section class="stack" style="margin-top:32px"><h2>Your family’s weeks let to others</h2>${table(lets, true) || '<div class="card flat empty small">None yet. Family admins can offer weeks for letting from the calendar.</div>'}</section>` : ''}`;
+  main.querySelectorAll('[data-pay]').forEach(b => b.onclick = () => { const x = list.find(r => r.id == b.dataset.pay); openModal(`<h2>Payment details</h2>${payBox(x.reference, x.amount)}<div class="row" style="margin-top:16px;justify-content:flex-end"><button class="btn" data-close>Close</button></div>`); });
+  main.querySelectorAll('[data-cancel]').forEach(b => b.onclick = guard(async () => { if (!confirm('Cancel this reservation? The week will become available again.')) return; await api(`/bookings/${b.dataset.cancel}/cancel`, { body: {} }); toast('Cancelled'); viewBookings(main); }));
+}
+
+// ------------------------------------------------------------ family account
+async function viewAccount(main, familyId) {
+  const a = await api('/account' + (familyId ? '?family_id=' + familyId : ''));
+  const typeName = { service_charge: 'Service charge', rental_credit: 'Letting income', purchase: 'Week purchase', payment: 'Payment', adjustment: 'Adjustment' };
+  const owes = a.balance > 0.005;
+  main.innerHTML = `<div class="row between"><h1>${esc(a.family.name)} account</h1>${familyId ? '<a class="btn sm" href="#/admin/overview">← Back to overview</a>' : ''}</div>
+    <div class="grid-3" style="margin-bottom:24px">
+      <div class="card"><div class="muted small">${owes ? 'Balance to pay' : 'In credit'}</div><div class="stat ${owes ? 'owes' : 'credit'} num">${money(Math.abs(a.balance), 2)}</div>
+        ${owes ? `<div class="small muted" style="margin-top:6px">Pay to ${esc(S.me.settings.bank.account_name)} using reference <b>${esc(a.family.name.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10))}-SC</b></div>` : ''}</div>
+      <div class="card"><div class="muted small">Ownership share</div><div class="stat num">${a.family.share_units} <span class="small muted" style="font-family:Inter">weeks</span></div>
+        <div class="small muted" style="margin-top:6px">${a.weeks.map(w => `${w.n} weeks held in ${w.year}`).join(' · ')}</div></div>
+      <div class="card"><div class="muted small">By year</div>${a.byYear.map(y => `<div class="row between small"><span>${y.year}</span><span class="num">${Math.abs(y.total) < 0.005 ? 'Settled' : y.total > 0 ? money(y.total, 2) + ' due' : money(-y.total, 2) + ' credit'}</span></div>`).join('') || '<div class="small muted">No entries yet</div>'}</div></div>
+    <p class="muted small">Letting income from weeks you offer is credited against the following year’s service charge. Charges are positive; credits and payments are negative.</p>
+    ${a.lines.length ? `<div class="table-wrap"><table><thead><tr><th>Date</th><th>Year</th><th>Type</th><th>Description</th><th class="r">Amount</th><th class="r">Balance</th></tr></thead><tbody>
+    ${a.lines.map(l => `<tr><td class="small">${new Date(l.created_at + 'Z').toLocaleDateString('en-GB')}</td><td>${l.year}</td><td><span class="badge ${l.amount < 0 ? 'green' : 'accent'}">${typeName[l.type]}</span></td><td>${esc(l.description)}</td>
+      <td class="r num">${l.amount < 0 ? '−' : ''}${money(Math.abs(l.amount), 2)}</td><td class="r num">${money(l.running, 2)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="card empty">No charges or credits yet.</div>'}`;
+}
+
+// ------------------------------------------------------------ people
+async function viewPeople(main) {
+  const u = S.me.user;
+  if (u.role === 'friend') { main.innerHTML = `<h1>My details</h1><div class="grid-2">${profileCard()}</div>`; bindProfile(main); return; }
+  const people = await api('/people');
+  const fam = people.filter(p => p.role !== 'friend' && p.active), friends = people.filter(p => p.role === 'friend' && p.active);
+  const canEdit = p => isFamAdmin() || p.id === u.id || (p.role === 'friend' && p.created_by === u.id);
+  const row = p => `<tr><td><b>${esc(p.name)}</b>${p.id === u.id ? ' <span class="badge">You</span>' : ''}${p.relationship ? `<div class="tiny muted">${esc(p.relationship)}</div>` : ''}</td>
+    <td class="small">${p.email ? `<a href="mailto:${esc(p.email)}">${esc(p.email)}</a>` : '<span class="muted">—</span>'}</td><td class="small">${p.phone ? `<a href="tel:${esc(p.phone)}">${esc(p.phone)}</a>` : '<span class="muted">—</span>'}</td>
+    <td>${p.role === 'friend' ? '' : `<span class="badge ${p.role === 'family_admin' ? 'accent' : ''}">${roleName(p.role)}</span>`} ${p.has_password ? '' : p.email ? '<span class="badge amber">Invited</span>' : '<span class="badge">No login</span>'}</td>
+    <td class="r">${canEdit(p) ? `<button class="btn sm" data-edit="${p.id}">Edit</button>` : ''}</td></tr>`;
+  const tbl = (rows, empty) => rows.length ? `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Access</th><th></th></tr></thead><tbody>${rows.map(row).join('')}</tbody></table></div>` : `<div class="card flat empty small">${empty}</div>`;
+  main.innerHTML = `<div class="row between"><h1 style="margin:0">${esc(S.me.family.name)}</h1><div class="row">${isFamAdmin() ? '<button class="btn" data-add="family_member">Add family member</button>' : ''}<button class="btn primary" data-add="friend">Add trusted friend</button></div></div>
+    <p class="muted">Everyone with an email address gets their own login. ${isFamAdmin() ? 'Family admins can offer weeks, accept swaps and manage people.' : 'Only your family admin can add family members or change access.'}</p>
+    <section class="stack"><h2>Family</h2>${tbl(fam, 'No family members yet')}</section>
+    <section class="stack" style="margin-top:28px"><h2>Trusted friends</h2><p class="muted small" style="margin:0">Trusted friends can log in, see weeks offered for letting and book them. They can’t see other families’ details or request swaps.</p>${tbl(friends, 'No trusted friends added yet')}</section>
+    <section style="margin-top:28px"><h2>My login</h2><div class="grid-2">${profileCard()}</div></section>`;
+  bindProfile(main);
+  main.querySelectorAll('[data-add]').forEach(b => b.onclick = () => personForm({ role: b.dataset.add }));
+  main.querySelectorAll('[data-edit]').forEach(b => b.onclick = () => personForm(people.find(p => p.id == b.dataset.edit)));
+}
+function personForm(p, opts = {}) {
+  const isNew = !p.id; const u = S.me.user; const manage = isFamAdmin() || isSite();
+  const m = openModal(`<form id="pf"><h2>${isNew ? (p.role === 'friend' ? 'Add trusted friend' : 'Add family member') : 'Edit ' + esc(p.name)}</h2>
+    <div class="grid-2" style="gap:12px"><div class="field"><label>Full name</label><input name="name" value="${esc(p.name || '')}" required></div>
+    <div class="field"><label>${p.role === 'friend' ? 'How do you know them?' : 'Relationship'}</label><input name="relationship" value="${esc(p.relationship || '')}" placeholder="${p.role === 'friend' ? 'e.g. Neighbour, work friend' : 'e.g. Daughter'}"></div>
+    <div class="field"><label>Email ${isNew ? '(needed for a login)' : ''}</label><input name="email" type="email" value="${esc(p.email || '')}"></div>
+    <div class="field"><label>Phone</label><input name="phone" type="tel" value="${esc(p.phone || '')}"></div></div>
+    ${manage && p.role !== 'friend' && p.id !== u.id ? `<div class="field"><label>Access level</label><select name="role"><option value="family_member" ${p.role === 'family_member' ? 'selected' : ''}>Family member — view, request swaps, buy weeks</option><option value="family_admin" ${p.role === 'family_admin' ? 'selected' : ''}>Family admin — also offers weeks, accepts swaps, manages people</option></select></div>` : `<input type="hidden" name="role" value="${p.role}">`}
+    ${opts.admin ? `<div class="grid-2" style="gap:12px"><div class="field"><label>Family</label><select name="family_id">${S.me.families.map(f => `<option value="${f.id}" ${f.id === p.family_id ? 'selected' : ''}>${esc(f.name)}</option>`).join('')}</select></div>
+      <div class="field"><label>&nbsp;</label><label class="check" style="padding:8px"><input type="checkbox" name="is_site_admin" ${p.is_site_admin ? 'checked' : ''}> Site admin</label></div></div>` : ''}
+    <div class="field"><label>Notes (only your family sees these)</label><textarea name="notes" rows="2">${esc(p.notes || '')}</textarea></div>
+    ${isNew ? '<p class="tiny muted">By adding someone you confirm they’re happy for their contact details to be held by the syndicate.</p>' : ''}
+    ${p.invite_link ? `<div class="notice small" style="margin-bottom:12px">Invitation link (not yet used):<br><input readonly value="${esc(p.invite_link)}" onclick="this.select()" style="margin-top:6px"></div>` : ''}
+    <div class="row between"><div class="row">${!isNew && p.id !== u.id ? '<button type="button" class="btn danger" id="rm">Remove</button>' : ''}${!isNew && manage && p.email && p.id !== u.id ? `<button type="button" class="btn" id="reinv">${p.has_password ? 'Reset password link' : 'New invite link'}</button>` : ''}</div>
+    <div class="row"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">${isNew ? 'Add' : 'Save'}</button></div></div></form>`);
+  const done = () => { closeOverlay(); route(); };
+  $('#pf', m).onsubmit = guard(async e => {
+    e.preventDefault(); const d = formData(e.target); if (opts.admin) d.is_site_admin = e.target.is_site_admin.checked;
+    if (isNew) { const r = await api('/people', { body: d }); if (r.invite_link) return showInvite(d.name, r.invite_link); toast('Added (no email, so no login)'); }
+    else { await api('/people/' + p.id, { method: 'PUT', body: d }); toast('Saved'); }
+    done();
+  });
+  $('#rm', m) && ($('#rm', m).onclick = guard(async () => { if (!confirm(`Remove ${p.name}? They will no longer be able to log in.`)) return; await api('/people/' + p.id, { method: 'DELETE' }); toast('Removed'); done(); }));
+  $('#reinv', m) && ($('#reinv', m).onclick = guard(async () => { const r = await api(`/people/${p.id}/reinvite`, { body: {} }); showInvite(p.name, r.invite_link); }));
+}
+function showInvite(name, link) {
+  openModal(`<h2>Invitation ready</h2><p>Send this link to <b>${esc(name)}</b> so they can choose a password. ${'Once email sending is configured it will be sent automatically.'}</p>
+    <input readonly value="${esc(link)}" id="invl"><div class="row" style="margin-top:16px;justify-content:flex-end"><button class="btn" id="cp">Copy link</button><button class="btn primary" data-close>Done</button></div>`);
+  $('#invl').select(); $('#cp').onclick = () => { navigator.clipboard?.writeText(link); toast('Copied'); };
+  $('#drawer-root [data-close]').onclick = () => { closeOverlay(); route(); };
+}
+function profileCard() {
+  const u = S.me.user;
+  return `<form class="card" id="prof"><h3>Contact details</h3><div class="field"><label>Name</label><input name="name" value="${esc(u.name)}"></div>
+    <div class="field"><label>Email (your login)</label><input name="email" type="email" value="${esc(u.email || '')}"></div><div class="field"><label>Phone</label><input name="phone" value="${esc(u.phone || '')}"></div><button class="btn primary">Save details</button></form>
+    <form class="card" id="pw"><h3>Change password</h3><div class="field"><label>Current password</label><input name="current_password" type="password" autocomplete="current-password" required></div>
+    <div class="field"><label>New password</label><input name="new_password" type="password" minlength="8" autocomplete="new-password" required></div><button class="btn">Update password</button></form>`;
+}
+function bindProfile(main) {
+  $('#prof', main).onsubmit = guard(async e => { e.preventDefault(); await api('/me', { method: 'PUT', body: formData(e.target) }); toast('Details saved'); refreshMe(); });
+  $('#pw', main).onsubmit = guard(async e => { e.preventDefault(); await api('/me', { method: 'PUT', body: formData(e.target) }); e.target.reset(); toast('Password changed'); });
+}
+
+// ------------------------------------------------------------ site admin
+async function viewAdmin(main) {
+  const sub = location.hash.split('/')[2] || 'overview';
+  const tabs = [['overview', 'Payments & balances'], ['budget', 'Budget & charges'], ['weeks', 'Weeks & allocation'], ['families', 'Families'], ['users', 'All users'], ['settings', 'Settings & rates'], ['audit', 'Activity log']];
+  main.innerHTML = `<h1>Site admin</h1><div class="subtabs">${tabs.map(([k, l]) => `<a href="#/admin/${k}" class="${k === sub ? 'on' : ''}">${l}</a>`).join('')}</div><div id="adm"></div>`;
+  const el = $('#adm', main);
+  if (sub.startsWith('account-')) return viewAccount(main, sub.split('-')[1]);
+  await ({ overview: admOverview, budget: admBudget, weeks: admWeeks, families: admFamilies, users: admUsers, settings: admSettings, audit: admAudit }[sub] || admOverview)(el);
+}
+async function admOverview(el) {
+  const o = await api('/admin/overview');
+  el.innerHTML = `<div class="grid-2" style="align-items:start">
+    <section class="stack"><h2>Payments to confirm</h2><p class="muted small" style="margin:0">Check the syndicate bank statement for each reference, then confirm. Confirming credits the family that offered the week.</p>
+    ${o.pending.length ? `<div class="table-wrap"><table><thead><tr><th>Ref</th><th>Week</th><th>From</th><th class="r">Amount</th><th></th></tr></thead><tbody>${o.pending.map(b => `<tr><td class="small"><code>${esc(b.reference)}</code><div class="tiny muted">expires ${new Date(b.expires_at + 'Z').toLocaleDateString('en-GB')}</div></td><td>${b.week.week_no} / ${b.week.year}<div class="tiny muted">${esc(b.seller)}</div></td><td>${esc(b.booker)}</td><td class="r num">${money(b.amount, 2)}</td>
+      <td class="r"><button class="btn sm green" data-conf="${b.id}">Paid</button> <button class="btn sm danger" data-rej="${b.id}">Cancel</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="card flat empty small">Nothing waiting</div>'}</section>
+    <section class="stack"><h2>Family balances</h2><div class="table-wrap"><table><thead><tr><th>Family</th><th class="r">Balance</th><th></th></tr></thead><tbody>
+      ${o.balances.map(b => `<tr><td><i class="swatch" style="background:${b.color}"></i> <a href="#/admin/account-${b.id}">${esc(b.name)}</a></td><td class="r num ${b.balance > 0 ? '' : 'muted'}">${b.balance > 0 ? money(b.balance, 2) + ' owed' : b.balance < 0 ? money(-b.balance, 2) + ' credit' : 'Settled'}</td><td class="r"><button class="btn sm" data-pay="${b.id}">Record payment</button></td></tr>`).join('')}</tbody>
+      <tfoot><tr><td>Total outstanding</td><td class="r num">${money(o.balances.reduce((a, b) => a + Math.max(0, b.balance), 0), 2)}</td><td></td></tr></tfoot></table></div></section></div>`;
+  el.querySelectorAll('[data-conf]').forEach(b => b.onclick = guard(async () => { await api(`/admin/bookings/${b.dataset.conf}/confirm`, { body: {} }); toast('Payment confirmed'); admOverview(el); }));
+  el.querySelectorAll('[data-rej]').forEach(b => b.onclick = guard(async () => { if (!confirm('Cancel this reservation and release the week?')) return; await api(`/bookings/${b.dataset.rej}/cancel`, { body: {} }); admOverview(el); }));
+  el.querySelectorAll('[data-pay]').forEach(b => b.onclick = () => {
+    const f = o.balances.find(x => x.id == b.dataset.pay);
+    const m = openModal(`<form id="lp"><h2>${esc(f.name)}: record entry</h2><div class="grid-2" style="gap:12px">
+      <div class="field"><label>Type</label><select name="type"><option value="payment">Payment received</option><option value="adjustment">Adjustment (+ charge / − credit)</option></select></div>
+      <div class="field"><label>Year</label><input name="year" type="number" value="${new Date().getFullYear()}"></div></div>
+      <div class="field"><label>Amount</label><input name="amount" type="number" step="0.01" value="${f.balance > 0 ? f.balance : ''}" required></div>
+      <div class="field"><label>Description</label><input name="description" placeholder="e.g. Bank transfer 14 Mar"></div>
+      <div class="row" style="justify-content:flex-end"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Save</button></div></form>`);
+    $('#lp', m).onsubmit = guard(async e => { e.preventDefault(); await api('/admin/ledger', { body: { ...formData(e.target), family_id: f.id } }); closeOverlay(); toast('Recorded'); admOverview(el); });
+  });
+}
+async function admBudget(el, year) {
+  year = year || S.budgetYear || Math.max(...S.me.years.filter(y => y <= new Date().getFullYear()), new Date().getFullYear() - 1); S.budgetYear = year;
+  const b = await api('/admin/budget?year=' + year);
+  const years = [...new Set([...b.years, year, year + 1])].sort();
+  const cats = [...new Set(b.items.map(i => i.category).filter(Boolean))];
+  const cur = S.me.settings.currency;
+  el.innerHTML = `<div class="row between" style="margin-bottom:14px"><div class="seg">${years.map(y => `<button data-y="${y}" class="${y === year ? 'on' : ''}">${y}</button>`).join('')}</div>
+    <div class="row"><button class="btn" id="imp">Import from spreadsheet</button><button class="btn" id="copy">Copy from ${year - 1}…</button></div></div>
+    <div class="row" style="margin-bottom:14px"><div class="field" style="margin:0;min-width:260px"><label>Budget period for ${year}</label><input id="blabel" value="${esc(b.label)}" placeholder="e.g. July ${year - 1} – June ${year}"></div></div>
+    <div class="grid-2" style="grid-template-columns: minmax(0,3fr) minmax(300px,2fr); align-items:start">
+    <section class="stack"><div class="table-wrap"><table style="table-layout:fixed;min-width:620px"><colgroup><col style="width:34%"><col style="width:112px"><col style="width:112px"><col><col style="width:44px"></colgroup><thead><tr><th>Item</th><th class="r">Estimate (${cur})</th><th>Type</th><th>Commentary</th><th></th></tr></thead><tbody>
+      ${b.items.map(i => `<tr data-id="${i.id}"><td><input name="description" value="${esc(i.description)}"></td><td class="r"><input name="amount" type="number" step="0.01" value="${i.amount}" style="text-align:right"></td><td><input name="category" value="${esc(i.category || '')}" list="cats"></td><td><input name="notes" value="${esc(i.notes || '')}"></td><td><button class="iconbtn" data-del="${i.id}" title="Remove">${icon.x}</button></td></tr>`).join('')}
+      <tr id="newrow"><td><input name="description" placeholder="New item…"></td><td class="r"><input name="amount" type="number" step="0.01" placeholder="0" style="text-align:right"></td><td><input name="category" placeholder="Type" list="cats"></td><td><input name="notes" placeholder="Commentary"></td><td><button class="btn sm primary" id="addi">Add</button></td></tr>
+      </tbody><tfoot><tr><td>Estimated funding need</td><td class="r num">${money(b.total, 2)}</td><td colspan="3"></td></tr></tfoot></table></div>
+      <datalist id="cats">${['Regular', 'Postpone', 'Provision', 'One-off', ...cats].filter((v, i, a) => a.indexOf(v) === i).map(c => `<option value="${esc(c)}">`).join('')}</datalist><p class="tiny muted">Changes save when you leave a field.</p></section>
+    <section class="stack"><div class="card"><h3>Service charges ${esc(b.label || year)}</h3>
+      <dl class="kv" style="grid-template-columns:1fr auto"><dt>Funding need</dt><dd class="num r">${money(b.total, 2)}</dd><dt>÷ ${b.units} weeks</dt><dd class="num">${money(b.rate_calc, 2)} / week</dd></dl>
+      <div class="field" style="margin-top:12px"><label>Service charge per week</label><div class="row" style="flex-wrap:nowrap"><input id="rate" type="number" step="0.01" min="0" value="${b.rate_per_week ?? ''}" placeholder="${b.rate_calc}">
+        <button class="btn sm" data-round="5">Round to ${cur}5</button><button class="btn sm" data-round="10">${cur}10</button></div>
+        <div class="tiny muted" style="margin-top:4px">Leave blank to charge exactly ${money(b.rate_calc, 2)}.</div></div>
+      <table><tbody>${b.split.map(s => `<tr><td><i class="swatch" style="background:${s.color}"></i> ${esc(s.name)}<div class="tiny muted">${s.share_units} weeks × ${money(b.rate, 2)}</div></td><td class="r num">${money(s.charge, 2)}${s.charged != null && Math.abs(s.charged - s.charge) > 0.01 ? `<div class="tiny" style="color:var(--amber)">issued ${money(s.charged, 2)}</div>` : ''}</td></tr>`).join('')}</tbody>
+        <tfoot><tr><td>Total raised</td><td class="r num">${money(b.raised, 2)}</td></tr></tfoot></table>
+      ${Math.abs(b.difference) > 0.01 ? `<p class="small" style="margin:10px 0 0;color:${b.difference < 0 ? 'var(--amber)' : 'var(--green)'}">${b.difference < 0 ? 'Shortfall' : 'Surplus'} against budget: <b>${money(Math.abs(b.difference), 2)}</b></p>` : ''}
+      <button class="btn primary block" id="gen" style="margin-top:14px" ${b.total ? '' : 'disabled'}>${b.generated ? 'Re-issue' : 'Issue'} ${year} service charges</button>
+      <p class="tiny muted" style="margin-bottom:0">${b.generated ? 'Charges for this year have been issued. Re-issuing replaces them with the figures above. Payments, credits and letting income are untouched.' : 'This adds each family’s charge to their account and notifies their admins.'}</p></div></section></div>`;
+  const reload = () => admBudget(el, year);
+  el.querySelectorAll('[data-y]').forEach(x => x.onclick = () => admBudget(el, Number(x.dataset.y)));
+  el.querySelectorAll('tr[data-id] input').forEach(inp => inp.onchange = guard(async () => { await api('/admin/budget/' + inp.closest('tr').dataset.id, { method: 'PUT', body: { [inp.name]: inp.value } }); reload(); }));
+  el.querySelectorAll('[data-del]').forEach(x => x.onclick = guard(async () => { await api('/admin/budget/' + x.dataset.del, { method: 'DELETE' }); reload(); }));
+  $('#addi', el).onclick = guard(async () => { const r = $('#newrow', el); const d = Object.fromEntries([...r.querySelectorAll('input')].map(i => [i.name, i.value])); await api('/admin/budget', { body: { ...d, year } }); reload(); });
+  const saveYear = guard(async body => { await api('/admin/budget-year/' + year, { method: 'PUT', body }); reload(); });
+  $('#blabel', el).onchange = e => saveYear({ label: e.target.value });
+  $('#rate', el).onchange = e => saveYear({ rate_per_week: e.target.value });
+  el.querySelectorAll('[data-round]').forEach(x => x.onclick = () => { const n = +x.dataset.round; saveYear({ rate_per_week: Math.round(b.rate_calc / n) * n }); });
+  $('#gen', el).onclick = guard(async () => { if (!confirm(`${b.generated ? 'Re-issue' : 'Issue'} ${year} service charges at ${money(b.rate, 2)} per week (total ${money(b.raised, 2)})?`)) return; await api('/admin/budget/generate', { body: { year } }); toast('Service charges issued'); reload(); });
+  $('#copy', el).onclick = () => { const m = openModal(`<form id="cf"><h2>Start ${year} from ${year - 1}</h2><div class="field"><label>Inflation uplift %</label><input name="uplift_pct" type="number" step="0.1" value="3"></div><div class="row" style="justify-content:flex-end"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Copy</button></div></form>`);
+    $('#cf', m).onsubmit = guard(async e => { e.preventDefault(); await api('/admin/budget/copy', { body: { from: year - 1, to: year, ...formData(e.target) } }); closeOverlay(); reload(); }); };
+  $('#imp', el).onclick = () => importDialog('budget', year, reload);
+}
+async function admWeeks(el, year) {
+  year = year || S.year; const weeks = await api('/weeks?year=' + year); const fams = (await api('/admin/families')).filter(f => f.active);
+  const years = [...new Set([...S.me.years, year])].sort();
+  const counts = {}; weeks.forEach(w => counts[w.original_family_id] = (counts[w.original_family_id] || 0) + 1);
+  el.innerHTML = `<div class="row between" style="margin-bottom:14px"><div class="seg">${years.map(y => `<button data-y="${y}" class="${y === year ? 'on' : ''}">${y}</button>`).join('')}<button data-new>+ Year</button></div>
+    <div class="row"><button class="btn" id="imp">Import allocation</button><button class="btn" id="rot">Roll forward from ${year - 1}…</button></div></div>
+    ${weeks.length ? `<div class="legend">${fams.map(f => `<span><i class="swatch" style="background:${f.color}"></i>${esc(f.name)}: ${counts[f.id] || 0} weeks</span>`).join('')}<span>Syndicate: ${counts[null] || counts['null'] || 0}</span></div>
+    <div class="table-wrap"><table><thead><tr><th>Week</th><th>Starts</th><th>Nights</th><th>Season</th><th>Allocated to</th><th>Currently held by</th><th>Status</th></tr></thead><tbody>
+    ${weeks.map(w => `<tr data-id="${w.id}"><td><b>${w.week_no}</b></td><td><input type="date" name="start_date" value="${w.start_date}" style="max-width:150px"><div class="tiny muted">${dfmt(w.start_date, { weekday: 'long' })}</div></td><td class="num ${nights(w) !== 7 ? '' : 'muted'}">${nights(w)}</td>
+      <td><select name="season" style="max-width:120px">${['summer', 'shoulder', 'winter'].map(s => `<option ${s === w.season ? 'selected' : ''}>${s}</option>`).join('')}</select></td>
+      <td><select name="family_id" style="max-width:180px" ${['pending', 'booked'].includes(w.status) ? 'disabled' : ''}><option value="">Syndicate (unallocated)</option>${fams.map(f => `<option value="${f.id}" ${f.id === w.original_family_id ? 'selected' : ''}>${esc(f.name)}</option>`).join('')}</select></td>
+      <td>${w.family_id !== w.original_family_id ? `<i class="swatch" style="background:${w.family_color}"></i> ${esc(w.family_name)} <span class="badge">swapped</span>` : '<span class="muted small">same</span>'}</td><td>${statusBadge(w) || '<span class="muted small">Own use</span>'}<input name="comment" value="${esc(w.comment || '')}" placeholder="Calendar note" style="margin-top:4px;font-size:12px"></td></tr>`).join('')}</tbody></table></div>
+    <p class="tiny muted">Changing “Allocated to” resets that week’s holder. Weeks with a booking can’t be reallocated. Changing a start date also moves the end of the week before.</p>` : '<div class="card empty">No weeks for this year yet.</div>'}`;
+  el.querySelectorAll('[data-y]').forEach(x => x.onclick = () => admWeeks(el, Number(x.dataset.y)));
+  $('[data-new]', el).onclick = guard(async () => { const y = Number(prompt('Create weeks for which year?', Math.max(...years) + 1)); if (!y) return; const r = await api('/admin/years', { body: { year: y } }); toast(`Created ${r.weeks} weeks for ${y}`); await refreshMe(); admWeeks(el, y); });
+  el.querySelectorAll('tr[data-id] select, tr[data-id] input').forEach(s => s.onchange = guard(async () => { await api('/admin/weeks/' + s.closest('tr').dataset.id, { method: 'PUT', body: { [s.name]: s.value } }); toast('Saved'); admWeeks(el, year); }));
+  $('#imp', el).onclick = () => importDialog('allocation', year, async () => { await refreshMe(); admWeeks(el, year); }, weeks);
+  $('#rot', el).onclick = () => { const m = openModal(`<form id="rf"><h2>Roll allocation forward</h2><p class="muted small">Copies ${year - 1}’s allocation into ${year}, optionally shifting every family along by a number of weeks so peak weeks rotate fairly. Bookings in ${year} are kept.</p>
+      <div class="field"><label>Shift by (weeks)</label><input name="shift" type="number" value="0"></div><div class="row" style="justify-content:flex-end"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Apply</button></div></form>`);
+    $('#rf', m).onsubmit = guard(async e => { e.preventDefault(); await api('/admin/allocation/rotate', { body: { from: year - 1, to: year, ...formData(e.target) } }); closeOverlay(); await refreshMe(); admWeeks(el, year); }); };
+}
+
+async function admFamilies(el) {
+  const fams = await api('/admin/families'); const ys = S.me.years;
+  el.innerHTML = `<div class="row between" style="margin-bottom:14px"><p class="muted small" style="margin:0;max-width:640px">Each family’s ownership share is its number of weeks. The service charge is charged per week, so a family with 12 weeks pays 12 × the weekly charge.</p>
+    <div class="row"><button class="btn" id="sfw">Set shares from ${S.year} allocation</button><button class="btn primary" id="addf">Add family</button></div></div>
+    <div class="table-wrap"><table><thead><tr><th>Colour</th><th>Family</th><th>Shares (weeks)</th>${ys.map(y => `<th class="r">Weeks ${y}</th>`).join('')}<th>Family admins</th><th>Active</th></tr></thead><tbody>
+    ${fams.map(f => `<tr data-id="${f.id}"><td><input type="color" name="color" value="${f.color}" style="width:44px;padding:2px;height:32px"></td><td><input name="name" value="${esc(f.name)}"></td><td><input name="share_units" type="number" step="0.01" value="${f.share_units}" style="max-width:90px"></td>
+      ${ys.map(y => `<td class="r num">${f.weeks[y] || 0}</td>`).join('')}<td class="small">${f.admins.map(esc).join(', ') || '<span class="badge amber">None</span>'}</td><td><input type="checkbox" name="active" ${f.active ? 'checked' : ''}></td></tr>`).join('')}</tbody></table></div>
+    <p class="tiny muted">To add a family admin, go to All users and add a person with the Family admin role.</p>`;
+  el.querySelectorAll('tr[data-id] input').forEach(i => i.onchange = guard(async () => { await api('/admin/families/' + i.closest('tr').dataset.id, { method: 'PUT', body: { [i.name]: i.type === 'checkbox' ? i.checked : i.value } }); toast('Saved'); await refreshMe(); }));
+  $('#sfw', el).onclick = guard(async () => { await api('/admin/families/shares-from-weeks', { body: { year: S.year } }); toast('Share units updated'); admFamilies(el); });
+  $('#addf', el).onclick = guard(async () => { const n = prompt('Family name'); if (!n) return; await api('/admin/families', { body: { name: n, share_units: 1, color: '#' + Math.floor(Math.random() * 0xaaaaaa + 0x222222).toString(16) } }); await refreshMe(); admFamilies(el); });
+}
+async function admUsers(el) {
+  const people = await api('/people?all=1');
+  el.innerHTML = `<div class="row between" style="margin-bottom:14px"><span class="muted small">${people.filter(p => p.active).length} active logins</span><button class="btn primary" id="addu">Add person</button></div>
+    <div class="table-wrap"><table><thead><tr><th>Name</th><th>Family</th><th>Role</th><th>Email</th><th>Phone</th><th></th></tr></thead><tbody>
+    ${people.filter(p => p.active).map(p => `<tr><td><b>${esc(p.name)}</b> ${p.is_site_admin ? '<span class="badge accent">Site admin</span>' : ''}</td><td>${esc(p.family_name)}</td><td>${roleName(p.role)} ${p.has_password ? '' : '<span class="badge amber">Invited</span>'}</td><td class="small">${esc(p.email || '')}</td><td class="small">${esc(p.phone || '')}</td><td class="r"><button class="btn sm" data-e="${p.id}">Edit</button></td></tr>`).join('')}</tbody></table></div>`;
+  el.querySelectorAll('[data-e]').forEach(b => b.onclick = () => personForm(people.find(p => p.id == b.dataset.e), { admin: true }));
+  $('#addu', el).onclick = () => {
+    const m = openModal(`<form id="nu"><h2>Add person</h2><div class="grid-2" style="gap:12px"><div class="field"><label>Name</label><input name="name" required></div><div class="field"><label>Email</label><input name="email" type="email"></div>
+      <div class="field"><label>Phone</label><input name="phone"></div><div class="field"><label>Family</label><select name="family_id">${S.me.families.map(f => `<option value="${f.id}">${esc(f.name)}</option>`).join('')}</select></div></div>
+      <div class="field"><label>Role</label><select name="role"><option value="family_admin">Family admin</option><option value="family_member">Family member</option><option value="friend">Trusted friend</option></select></div>
+      <div class="row" style="justify-content:flex-end"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Add</button></div></form>`);
+    $('#nu', m).onsubmit = guard(async e => { e.preventDefault(); const d = formData(e.target); const r = await api('/people', { body: d }); if (r.invite_link) showInvite(d.name, r.invite_link); else { closeOverlay(); admUsers(el); } });
+  };
+}
+async function admSettings(el) {
+  const s = await api('/admin/settings');
+  const daySel = (k, l) => `<div class="field"><label>${l}</label><select name="${k}">${['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((d, i) => `<option value="${i}" ${String(i) === s[k] ? 'selected' : ''}>${d}</option>`).join('')}</select></div>`;
+  const f = (k, l, type = 'text', extra = '') => `<div class="field"><label>${l}</label><input name="${k}" type="${type}" value="${esc(s[k])}" ${extra}></div>`;
+  el.innerHTML = `<form id="sf" class="grid-2" style="align-items:start">
+    <div class="card"><h3>Default letting rates (per week)</h3><p class="small muted" style="margin-top:0">Used for any offered week unless the family admin sets a price for that week.</p>
+      <div class="grid-3" style="gap:12px">${f('rate_summer', '<i class="season summer"></i> Summer', 'number', 'min=0')}${f('rate_shoulder', '<i class="season shoulder"></i> Shoulder', 'number', 'min=0')}${f('rate_winter', '<i class="season winter"></i> Winter', 'number', 'min=0')}</div>
+      <h3 style="margin-top:8px">Seasons</h3><p class="small muted" style="margin-top:0">Months (1–12) used when new years are created. You can override individual weeks under Weeks.</p>
+      <div class="grid-2" style="gap:12px">${f('summer_months', 'Summer months')}${f('shoulder_months', 'Shoulder months')}</div>
+      <h3 style="margin-top:8px">Booking rules</h3><div class="grid-2" style="gap:12px">${f('hold_days', 'Days to pay before a hold lapses', 'number', 'min=1')}${f('commission_pct', 'Syndicate commission on lets (%)', 'number', 'min=0 max=100 step=0.5')}</div>
+      <label class="check"><input type="checkbox" name="allow_member_account_charge" ${s.allow_member_account_charge === '1' ? 'checked' : ''}><span><b>Family members can charge weeks to their family account</b>If off, only family admins can; members pay by bank transfer.</span></label></div>
+    <div class="card"><h3>Syndicate bank account</h3><p class="small muted" style="margin-top:0">Shown to people when they book a week.</p>
+      ${f('bank_account_name', 'Account name')}${f('bank_name', 'Bank')}<div class="grid-2" style="gap:12px">${f('bank_sort_code', 'Sort code')}${f('bank_account_no', 'Account number')}</div>${f('bank_iban', 'IBAN (optional)')}
+      <h3 style="margin-top:8px">General</h3><div class="grid-2" style="gap:12px">${f('site_name', 'Site name')}${f('currency', 'Currency symbol')}</div>
+      <h3 style="margin-top:8px">Changeover days</h3><p class="small muted" style="margin-top:0">Used when a new year’s weeks are created. Week 1 starts on the first winter changeover day on or after 26 December, so some years have 53 weeks.</p>
+      <div class="grid-2" style="gap:12px">${daySel('winter_changeover_day', 'Winter changeover')}${daySel('summer_changeover_day', 'Summer changeover')}
+      ${f('summer_changeover_from', 'Summer changeover from week', 'number', 'min=1 max=53')}${f('summer_changeover_to', '…to week (inclusive)', 'number', 'min=1 max=53')}</div></div>
+    <div><button class="btn primary">Save settings</button></div></form>`;
+  $('#sf', el).onsubmit = guard(async e => { e.preventDefault(); const d = formData(e.target); d.allow_member_account_charge = e.target.allow_member_account_charge.checked ? '1' : '0'; await api('/admin/settings', { method: 'PUT', body: d }); toast('Settings saved'); refreshMe(); });
+}
+async function admAudit(el) {
+  const rows = await api('/admin/audit');
+  el.innerHTML = `<div class="table-wrap"><table><thead><tr><th>When</th><th>Who</th><th>Action</th><th>Detail</th></tr></thead><tbody>${rows.map(r => `<tr><td class="small">${new Date(r.created_at + 'Z').toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' })}</td><td>${esc(r.name || '')}</td><td><code class="small">${esc(r.action)}</code></td><td class="tiny muted" style="max-width:420px;word-break:break-all">${esc(r.detail)}</td></tr>`).join('') || '<tr><td colspan="4" class="empty">No activity yet</td></tr>'}</tbody></table></div>`;
+}
+
+// ------------------------------------------------------------ spreadsheet import (budget / allocation)
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+const DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+// Reads "Dec 27 Fri", "March 15", "August14", "Sept 6", "27/12/2024", Excel serials or Date objects. Returns {iso, weekdayOk}.
+function parseWeekDate(v, weekNo, year) {
+  if (v instanceof Date) return { iso: v.toISOString().slice(0, 10), weekdayOk: true };
+  if (typeof v === 'number' && v > 30000) return { iso: new Date(Date.UTC(1899, 11, 30) + v * 864e5).toISOString().slice(0, 10), weekdayOk: true };
+  const t = String(v || '').toLowerCase().trim(); if (!t) return null;
+  let d, mo, y;
+  const num = t.match(/^(\d{1,2})[\/.-](\d{1,2})(?:[\/.-](\d{2,4}))?/);
+  if (num) { d = +num[1]; mo = +num[2] - 1; y = num[3] ? (+num[3] < 100 ? 2000 + +num[3] : +num[3]) : null; }
+  else { mo = MONTHS.findIndex(m => new RegExp('(^|[^a-z])' + m).test(t)); const dm = t.match(/(\d{1,2})(?!\d)/); if (mo < 0 || !dm) return null; d = +dm[1]; const ym = t.match(/(20\d\d)/); y = ym ? +ym[1] : null; }
+  if (!y) y = mo === 11 && weekNo <= 2 ? year - 1 : mo === 0 && weekNo >= 50 ? year + 1 : year;
+  const date = new Date(Date.UTC(y, mo, d)); if (isNaN(date) || date.getUTCDate() !== d) return null;
+  const wd = DAYS.findIndex(x => new RegExp('(^|[^a-z])' + x).test(t.replace(/\d/g, ' ').replace(MONTHS[mo], ' ')));
+  return { iso: date.toISOString().slice(0, 10), weekdayOk: wd < 0 || wd === date.getUTCDay() };
+}
+// Turns an uploaded file into {sheets: {name: rows[][]}, title}. Word documents: each table becomes a "sheet".
+async function readTables(file) {
+  const buf = await file.arrayBuffer();
+  if (/\.docx$/i.test(file.name)) {
+    if (!window.JSZip) throw new Error('Word reader still loading — try again in a moment');
+    const xml = await (await JSZip.loadAsync(buf)).file('word/document.xml').async('string');
+    const doc = new DOMParser().parseFromString(xml, 'application/xml'); const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+    const text = el => [...el.getElementsByTagNameNS(W, 'p')].map(p => [...p.getElementsByTagNameNS(W, 't')].map(t => t.textContent).join('').trim()).filter(Boolean).join(' / ');
+    const sheets = {}; [...doc.getElementsByTagNameNS(W, 'tbl')].forEach((tbl, i) => {
+      sheets['Table ' + (i + 1)] = [...tbl.getElementsByTagNameNS(W, 'tr')].map(tr => [...tr.getElementsByTagNameNS(W, 'tc')].map(tc => { const v = text(tc); return /^\d+$/.test(v) ? Number(v) : v; })); });
+    const body = doc.getElementsByTagNameNS(W, 'body')[0];
+    const title = [...body.childNodes].filter(n => n.localName === 'p').map(n => [...n.getElementsByTagNameNS(W, 't')].map(t => t.textContent).join('').trim()).filter(Boolean).slice(0, 4).join(' · ');
+    if (!Object.keys(sheets).length) throw new Error('No tables found in that Word document');
+    return { sheets, title };
+  }
+  if (!window.XLSX) throw new Error('Spreadsheet reader still loading — try again in a moment');
+  const wb = XLSX.read(buf, { cellDates: true }); const sheets = {};
+  wb.SheetNames.forEach(n => sheets[n] = XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: '' }));
+  return { sheets, title: '' };
+}
+function importDialog(kind, year, after, existingWeeks = []) {
+  const m = openModal(`<h2>Import ${kind === 'budget' ? 'budget' : 'week allocation'} for ${year}</h2>
+    <p class="muted small">Upload an Excel (.xlsx), CSV${kind === 'allocation' ? ' or Word (.docx) table' : ''} file. You’ll pick which columns to use and check a preview before anything is saved.
+    ${kind === 'allocation' ? 'Works with one row per week (week number, date, family, comment) or one row per family with their week numbers across the row.' : 'Choose the column with item names and the column with amounts. Total rows are skipped automatically.'}</p>
+    <input type="file" id="file" accept=".xlsx,.xls,.csv${kind === 'allocation' ? ',.docx' : ''}"><div id="cfg" style="margin-top:16px"></div>`, true);
+  $('#file', m).onchange = guard(async e => {
+    const book = await readTables(e.target.files[0]); const names = Object.keys(book.sheets);
+    const pickSheet = name => {
+      const grid = book.sheets[name].map(r => r.map(v => typeof v === 'string' ? v.trim() : v));
+      const ncol = Math.max(...grid.map(r => r.length), 0); const cols = [...Array(ncol).keys()];
+      const L = i => String.fromCharCode(65 + i);
+      const isNum = v => v !== '' && typeof v !== 'object' && !isNaN(Number(v)); const isTxt = v => typeof v === 'string' && v.trim() && isNaN(Number(v));
+      const colScore = (c, fn) => grid.filter(r => fn(r[c])).length;
+      const header = grid.slice(0, 10).reduce((best, r) => r.filter(isTxt).length > best.filter(isTxt).length ? r : best, []);
+      const byHeader = re => cols.find(c => re.test(String(header[c] || '')));
+      const sheetSel = names.length > 1 ? `<div class="field"><label>${book.title ? 'Table' : 'Sheet'}</label><select id="sheet">${names.map(n => `<option ${n === name ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></div>` : '';
+      const colOpts = (sel, none) => (none ? `<option value="">${none}</option>` : '') + cols.map(c => `<option value="${c}" ${c === sel ? 'selected' : ''}>Column ${L(c)} — ${esc(String(grid.find(r => r[c] !== '' && r[c] != null)?.[c] ?? '').slice(0, 24))}</option>`).join('');
+      let render;
+      if (kind === 'budget') {
+        const desc = byHeader(/^item|descr/i) ?? [...cols].sort((a, b) => colScore(b, isTxt) - colScore(a, isTxt))[0] ?? 0; const amt = byHeader(/estimate|amount|budget|cost/i) ?? [...cols].sort((a, b) => colScore(b, isNum) - colScore(a, isNum))[0] ?? 1;
+        $('#cfg', m).innerHTML = `${sheetSel}<div class="grid-3" style="gap:12px"><div class="field"><label>Item name column</label><select id="cd">${colOpts(desc)}</select></div><div class="field"><label>Amount column</label><select id="ca">${colOpts(amt)}</select></div><div class="field"><label>Type / category column (optional)</label><select id="cc">${colOpts(byHeader(/type|categ/i) ?? -1, 'None — use section headings')}</select></div><div class="field"><label>Commentary column (optional)</label><select id="cn">${colOpts(byHeader(/comment|note/i) ?? -1, 'None')}</select></div></div><div id="bmeta"></div>
+          <label class="check" style="margin-bottom:12px"><input type="checkbox" id="repl" checked><span><b>Replace existing ${year} budget lines</b></span></label><div id="prev"></div>
+          <div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn" data-close>Cancel</button><button class="btn primary" id="go">Import</button></div>`;
+        render = () => {
+          const cd = +$('#cd', m).value, ca = +$('#ca', m).value, cc = $('#cc', m).value, cn = $('#cn', m).value; let section = null; const items = []; let rate = null, running = 0;
+          const label = (grid.flat().find(v => typeof v === 'string' && /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s*\d{2,4}\s*[-–]\s*(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i.test(v)) || '');
+          for (const r of grid) {
+            const d = String(r[cd] ?? '').trim(), a = r[ca];
+            if (d && !isNum(a) && r.filter(v => v !== '').length === 1) { section = d; continue; }
+            if (!d || !isNum(a) || /^(item|description)$/i.test(d)) continue;
+            if (/per week/i.test(d)) { rate = Number(a); continue; }
+            const amount = Math.round(Number(a) * 100) / 100;
+            const isTotal = /total|subtotal|funding need|sum\b/i.test(d) || (items.length > 1 && Math.abs(amount - running) < 0.01);
+            if (isTotal) continue;
+            running += amount;
+            items.push({ description: d, amount, category: cc !== '' ? String(r[+cc] || '').trim() : section, notes: cn !== '' ? String(r[+cn] || '').trim() : '', on: true });
+          }
+          $('#bmeta', m).innerHTML = `<div class="grid-2" style="gap:12px"><div class="field"><label>Budget period</label><input id="ilabel" value="${esc(label.replace(/(\d{2})\s*[-–]\s*/, '$1 – '))}" placeholder="optional"></div><div class="field"><label>Service charge per week (from sheet)</label><input id="irate" type="number" value="${rate ?? ''}" placeholder="calculate"></div></div>`;
+          $('#prev', m).innerHTML = `<div class="table-wrap" style="max-height:320px;overflow:auto"><table><thead><tr><th></th><th>Category</th><th>Item</th><th class="r">Amount</th></tr></thead><tbody>${items.map((i, k) => `<tr><td><input type="checkbox" data-k="${k}" checked></td><td class="small muted">${esc(i.category || '')}</td><td>${esc(i.description)}${i.notes ? `<div class="tiny muted">${esc(i.notes)}</div>` : ''}</td><td class="r num">${money(i.amount, 2)}</td></tr>`).join('')}</tbody>
+            <tfoot><tr><td></td><td></td><td>${items.length} lines</td><td class="r num" id="ptot">${money(items.reduce((a, b) => a + b.amount, 0), 2)}</td></tr></tfoot></table></div>`;
+          $('#prev', m).querySelectorAll('[data-k]').forEach(c => c.onchange = () => { items[c.dataset.k].on = c.checked; $('#ptot', m).textContent = money(items.filter(i => i.on).reduce((a, b) => a + b.amount, 0), 2); });
+          $('#go', m).onclick = guard(async () => { const r = await api('/admin/budget/import', { body: { year, replace: $('#repl', m).checked, items: items.filter(i => i.on), label: $('#ilabel', m).value, rate_per_week: $('#irate', m).value } }); toast(`Imported ${r.imported} budget lines`); closeOverlay(); after(); });
+        };
+        ['#cd', '#ca', '#cc', '#cn'].forEach(s => $(s, m).onchange = render);
+      } else {
+        const wk = v => isNum(v) && Number.isInteger(Number(v)) && Number(v) >= 1 && Number(v) <= 53;
+        const wkCols = cols.filter(c => colScore(c, wk) >= 2);
+        const firstWkCol = wkCols.find(c => cols.some(t => t < c && colScore(t, isTxt) >= 2)) ?? wkCols[0] ?? 1;
+        const famCol = [...cols].filter(c => c < firstWkCol && colScore(c, isTxt) >= 2).at(-1) ?? 0;
+        const hWeek = byHeader(/w(ee)?k/i), hFam = byHeader(/famil|owner|syndicate/i), hDate = byHeader(/date|start|arriv/i), hCmt = byHeader(/comment|note|remark/i);
+        const rowWeekLikely = hWeek != null && colScore(hWeek, wk) > 10;
+        $('#cfg', m).innerHTML = `${book.title ? `<div class="small muted" style="margin-bottom:10px">Document: <b>${esc(book.title)}</b></div>` : ''}${sheetSel}
+          <div class="field"><label>Layout</label><select id="lay"><option value="rowweek" ${rowWeekLikely ? 'selected' : ''}>One row per week: week number, family (and optional date &amp; comment)</option><option value="rowfam" ${rowWeekLikely ? '' : 'selected'}>One row per family, week numbers across the row</option></select></div>
+          <div class="grid-2" style="gap:12px" id="lcols"></div><div id="checks"></div>
+          <label class="check" style="margin-bottom:12px"><input type="checkbox" id="mk" checked><span><b>Create families that don’t exist yet</b></span></label><div id="prev"></div>
+          <div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn" data-close>Cancel</button><button class="btn primary" id="go">Import</button></div>`;
+        const lay = () => { const l = $('#lay', m).value; $('#lcols', m).innerHTML = l === 'rowfam'
+          ? `<div class="field"><label>Family name column</label><select id="cf">${colOpts(famCol)}</select></div><div></div><div class="field"><label>Week numbers from column</label><select id="c1">${colOpts(firstWkCol)}</select></div><div class="field"><label>…to column</label><select id="c2">${colOpts(cols.at(-1))}</select></div>`
+          : `<div class="field"><label>Week number column</label><select id="cw">${colOpts(hWeek ?? cols.find(c => colScore(c, wk) > 10) ?? 0)}</select></div><div class="field"><label>Family column</label><select id="cf">${colOpts(hFam ?? [...cols].sort((a, b) => colScore(b, isTxt) - colScore(a, isTxt))[0])}</select></div>
+             <div class="field"><label>Start date column (optional)</label><select id="cdt">${colOpts(hDate ?? -1, 'None — use the standard calendar')}</select></div><div class="field"><label>Comment column (optional)</label><select id="ccm">${colOpts(hCmt ?? -1, 'None')}</select></div>`;
+          $('#lcols', m).querySelectorAll('select').forEach(s => s.onchange = render); render(); };
+        render = () => {
+          const rows = []; const l = $('#lay', m).value; let dateInfo = null;
+          if (l === 'rowfam') { const cf = +$('#cf', m).value, c1 = +$('#c1', m).value, c2 = +$('#c2', m).value;
+            for (const r of grid) { const fam = String(r[cf] ?? '').trim(); if (!isTxt(fam) || /total/i.test(fam)) continue; for (let c = c1; c <= c2; c++) if (wk(r[c])) rows.push({ week: Number(r[c]), family: fam }); } }
+          else {
+            const cw = +$('#cw', m).value, cf = +$('#cf', m).value, cdt = $('#cdt', m).value, ccm = $('#ccm', m).value;
+            const known = Object.fromEntries(existingWeeks.map(w => [w.week_no, w.start_date])); let parsed = 0, badDay = 0, differ = [];
+            for (const r of grid) if (wk(r[cw])) {
+              const row = { week: Number(r[cw]), family: String(r[cf] ?? '').trim() };
+              if (ccm !== '') row.comment = String(r[+ccm] ?? '').replace(/\s*\/\s*/g, '; ');
+              if (cdt !== '') { const d = parseWeekDate(r[+cdt], row.week, year); if (d) { parsed++; row.start_date = d.iso; if (!d.weekdayOk) badDay++; if (known[row.week] && known[row.week] !== d.iso) differ.push(row.week); } }
+              rows.push(row);
+            }
+            if (cdt !== '') dateInfo = { parsed, badDay, differ, total: rows.length };
+          }
+          const titleYear = (book.title.match(/\b(20\d\d)\b/) || [])[1];
+          const warn = [];
+          if (titleYear && +titleYear !== year) warn.push(`The document title mentions <b>${titleYear}</b>, but you’re importing into <b>${year}</b>.`);
+          if (dateInfo?.badDay) warn.push(`${dateInfo.badDay} date${dateInfo.badDay > 1 ? 's' : ''} in the file name a weekday that doesn’t match ${year} (e.g. “Fri” on a Saturday). The file is probably for a different year.`);
+          const suspicious = warn.length > 0 || (dateInfo && dateInfo.differ.length > dateInfo.total / 4);
+          if (dateInfo && dateInfo.differ.length > dateInfo.total / 4) warn.push(`${dateInfo.differ.length} of ${dateInfo.total} start dates differ from the ${year} calendar already on the site.`);
+          $('#checks', m).innerHTML = (warn.length ? `<div class="notice warn small" style="margin-bottom:12px">⚠ ${warn.join('<br>')}</div>` : '') +
+            (dateInfo ? `<label class="check" style="margin-bottom:12px"><input type="checkbox" id="usedates" ${suspicious ? '' : 'checked'}><span><b>Use the start dates from the file</b>${dateInfo.parsed} of ${dateInfo.total} dates read${dateInfo.differ.length ? `; ${dateInfo.differ.length} differ from the site’s calendar (weeks ${dateInfo.differ.slice(0, 12).join(', ')}${dateInfo.differ.length > 12 ? '…' : ''})` : existingWeeks.length ? '; all match the site’s calendar' : ''}.</span></label>` : '');
+          const byFam = {}; rows.forEach(r => (byFam[r.family || 'Syndicate'] ||= []).push(r.week));
+          const dup = rows.map(r => r.week).filter((w, i, a) => a.indexOf(w) !== i);
+          $('#prev', m).innerHTML = `${dup.length ? `<div class="notice warn small" style="margin-bottom:10px">Weeks listed more than once: ${[...new Set(dup)].join(', ')}. The last one wins.</div>` : ''}
+            <div class="table-wrap" style="max-height:300px;overflow:auto"><table><thead><tr><th>Family</th><th class="r">Weeks</th><th>Week numbers</th></tr></thead><tbody>${Object.entries(byFam).sort().map(([f, ws]) => `<tr><td><b>${esc(f)}</b></td><td class="r">${ws.length}</td><td class="small">${ws.sort((a, b) => a - b).join(', ')}</td></tr>`).join('') || '<tr><td colspan="3" class="empty">Nothing found — try other columns</td></tr>'}</tbody>
+            <tfoot><tr><td>Total</td><td class="r">${rows.length}</td><td></td></tr></tfoot></table></div>`;
+          $('#go', m).onclick = guard(async () => {
+            const useDates = $('#usedates', m)?.checked; const send = rows.map(r => useDates ? r : (({ start_date, ...x }) => x)(r));
+            if (warn.length && !confirm('The checks above suggest this file may be for a different year. Import anyway?')) return;
+            const r = await api('/admin/allocation/import', { body: { year, rows: send, create_families: $('#mk', m).checked } });
+            toast(`Updated ${r.updated} weeks${r.unknown.length ? ' · unknown families: ' + r.unknown.join(', ') : ''}`, r.unknown.length > 0); closeOverlay(); after(); });
+        };
+        $('#lay', m).onchange = lay; lay();
+      }
+      $('#sheet', m) && ($('#sheet', m).onchange = ev => pickSheet(ev.target.value));
+      $('#drawer-root').querySelectorAll('[data-close]').forEach(b => b.onclick = closeOverlay);
+      if (kind === 'budget') render();
+    };
+    pickSheet(names[0]);
+  });
+}
+
+boot();

@@ -1,0 +1,9 @@
+{
+  "name": "nab-camas-portal",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Nab Camas syndicate owners' portal",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=22.5" }
+}
