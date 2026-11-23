@@ -115,9 +115,10 @@ function statusBadge(w) {
   if (w.status === 'offered') {
     const b = [];
     if (w.offer_friends && (S.me.user.role !== 'friend' || w.can_book)) b.push(`<span class="badge green">${w.can_book || w.is_mine ? money(w.price) : 'For let'}</span>`);
-    if (w.offer_swap && S.me.user.role !== 'friend') b.push('<span class="badge accent">Swap</span>');
+    if (w.in_use && S.me.user.role !== 'friend') b.push('<span class="badge accent">In use</span>');
     return b.join(' ');
   }
+  if (w.in_use && S.me.user.role !== 'friend') return '<span class="badge accent">In use</span>';
   return '';
 }
 function filterMatch(w) {
@@ -134,10 +135,10 @@ async function viewCalendar(main) {
   if (!years.length) { main.innerHTML = '<div class="card empty">No weeks have been set up yet. The site admin can create a year under Site admin → Weeks.</div>'; return; }
   S.weeks = await api('/weeks?year=' + S.year);
   const role = S.me.user.role;
-  const filters = [['all', 'All weeks'], ['book', role === 'friend' ? 'Available to book' : 'Available to buy'], isFam() && ['swap', 'Open to swap'], isFam() && ['mine', 'My family’s weeks'], role === 'friend' && ['mine', 'My bookings']].filter(Boolean);
+  const filters = [['all', 'All weeks'], ['book', role === 'friend' ? 'Available to book' : 'Available to buy'], isFam() && ['swap', 'Can request swap'], isFam() && ['mine', 'My family’s weeks'], role === 'friend' && ['mine', 'My bookings']].filter(Boolean);
   const intro = role === 'friend' ? 'Weeks that syndicate families have made available to trusted friends are shown in green. Pick one to book.'
-    : role === 'family_member' ? 'See who has each week. Request a swap for weeks marked <b>Swap</b>, or buy weeks offered for letting.'
-      : 'Click any of your weeks to offer it to trusted friends or open it to swaps. Swap requests for your weeks appear under Swaps.';
+    : role === 'family_member' ? 'Click any other family’s week to request a swap, unless it’s marked <b>In use</b>. You can also buy weeks offered for letting.'
+      : 'Click any other family’s week to request a swap. Click your own weeks to mark them <b>In use</b> (no swap requests) or offer them for letting.';
   const byMonth = {};
   for (const w of S.weeks) (byMonth[w.start_date.slice(0, 7)] ||= []).push(w);
   const fams = [...new Map(S.weeks.filter(w => w.family_id).map(w => [w.family_id, [w.family_name, w.family_color]])).values()].sort((a, b) => a[0].localeCompare(b[0]));
@@ -175,14 +176,14 @@ async function openWeek(w) {
   if (w.status === 'syndicate') html += '<div class="section notice">This week is held by the syndicate (e.g. maintenance or the extra 53rd week) and isn’t allocated to a family.</div>';
 
   if (w.can_manage && !['pending', 'booked'].includes(w.status) && !past) {
-    html += `<form class="section" id="offerForm"><h3>Offer this week</h3>
-      <p class="muted small" style="margin-top:0">Leave both unticked if your family is using the week.</p>
-      <label class="check"><input type="checkbox" name="offer_friends" ${w.offer_friends ? 'checked' : ''}><span><b>Offer for letting</b>Trusted friends (and other families) can book and pay the syndicate. The payment is credited to your account against next year’s service charge.</span></label>
+    html += `<form class="section" id="offerForm"><h3>Your family’s plans for this week</h3>
+      <label class="check"><input type="radio" name="in_use" value="0" ${w.in_use ? '' : 'checked'}><span><b>Not decided / open to swap requests</b>Other families can ask to swap for this week. You choose whether to accept.</span></label>
+      <label class="check" style="margin-top:8px"><input type="radio" name="in_use" value="1" ${w.in_use ? 'checked' : ''}><span><b>We’re using this week</b>Shown as <i>In use</i>. Nobody can request a swap, and any pending requests are declined.</span></label>
+      <div id="letWrap" style="margin-top:14px"><label class="check"><input type="checkbox" name="offer_friends" ${w.offer_friends ? 'checked' : ''}><span><b>Also offer for letting</b>Trusted friends (and other families) can book and pay the syndicate. The payment is credited to your account against next year’s service charge.</span></label>
       <div id="letOpts" style="margin:10px 0 0 28px">
         <div class="field"><label>Who can book?</label><select name="friend_scope"><option value="all" ${w.friend_scope === 'all' ? 'selected' : ''}>Any family’s trusted friends + other syndicate families</option><option value="own" ${w.friend_scope === 'own' ? 'selected' : ''}>Only my family’s trusted friends</option></select></div>
         <div class="field"><label>Price for this week</label><input name="price_override" type="number" min="0" step="1" placeholder="Default ${money(s['rate_' + w.season])} (${seasonName.toLowerCase()} rate)" value="${w.price_override ?? ''}"><div class="tiny muted" style="margin-top:4px">Leave blank to use the site’s default ${seasonName.toLowerCase()} rate.</div></div>
-      </div>
-      <label class="check" style="margin-top:10px"><input type="checkbox" name="offer_swap" ${w.offer_swap ? 'checked' : ''}><span><b>Open to swap</b>Other families can propose one of their swappable weeks in exchange. You decide whether to accept.</span></label>
+      </div></div>
       <div class="field" style="margin-top:12px"><label>Note for other families (optional)</label><input name="note" value="${esc(w.note || '')}" placeholder="e.g. Happy to swap for any October week"></div>
       <button class="btn primary">Save</button></form>`;
   } else if (w.can_manage && w.status === 'pending' && w.booking) {
@@ -192,7 +193,7 @@ async function openWeek(w) {
   if (w.can_book && !past) {
     const allowAcct = isFam() && (isFamAdmin() || s.allow_member_account_charge);
     html += `<form class="section" id="bookForm"><h3>Book this week · ${money(w.price)}</h3>
-      ${isFam() ? `<p class="muted small" style="margin-top:0">You’re buying this week from ${esc(w.family_name)}. ${w.offer_swap ? 'It’s also open to swaps, so check the swap option below first.' : ''}</p>` : ''}
+      ${isFam() ? `<p class="muted small" style="margin-top:0">You’re buying this week from ${esc(w.family_name)}. ${w.can_request_swap ? 'You could also ask for a swap instead (below).' : ''}</p>` : ''}
       <div class="grid-2" style="gap:12px"><div class="field"><label>Lead guest name</label><input name="guest_name" value="${esc(S.me.user.name)}" required></div>
       <div class="field"><label>Number in party</label><input name="party_size" type="number" min="1" max="20" value="2"></div></div>
       ${allowAcct ? `<div class="field"><label>How will you pay?</label>
@@ -205,22 +206,26 @@ async function openWeek(w) {
 
   if (w.can_request_swap && !past) {
     const mine = (await Promise.all(S.me.years.filter(y => y >= S.year - 0 && y <= S.year + 1).map(y => y === S.year ? S.weeks : api('/weeks?year=' + y)))).flat()
-      .filter(x => x.is_mine && x.status === 'offered' && x.offer_swap && x.start_date >= todayStr());
+      .filter(x => x.is_mine && x.swappable);
     html += `<form class="section" id="swapForm"><h3>Request a swap</h3>
-      ${mine.length ? `<p class="muted small" style="margin-top:0">Offer one of your family’s swappable weeks. ${esc(w.family_name)}’s admin will be notified and can accept or decline.</p>
+      ${mine.length ? `<p class="muted small" style="margin-top:0">Choose one of your family’s weeks to offer in exchange. ${esc(w.family_name)}’s admin will be notified and can accept, decline because they’re using it, or decline because they’re not sure yet.</p>
         <div class="field"><label>Your week to give in exchange</label><select name="offered_week_id">${mine.map(x => `<option value="${x.id}">Week ${x.week_no} ${x.year} · ${range(x)} · ${x.season}</option>`).join('')}</select></div>
         <div class="field"><label>Message (optional)</label><textarea name="message" rows="2" placeholder="Hi — would you swap for our week?"></textarea></div>
         <button class="btn primary">Send swap request</button>`
-        : `<div class="notice warn small">Your family doesn’t have any weeks marked “open to swap” yet. ${isFamAdmin() ? 'Open one of your weeks to swaps first (click it in the calendar).' : 'Ask your family admin to open one of your weeks to swaps.'}${w.can_book ? ' Alternatively you can buy this week above.' : ''}</div>`}</form>`;
+        : `<div class="notice warn small">Your family has no weeks free to offer in exchange in ${S.year}–${S.year + 1}. They’re all marked in use, let, or already past.${w.can_book ? ' You can buy this week above instead.' : ''}</div>`}</form>`;
   }
+  if (isFam() && !w.is_mine && w.in_use && !past) html += `<div class="section notice small">${esc(w.family_name)} are using this week, so it can’t be requested for a swap.</div>`;
   if (w.booking?.mine && w.booking.status === 'pending') html += `<div class="section">${payBox(w.booking.reference, w.price)}</div>`;
   if (role === 'friend' && !w.can_book && !w.booking?.mine) html += '<div class="section muted small">This week isn’t available to book.</div>';
 
   const body = openDrawer(`<h2 style="margin:0">Week ${w.week_no}</h2>`, `${range(w)} ${w.year}`, html);
   const of = $('#offerForm', body);
   if (of) {
-    const sync = () => $('#letOpts', of).style.display = of.offer_friends.checked ? '' : 'none'; sync(); of.offer_friends.onchange = sync;
-    of.onsubmit = guard(async e => { e.preventDefault(); const d = formData(of); await api('/weeks/' + w.id, { method: 'PUT', body: { ...d, offer_friends: of.offer_friends.checked, offer_swap: of.offer_swap.checked } }); toast('Week updated'); closeOverlay(); viewCalendar($('main')); });
+    const sync = () => { const inUse = of.querySelector('[name=in_use]:checked').value === '1'; $('#letWrap', of).style.display = inUse ? 'none' : ''; $('#letOpts', of).style.display = !inUse && of.offer_friends.checked ? '' : 'none'; };
+    sync(); of.offer_friends.onchange = sync; of.querySelectorAll('[name=in_use]').forEach(r => r.onchange = sync);
+    of.onsubmit = guard(async e => { e.preventDefault(); const d = formData(of); const inUse = d.in_use === '1';
+      if (inUse && w.pending_swaps && !confirm('Marking this week in use will decline the swap requests waiting for it. Continue?')) return;
+      await api('/weeks/' + w.id, { method: 'PUT', body: { ...d, in_use: inUse, offer_friends: !inUse && of.offer_friends.checked } }); toast('Week updated'); closeOverlay(); viewCalendar($('main')); refreshMe(); });
   }
   const bf = $('#bookForm', body);
   if (bf) bf.onsubmit = guard(async e => { e.preventDefault(); const b = await api(`/weeks/${w.id}/book`, { body: formData(bf) });
@@ -240,23 +245,33 @@ function payBox(ref, amount) {
 }
 
 // ------------------------------------------------------------ swaps
+const swapWeek = w => `<b>Week ${w.week_no}</b> ${w.year} <span class="muted">· ${range(w)}</span> <i class="season ${w.season}"></i>`;
+function swapStatus(sw) {
+  if (sw.status === 'declined') return sw.decline_reason === 'in_use' ? '<span class="badge red">Declined: in use</span>' : '<span class="badge amber">Declined: not sure yet</span>';
+  return { pending: '<span class="badge amber">Waiting for reply</span>', accepted: '<span class="badge green">Accepted</span>', cancelled: '<span class="badge">Withdrawn</span>', void: '<span class="badge">No longer possible</span>' }[sw.status];
+}
+function swapCard(sw) {
+  return `<div class="card flat" style="padding:16px"><div class="row between"><div>${sw.incoming ? `<b>${esc(sw.from_family)}</b> (${esc(sw.requester)}) would like your week` : `${esc(sw.requester)} asked <b>${esc(sw.to_family)}</b> for their week`}</div>${swapStatus(sw)}</div>
+    <div class="grid-2" style="margin-top:10px;gap:10px"><div><div class="tiny muted">${sw.incoming ? 'They want' : 'Requested'}</div>${swapWeek(sw.target)}</div><div><div class="tiny muted">${sw.incoming ? 'They offer' : 'Offered in exchange'}</div>${swapWeek(sw.offered)}</div></div>
+    ${sw.message ? `<p class="small" style="margin:10px 0 0">“${esc(sw.message)}”</p>` : ''}
+    ${sw.status === 'declined' && sw.decline_reason !== 'in_use' && !sw.incoming ? '<p class="tiny muted" style="margin:8px 0 0">They weren’t sure of their plans yet. You can ask again later from the calendar.</p>' : ''}
+    ${sw.can_respond || sw.can_cancel ? `<div class="row" style="margin-top:12px">${sw.can_respond ? `<button class="btn green sm" data-acc="${sw.id}">Accept swap</button><button class="btn sm" data-dec-inuse="${sw.id}">Decline: we’re using it</button><button class="btn sm" data-dec-unsure="${sw.id}">Decline: not sure yet</button>` : ''}${sw.can_cancel ? `<button class="btn sm danger" data-can="${sw.id}">Withdraw request</button>` : ''}</div>` : ''}
+    ${sw.incoming && sw.status === 'pending' && !sw.can_respond ? '<p class="tiny muted" style="margin:10px 0 0">Your family admin can accept or decline this.</p>' : ''}</div>`;
+}
+function bindSwapActions(root, reload) {
+  const act = (sel, fn) => root.querySelectorAll(sel).forEach(b => b.onclick = guard(async () => { if (await fn(b) === false) return; reload(); refreshMe(); }));
+  act('[data-acc]', async b => { if (!confirm('Accept this swap? The two weeks change hands immediately, and both are marked in use.')) return false; await api(`/swaps/${b.dataset.acc}/respond`, { body: { accept: true } }); toast('Swap agreed'); });
+  act('[data-dec-inuse]', async b => { await api(`/swaps/${b.dataset.decInuse}/respond`, { body: { accept: false, reason: 'in_use' } }); toast('Declined, and the week is now marked in use'); });
+  act('[data-dec-unsure]', async b => { await api(`/swaps/${b.dataset.decUnsure}/respond`, { body: { accept: false, reason: 'unsure' } }); toast('Declined for now'); });
+  act('[data-can]', b => api(`/swaps/${b.dataset.can}/cancel`, { body: {} }));
+}
 async function viewSwaps(main) {
   const list = await api('/swaps');
-  const wk = w => `<b>Week ${w.week_no}</b> ${w.year} <span class="muted">· ${range(w)}</span> <i class="season ${w.season}"></i>`;
-  const st = s => ({ pending: '<span class="badge amber">Waiting for reply</span>', accepted: '<span class="badge green">Accepted</span>', declined: '<span class="badge red">Declined</span>', cancelled: '<span class="badge">Withdrawn</span>', void: '<span class="badge">No longer possible</span>' }[s]);
-  const card = sw => `<div class="card flat" style="padding:16px"><div class="row between"><div>${sw.incoming ? `<b>${esc(sw.from_family)}</b> (${esc(sw.requester)}) would like your week` : `You asked <b>${esc(sw.to_family)}</b> for their week`}</div>${st(sw.status)}</div>
-    <div class="grid-2" style="margin-top:10px;gap:10px"><div><div class="tiny muted">${sw.incoming ? 'They want' : 'You want'}</div>${wk(sw.target)}</div><div><div class="tiny muted">${sw.incoming ? 'They offer' : 'You offer'}</div>${wk(sw.offered)}</div></div>
-    ${sw.message ? `<p class="small" style="margin:10px 0 0">“${esc(sw.message)}”</p>` : ''}
-    ${sw.can_respond || sw.can_cancel ? `<div class="row" style="margin-top:12px">${sw.can_respond ? `<button class="btn green sm" data-acc="${sw.id}">Accept swap</button><button class="btn sm" data-dec="${sw.id}">Decline</button>` : ''}${sw.can_cancel ? `<button class="btn sm danger" data-can="${sw.id}">Withdraw request</button>` : ''}</div>` : ''}
-    ${sw.incoming && sw.status === 'pending' && !sw.can_respond ? '<p class="tiny muted" style="margin:10px 0 0">Your family admin can accept or decline this.</p>' : ''}</div>`;
   const inc = list.filter(s => s.incoming), out = list.filter(s => !s.incoming);
-  main.innerHTML = `<h1>Week swaps</h1><p class="muted">Swaps change which family holds each week for that year only. Next year’s allocation isn’t affected.</p>
-    <div class="grid-2"><section class="stack"><h2>Requests to you</h2>${inc.map(card).join('') || '<div class="card flat empty small">No requests yet</div>'}</section>
-    <section class="stack"><h2>Your requests</h2>${out.map(card).join('') || '<div class="card flat empty small">Find a week marked <b>Swap</b> on the calendar to make a request.</div>'}</section></div>`;
-  const act = (sel, fn) => main.querySelectorAll(sel).forEach(b => b.onclick = guard(async () => { await fn(b); viewSwaps(main); refreshMe(); }));
-  act('[data-acc]', b => confirm('Accept this swap? The two weeks will change hands immediately.') && api(`/swaps/${b.dataset.acc}/respond`, { body: { accept: true } }).then(() => toast('Swap agreed')));
-  act('[data-dec]', b => api(`/swaps/${b.dataset.dec}/respond`, { body: { accept: false } }));
-  act('[data-can]', b => api(`/swaps/${b.dataset.can}/cancel`, { body: {} }));
+  main.innerHTML = `<h1>Week swaps</h1><p class="muted">Any family’s week can be requested unless they’ve marked it <b>In use</b>. Swaps change which family holds each week for that year only; next year’s allocation isn’t affected.</p>
+    <div class="grid-2"><section class="stack"><h2>Requests to your family</h2>${inc.map(swapCard).join('') || '<div class="card flat empty small">No requests yet</div>'}</section>
+    <section class="stack"><h2>Your family’s requests</h2>${out.map(swapCard).join('') || '<div class="card flat empty small">Click another family’s week on the calendar to request a swap.</div>'}</section></div>`;
+  bindSwapActions(main, () => viewSwaps(main));
 }
 
 // ------------------------------------------------------------ bookings
@@ -279,20 +294,28 @@ async function viewBookings(main) {
 
 // ------------------------------------------------------------ family account
 async function viewAccount(main, familyId) {
-  const a = await api('/account' + (familyId ? '?family_id=' + familyId : ''));
+  const [a, swaps] = await Promise.all([api('/account' + (familyId ? '?family_id=' + familyId : '')), familyId ? [] : api('/swaps')]);
   const typeName = { service_charge: 'Service charge', rental_credit: 'Letting income', purchase: 'Week purchase', payment: 'Payment', adjustment: 'Adjustment' };
   const owes = a.balance > 0.005;
   main.innerHTML = `<div class="row between"><h1>${esc(a.family.name)} account</h1>${familyId ? '<a class="btn sm" href="#/admin/overview">← Back to overview</a>' : ''}</div>
     <div class="grid-3" style="margin-bottom:24px">
-      <div class="card"><div class="muted small">${owes ? 'Balance to pay' : 'In credit'}</div><div class="stat ${owes ? 'owes' : 'credit'} num">${money(Math.abs(a.balance), 2)}</div>
+      <div class="card"><div class="muted small">${owes ? 'Balance to pay' : a.balance < -0.005 ? 'In credit' : 'Balance'}</div><div class="stat ${owes ? 'owes' : a.balance < -0.005 ? 'credit' : ''} num">${money(Math.abs(a.balance), 2)}</div>
         ${owes ? `<div class="small muted" style="margin-top:6px">Pay to ${esc(S.me.settings.bank.account_name)} using reference <b>${esc(a.family.name.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10))}-SC</b></div>` : ''}</div>
       <div class="card"><div class="muted small">Ownership share</div><div class="stat num">${a.family.share_units} <span class="small muted" style="font-family:Inter">weeks</span></div>
         <div class="small muted" style="margin-top:6px">${a.weeks.map(w => `${w.n} weeks held in ${w.year}`).join(' · ')}</div></div>
       <div class="card"><div class="muted small">By year</div>${a.byYear.map(y => `<div class="row between small"><span>${y.year}</span><span class="num">${Math.abs(y.total) < 0.005 ? 'Settled' : y.total > 0 ? money(y.total, 2) + ' due' : money(-y.total, 2) + ' credit'}</span></div>`).join('') || '<div class="small muted">No entries yet</div>'}</div></div>
-    <p class="muted small">Letting income from weeks you offer is credited against the following year’s service charge. Charges are positive; credits and payments are negative.</p>
+    ${!familyId ? `<div id="acctSwaps"></div>` : ''}
+    <h2>Statement</h2><p class="muted small">Letting income from weeks you offer is credited against the following year’s service charge. Charges are positive; credits and payments are negative.</p>
     ${a.lines.length ? `<div class="table-wrap"><table><thead><tr><th>Date</th><th>Year</th><th>Type</th><th>Description</th><th class="r">Amount</th><th class="r">Balance</th></tr></thead><tbody>
     ${a.lines.map(l => `<tr><td class="small">${new Date(l.created_at + 'Z').toLocaleDateString('en-GB')}</td><td>${l.year}</td><td><span class="badge ${l.amount < 0 ? 'green' : 'accent'}">${typeName[l.type]}</span></td><td>${esc(l.description)}</td>
       <td class="r num">${l.amount < 0 ? '−' : ''}${money(Math.abs(l.amount), 2)}</td><td class="r num">${money(l.running, 2)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="card empty">No charges or credits yet.</div>'}`;
+  const box = $('#acctSwaps', main);
+  if (box) {
+    const open = swaps.filter(sw => sw.status === 'pending'), recent = swaps.filter(sw => sw.status !== 'pending').slice(0, 3);
+    box.innerHTML = `<div class="row between" style="margin-bottom:10px"><h2 style="margin:0">Swap requests</h2><a class="btn sm" href="#/swaps">All swaps →</a></div>
+      <div class="grid-2" style="margin-bottom:28px">${[...open, ...recent].map(swapCard).join('') || '<div class="card flat empty small">No swap requests. Click another family’s week on the calendar to request one.</div>'}</div>`;
+    bindSwapActions(box, () => viewAccount(main));
+  }
 }
 
 // ------------------------------------------------------------ people

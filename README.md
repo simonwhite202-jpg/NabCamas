@@ -70,9 +70,15 @@ To start completely clean, delete the `data` folder before starting the server.
 - **Cancellations.** The booker or the family can cancel an unpaid hold. A paid booking can only be cancelled by the site admin, and the ledger entries are reversed automatically. The refund itself is handled outside the site, under whatever cancellation policy you agree.
 
 **Swaps**
-- To swap, **both** weeks must be marked "open to swap" by their family admins. This means a family member can't trade away a peak week their admin didn't agree to give up.
-- Only the receiving family's **admin** can accept. Accepting cancels any other pending requests involving either week. A week that gets booked, or is no longer open to swaps, also cancels its pending requests, and the requester is told.
-- The brief's fallback works: if a week is open to swap *and* for letting, a family member sees both options in the same panel.
+- **Any family's week can be requested for a swap by default.** A family admin can mark a week **In use** ("we're using this week"). It then shows as *In use* on the calendar and can't be requested.
+- Any family member or admin can request a swap. They choose one of their own family's weeks to offer in exchange; it must not be in use, let or past. Their own family admins are told.
+- Requests appear on the **Swaps** page and in the **Swap requests** section of each family's **Account** page.
+- Only the receiving family's **admin** can reply, with one of three answers:
+  - **Accept:** the two weeks change hands for that year, and both are marked *In use*.
+  - **Decline: we're using it:** the week is marked *In use*, so nobody else asks for it.
+  - **Decline: not sure yet:** the week stays open, and the requester can ask again later.
+- Marking a week *In use* automatically declines any requests waiting for it. A week that gets let or swapped cancels the other requests involving it, and the requesters are told.
+- A week can be requested for a swap *and* offered for letting at the same time. A family member sees both options in the same panel.
 
 **Accounts and the budget**
 - **Service charge = charge per week × the family's weeks.** The calculated rate is budget ÷ total weeks (2026: £19,332 ÷ 52 = £371.77). You can set a rounded figure, as the syndicate does (£370), and the page shows the resulting shortfall or surplus (2026: £19,240 raised, £92 short). Re-issuing a year's charges replaces only that year's service-charge lines. Payments, credits and adjustments are kept.
