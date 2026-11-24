@@ -69,16 +69,26 @@ To start completely clean, delete the `data` folder before starting the server.
 - **Price.** The default comes from the site-wide season rate. A family admin can override it for any one week.
 - **Cancellations.** The booker or the family can cancel an unpaid hold. A paid booking can only be cancelled by the site admin, and the ledger entries are reversed automatically. The refund itself is handled outside the site, under whatever cancellation policy you agree.
 
-**Swaps**
-- **Any family's week can be requested for a swap by default.** A family admin can mark a week **In use** ("we're using this week"). It then shows as *In use* on the calendar and can't be requested.
-- Any family member or admin can request a swap. They choose one of their own family's weeks to offer in exchange; it must not be in use, let or past. Their own family admins are told.
-- Requests appear on the **Swaps** page and in the **Swap requests** section of each family's **Account** page.
-- Only the receiving family's **admin** can reply, with one of three answers:
-  - **Accept:** the two weeks change hands for that year, and both are marked *In use*.
-  - **Decline: we're using it:** the week is marked *In use*, so nobody else asks for it.
-  - **Decline: not sure yet:** the week stays open, and the requester can ask again later.
-- Marking a week *In use* automatically declines any requests waiting for it. A week that gets let or swapped cancels the other requests involving it, and the requesters are told.
-- A week can be requested for a swap *and* offered for letting at the same time. A family member sees both options in the same panel.
+**My weeks and swaps**
+- **My weeks** lists only your family's weeks. The family admin gives each one a setting:
+  - **Undecided** (the default)
+  - **Using it**
+  - **Willing to swap**
+  - **For sale**
+  - **Swap or sell**
+- Sale weeks have a **price**; leave it blank to use the admin's summer, shoulder or winter rate. They also have a **who can buy** choice: other syndicate members only; members and any family's trusted friends; or members and our own trusted friends. Family members can see the list but not change it.
+- **Asking for a swap:** any family member can ask for any other family's week that isn't *Using it*. They only name the week they want. The request can only be sent if their family has at least one week marked **Willing to swap**.
+- **The owning family's admin** sees the request together with the requesting family's *Willing to swap* weeks, and either:
+  - **chooses one** of those weeks in exchange; or
+  - **declines: we're using it**, and the week is marked *Using it*; or
+  - **declines: not sure yet**, and the requester can ask again later.
+- **The requesting family's admin** then either **confirms**, and the weeks change hands for that year with both marked *Using it*, or chooses **not that week**, and the other family can pick a different one or decline.
+- Requests tidy themselves up:
+  - Marking a week *Using it* declines requests for it.
+  - If a week that was chosen in exchange is no longer *Willing to swap*, the request goes back to the owning family to choose again.
+  - A week that is sold or swapped cancels the other requests involving it.
+  - Everyone involved is notified.
+- Requests appear on the **Swaps** page and in the **Swap requests** section of each family's **Account** page. The Swaps tab shows a count of requests waiting for the family admin.
 
 **Accounts and the budget**
 - **Service charge = charge per week × the family's weeks.** The calculated rate is budget ÷ total weeks (2026: £19,332 ÷ 52 = £371.77). You can set a rounded figure, as the syndicate does (£370), and the page shows the resulting shortfall or surplus (2026: £19,240 raised, £92 short). Re-issuing a year's charges replaces only that year's service-charge lines. Payments, credits and adjustments are kept.

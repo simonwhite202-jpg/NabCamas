@@ -135,3 +135,5 @@ tfoot td { font-weight: 600; background: var(--surface-2); }
   .topbar-inner { flex-wrap: wrap; } nav.tabs { order: 3; flex-basis: 100%; }
 }
 .week .cmt { font-size: 11px; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+table.myweeks td { vertical-align: top; } table.myweeks .plan-sel { width: 200px; } table.myweeks .sale-opts { margin-top: 8px !important; }
+table.myweeks .sale-opts .row { flex-wrap: wrap; } table.myweeks .sale-opts input { max-width: 150px; } tr.past-row { opacity: .55; }
