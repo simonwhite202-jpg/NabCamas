@@ -69,26 +69,36 @@ To start completely clean, delete the `data` folder before starting the server.
 - **Price.** The default comes from the site-wide season rate. A family admin can override it for any one week.
 - **Cancellations.** The booker or the family can cancel an unpaid hold. A paid booking can only be cancelled by the site admin, and the ledger entries are reversed automatically. The refund itself is handled outside the site, under whatever cancellation policy you agree.
 
-**My weeks and swaps**
-- **My weeks** lists only your family's weeks. The family admin gives each one a setting:
+**Credits: measuring fairness**
+- **Entitlement:** each share is worth **100 credits** a year (5,200 for 52 shares). Uneven swaps and admin adjustments carry credits from one year to the next.
+- **Week values:** every week has a credit value from its band: school holidays, summer, shoulder or winter (illustrative weights 170 / 130 / 100 / 45). The site scales the weights so each year adds up to about 5,200, give or take rounding; this also handles 53-week years.
+- **School holidays:** the site admin marks school-holiday weeks under **Weeks & allocation**. 2026 and 2027 are preloaded with assumed English school holidays, so check them.
+- **Fairness table:** **My weeks** and **Site admin → Credits & pot** show, for each family, the credit value of the weeks it holds against its entitlement.
+
+**My weeks**
+- The family admin gives each week a setting:
   - **Undecided** (the default)
   - **Using it**
   - **Willing to swap**
-  - **For sale**
-  - **Swap or sell**
-- Sale weeks have a **price**; leave it blank to use the admin's summer, shoulder or winter rate. They also have a **who can buy** choice: other syndicate members only; members and any family's trusted friends; or members and our own trusted friends. Family members can see the list but not change it.
-- **Asking for a swap:** any family member can ask for any other family's week that isn't *Using it*. They only name the week they want. The request can only be sent if their family has at least one week marked **Willing to swap**.
-- **The owning family's admin** sees the request together with the requesting family's *Willing to swap* weeks, and either:
+  - **Released**: the family won't use it, and others can book it
+- For released weeks, the family can set its own **friend price** (blank means the admin's default for the band) and **who can book**: other members only; members and any family's trusted friends; or members and our own trusted friends.
+- **Reminders:** family admins are reminded about weeks still **Undecided** at 16 and 8 weeks before arrival. Nothing is released automatically.
+
+**Released weeks and the let-income pot**
+- **Booking:** a released week can be booked by other members first, at the **member price** (75% of the friend price by default). Trusted friends can book it **7 days later**, and always from 3 weeks before arrival.
+- **The pot:** all money paid for a year's released weeks goes into one **let-income pot**.
+- **Release points:** the pot is shared by each released week's credit value, counted **in full if released 8+ weeks ahead**, otherwise at 50%. A released week counts whether or not anyone books it.
+- **Paying out:** the site admin presses **Distribute pot** (Site admin → Credits & pot). Each family's share is credited against the following year's service charge. Re-distributing replaces the earlier figures.
+
+**Swaps**
+- **Asking:** any family member can ask for any other family's week that isn't *Using it*. They only name the week they want, and the request can only be sent if their family has at least one week that is *Willing to swap* or *Released*.
+- **The owning family's admin** either:
   - **chooses one** of those weeks in exchange; or
   - **declines: we're using it**, and the week is marked *Using it*; or
-  - **declines: not sure yet**, and the requester can ask again later.
-- **The requesting family's admin** then either **confirms**, and the weeks change hands for that year with both marked *Using it*, or chooses **not that week**, and the other family can pick a different one or decline.
-- Requests tidy themselves up:
-  - Marking a week *Using it* declines requests for it.
-  - If a week that was chosen in exchange is no longer *Willing to swap*, the request goes back to the owning family to choose again.
-  - A week that is sold or swapped cancels the other requests involving it.
-  - Everyone involved is notified.
-- Requests appear on the **Swaps** page and in the **Swap requests** section of each family's **Account** page. The Swaps tab shows a count of requests waiting for the family admin.
+  - **declines: not sure yet**.
+- **The requesting family's admin** then **confirms**, or chooses **not that week**, in which case the other family can pick a different one.
+- **Uneven swaps:** the family that gets the more valuable week has the difference taken off next year's credits, and the other family gains it.
+- **Tidying up:** requests sort themselves out when weeks change (marked using, released, booked or swapped), and everyone involved is notified.
 
 **Accounts and the budget**
 - **Service charge = charge per week × the family's weeks.** The calculated rate is budget ÷ total weeks (2026: £19,332 ÷ 52 = £371.77). You can set a rounded figure, as the syndicate does (£370), and the page shows the resulting shortfall or surplus (2026: £19,240 raised, £92 short). Re-issuing a year's charges replaces only that year's service-charge lines. Payments, credits and adjustments are kept.
@@ -121,6 +131,6 @@ To start completely clean, delete the `data` folder before starting the server.
 Other hosts work the same way. Render (a Starter service plus a persistent disk) or a small VPS both need Node 22.5+, a persistent folder for `DB_FILE`, and the same variables.
 
 ## Before going live
-1. **Email.** Notifications currently appear in the in-app bell and are printed to the server console. To send real emails, plug an email service into `sendEmail()` in `server.js` (SMTP, Resend, Postmark, etc.).
+1. **Email.** Reminders, invitations and notifications are emailed through [Resend](https://resend.com) once two variables are set on the server: `RESEND_API_KEY` and `EMAIL_FROM` (e.g. `Nab Camas <portal@your-domain>`, from a domain verified in Resend). Until then, they only appear in the site's notification bell.
 3. **Card payments** (optional). The bank-transfer flow is deliberately simple. To take card payments instead, add a Stripe Checkout step and confirm bookings from its webhook rather than by hand.
 4. Agree a **cancellation and refund policy** and a rule on **who is liable for a friend's damage** (usually the family who offered the week). Put both on the booking screen.
