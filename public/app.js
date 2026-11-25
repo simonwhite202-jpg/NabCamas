@@ -662,9 +662,10 @@ async function viewAccount(main, familyId) {
   const year = S.myYear || S.year, s = S.me.settings;
   const [a, enq, cs] = await Promise.all([api('/account' + (familyId ? '?family_id=' + familyId : '')), familyId ? null : api('/enquiries'), api('/credits?year=' + year)]);
   const me = cs.rows.find(r => r.id === (familyId ? Number(familyId) : S.me.user.family_id)) || { value: 0, entitlement: 0, diff: 0, lets: 0, let_income: 0, released_weeks: 0, carried: 0 };
+  const canRm = !!familyId && isSiteRole();   // the site admin can remove a payment or adjustment recorded by mistake
   const typeName = { service_charge: 'Service charge', rental_credit: 'Letting income', purchase: 'Week purchase', payment: 'Payment', adjustment: 'Adjustment' };
   const owes = a.balance > 0.005;
-  main.innerHTML = `<div class="row between"><h1>${esc(a.family.name)} account</h1>${familyId ? '<a class="btn sm" href="#/admin/overview">← Back to overview</a>' : ''}</div>
+  main.innerHTML = `<div class="row between"><h1>${esc(a.family.name)} account</h1>${familyId ? '<a class="btn sm" href="#/admin/overview">← Back to Payments</a>' : ''}</div>
     <div class="grid-3" style="margin-bottom:24px">
       <div class="card"><div class="muted small">${owes ? 'Balance to pay' : a.balance < -0.005 ? 'In credit' : 'Balance'}</div><div class="stat ${owes ? 'owes' : a.balance < -0.005 ? 'credit' : ''} num">${money(Math.abs(a.balance), 2)}</div>
         ${owes ? `<div class="small muted" style="margin-top:6px">Pay to ${esc(S.me.settings.bank.account_name)} using reference <b>${esc(a.family.name.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10))}-SC</b></div>` : ''}</div>
@@ -679,9 +680,13 @@ async function viewAccount(main, familyId) {
         <div class="small muted" style="margin-top:6px">From ${me.lets} let${me.lets === 1 ? '' : 's'}, after the ${money(s.letting_cost || 0)} letting cost on each. It comes off your service charge, and any extra carries forward.</div></div></div>
     ${!familyId ? `<div id="topupBox"></div><div id="acctSwaps"></div>` : ''}
     <h2>Statement</h2><p class="muted small">When one of your released weeks lets, the payment is credited here as soon as it arrives, less the ${money(S.me.settings.letting_cost || 0)} letting cost for the maintenance fund. Any credit carries forward against future charges. Charges are positive; credits and payments are negative.</p>
-    ${a.lines.length ? `<div class="table-wrap"><table><thead><tr><th>Date</th><th>Year</th><th>Type</th><th>Description</th><th class="r">Amount</th><th class="r">Balance</th></tr></thead><tbody>
+    ${a.lines.length ? `<div class="table-wrap"><table><thead><tr><th>Date</th><th>Year</th><th>Type</th><th>Description</th><th class="r">Amount</th><th class="r">Balance</th>${canRm ? '<th></th>' : ''}</tr></thead><tbody>
     ${a.lines.map(l => `<tr><td class="small">${new Date(l.entry_date ? l.entry_date + 'T00:00:00Z' : l.created_at + 'Z').toLocaleDateString('en-GB')}</td><td>${l.year}</td><td><span class="badge ${l.amount < 0 ? 'green' : 'accent'}">${typeName[l.type]}</span></td><td>${esc(l.description)}</td>
-      <td class="r num">${l.amount < 0 ? '−' : ''}${money(Math.abs(l.amount), 2)}</td><td class="r num">${money(l.running, 2)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="card empty">No charges or credits yet.</div>'}`;
+      <td class="r num">${l.amount < 0 ? '−' : ''}${money(Math.abs(l.amount), 2)}</td><td class="r num">${money(l.running, 2)}</td>${canRm ? `<td class="r">${['payment', 'adjustment'].includes(l.type) && !l.booking_id ? `<button class="btn sm danger" data-rmline="${l.id}">Remove</button>` : ''}</td>` : ''}</tr>`).join('')}</tbody></table></div>` : '<div class="card empty">No charges or credits yet.</div>'}`;
+  main.querySelectorAll('[data-rmline]').forEach(b => b.onclick = guard(async () => { const l = a.lines.find(x => x.id == b.dataset.rmline);
+    const when = new Date(l.entry_date ? l.entry_date + 'T00:00:00Z' : l.created_at + 'Z').toLocaleDateString('en-GB');
+    if (!confirm(`Remove this ${l.type === 'payment' ? 'payment' : 'adjustment'} from ${a.family.name}’s account?\n\n${when} · ${l.year} · ${l.description} · ${l.amount < 0 ? '−' : ''}${money(Math.abs(l.amount), 2)}\n\nTheir balance changes by ${money(Math.abs(l.amount), 2)}${l.type === 'payment' ? ' (they owe that much more)' : ''}, and their family admins are told.`)) return;
+    const r = await api('/admin/ledger/' + l.id, { method: 'DELETE' }); toast(r.topup ? 'Removed. The top-up is back on the Payments page as expected' : 'Removed'); viewAccount(main, familyId); }));
   const tb = $('#topupBox', main); if (tb) topupBox(tb, Math.max(0, -a.balance), () => viewAccount(main));
   const box = $('#acctSwaps', main);
   if (box) {
@@ -887,7 +892,7 @@ async function admOverview(el, year) {
         <td>${status(r)}</td>
         <td class="r" style="white-space:nowrap">${on && r.outstanding > 0.005 ? `<button class="btn sm green" data-full="${r.id}">Paid in full</button> ` : ''}<button class="btn sm" data-pay="${r.id}">Record payment</button></td></tr>`; }).join('')}</tbody>
       <tfoot><tr><td>Total</td><td class="r">${b.generated ? signed(c.totals.charge) : money(b.raised, 2)}</td><td class="r">${signed(c.totals.paid)}</td><td class="r">${b.generated ? money(Math.max(0, c.totals.outstanding), 2) : '—'}</td><td></td><td></td></tr></tfoot></table></div>
-      <p class="tiny muted" style="margin:0">Outstanding is the year’s charge less payments, after anything else on the household’s account for that year: let income, purchases, one-off charges. In total across all years, households owe ${money(owedAll, 2)}.</p></section>`;
+      <p class="tiny muted" style="margin:0">Outstanding is the year’s charge less payments, after anything else on the household’s account for that year: let income, purchases, one-off charges. In total across all years, households owe ${money(owedAll, 2)}. To remove a payment recorded by mistake, open the household’s account.</p></section>`;
   const reload = () => admOverview(el, c.year);
   el.querySelectorAll('[data-cy]').forEach(x => x.onclick = () => admOverview(el, Number(x.dataset.cy)));
   const saveRate = guard(async v => { await api('/admin/budget-year/' + c.year, { method: 'PUT', body: { rate_per_week: v } }); reload(); });

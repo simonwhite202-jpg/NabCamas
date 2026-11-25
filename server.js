@@ -1573,6 +1573,21 @@ route('POST', '/api/admin/credits', ({ user, body }) => {
 });
 // The yearly pot has been replaced by crediting each let directly (see confirmBooking). Earlier distributions stay in the ledger.
 route('POST', '/api/admin/pot/distribute', () => fail(400, 'Let income is now credited to each household when the guest’s payment is confirmed'));
+// the site admin removes a payment or adjustment recorded by mistake. Lines that belong to a booking are reversed by
+// cancelling the booking, and service charges by re-issuing them, so neither can be removed here.
+route('DELETE', '/api/admin/ledger/:id', ({ user, params }) => {
+  needAdmin(user); const l = q1('SELECT * FROM ledger WHERE id=?', params.id) || fail(404, 'That line has already gone');
+  if (l.booking_id) fail(400, 'This line belongs to a booking: cancel the booking on the Lets page instead');
+  if (!['payment', 'adjustment'].includes(l.type)) fail(400, 'Service charges are changed by re-issuing them on the Payments page');
+  const ref = (l.description.match(/^Top-up received \((.+)\)$/) || [])[1], cur = settings().currency;
+  tx(() => {
+    run('DELETE FROM ledger WHERE id=?', l.id);
+    if (ref) run("UPDATE topups SET status='pending', confirmed_at=NULL, confirmed_by=NULL WHERE reference=? AND status='confirmed'", ref);   // expected again
+  });
+  notify(familyAdmins(l.family_id), `The site admin removed ${l.type === 'payment' ? `a payment of ${cur}${Math.abs(l.amount)}` : `an adjustment of ${l.amount < 0 ? '−' : ''}${cur}${Math.abs(l.amount)}`} from your ${l.year} account: “${l.description}”.`, '#/account');
+  audit(user.id, 'ledger.remove', { id: l.id, family: l.family_id, type: l.type, amount: l.amount, year: l.year, description: l.description });
+  return { ok: true, topup: !!ref };
+});
 route('POST', '/api/admin/ledger', ({ user, body }) => {
   needAdmin(user); const amt = round2(Number(body.amount)); if (!amt) fail(400, 'Amount required');
   const type = body.type === 'payment' ? 'payment' : 'adjustment';

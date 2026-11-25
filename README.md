@@ -226,6 +226,10 @@ Opening a page you don't have access to takes you back to Home.
   - **Issue {year} service charges** puts each charge on the households' accounts and tells their admins. **Re-issue** replaces the charges and leaves payments alone.
 - **The table:** each household's charge, what it has paid, what's **outstanding** (after any let income or purchases for that year), and a status: *Not issued*, *Unpaid*, *Part paid*, *Paid* or *In credit*.
 - **Recording payments:** **Paid in full** records the outstanding amount as received today. **Record payment** takes a full or part amount, the date it arrived and a note, or an adjustment. It works before the charges are issued too. Statements show the date the money arrived, and the family admins get a thank-you notice.
+- **Removing a payment recorded by mistake:** open the household's account (click its name on Payments) and press **Remove** on the payment or adjustment. The balance changes straight away, and the household's admins are told.
+  - Removing a confirmed top-up puts it back under *Top-ups expected*.
+  - Service charges can't be removed; change them by re-issuing.
+  - Lines that belong to a booking can't be removed either; cancel the booking on the Lets page instead.
 - **Bank balance:** add the syndicate account's balance by date (with a note) as you read it from the bank. The latest is shown at the top, with a history and the change between readings.
 - **Payments to confirm** and **Top-ups expected** work as before.
 
