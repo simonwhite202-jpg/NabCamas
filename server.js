@@ -73,7 +73,7 @@ try { db.exec('ALTER TABLE budget_items ADD COLUMN notes TEXT'); } catch { }
 // Swaps: every family week can receive swap requests unless its family marks it "in use".
 try { db.exec('ALTER TABLE weeks ADD COLUMN in_use INTEGER NOT NULL DEFAULT 0'); db.exec("UPDATE weeks SET status='own_use' WHERE status='offered' AND offer_friends=0"); } catch { }
 try { db.exec('ALTER TABLE swaps ADD COLUMN decline_reason TEXT'); } catch { }
-// Week settings: Undecided / Using it / Willing to swap / For sale / Swap or sell (stored as in_use, offer_swap, offer_friends).
+// Week settings: Undecided / Using it / Released (stored as in_use, offer_friends; offer_swap is no longer used).
 // sale_to = who may buy a sale week: 'members' (other syndicate families), 'all' (+ any family's trusted friends), 'own' (+ our own friends).
 try { db.exec("ALTER TABLE weeks ADD COLUMN sale_to TEXT NOT NULL DEFAULT 'all'"); db.exec('UPDATE weeks SET sale_to=friend_scope'); } catch { }
 // Swaps v3: the requester only names the week they want; the receiving family picks one of the requester's "willing to swap"
@@ -144,6 +144,21 @@ db.exec(`CREATE TABLE IF NOT EXISTS friend_enquiries (
   message TEXT, guest_name TEXT, party_size INTEGER,
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','accepted','declined','closed','withdrawn')),
   close_reason TEXT, booking_id INTEGER, answered_by INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP, closed_at TEXT);`);
+// Next-year allocation: a year stays open for change requests until the site admin signs it off (this year and earlier are
+// always signed off). A family admin asks to change one of their weeks for another; the site admin alone decides.
+db.exec(`CREATE TABLE IF NOT EXISTS year_status (year INTEGER PRIMARY KEY, signed_off_at TEXT, signed_off_by INTEGER);
+CREATE TABLE IF NOT EXISTS change_requests (
+  id INTEGER PRIMARY KEY, year INTEGER NOT NULL, family_id INTEGER NOT NULL REFERENCES families(id), user_id INTEGER NOT NULL REFERENCES users(id),
+  give_week_id INTEGER NOT NULL REFERENCES weeks(id), want_week_id INTEGER NOT NULL REFERENCES weeks(id), want_family_id INTEGER, note TEXT,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','approved','declined','withdrawn','lapsed')),
+  admin_note TEXT, decided_by INTEGER, decided_at TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS topups (
+  id INTEGER PRIMARY KEY, family_id INTEGER NOT NULL REFERENCES families(id), user_id INTEGER NOT NULL REFERENCES users(id), amount REAL NOT NULL, reference TEXT,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','confirmed','cancelled')), created_at TEXT DEFAULT CURRENT_TIMESTAMP, confirmed_at TEXT, confirmed_by INTEGER);`);
+// a week a family gained through a change request: its let income is capped at that year's service charge per share
+try { db.exec('ALTER TABLE weeks ADD COLUMN gained_by_request INTEGER NOT NULL DEFAULT 0'); } catch { }
+// let income above that cap, which goes to the maintenance fund along with the letting cost
+try { db.exec('ALTER TABLE bookings ADD COLUMN fund_extra REAL'); } catch { }
 // picked = 1: the family holding the week chose this week from the requesting family's Willing to swap weeks
 try { db.exec('ALTER TABLE swaps ADD COLUMN picked INTEGER NOT NULL DEFAULT 0'); } catch { }
 // the holder's reply to an enquiry without picking a week or releasing ('unsure' = not sure yet; they stay in the queue)
@@ -277,7 +292,6 @@ function weekView(w, u, s) {
   v.first_refusal_until = w.offer_friends && w.status === 'offered' && w.enquiry_until && w.enquiry_until > nowSql() && q1("SELECT 1 FROM enquiries WHERE week_id=? AND status='open'", w.id) ? w.enquiry_until : null;
   v.can_book = w.status === 'offered' && !!w.offer_friends && !mine && w.start_date >= today() && !v.first_refusal_until && ((u.role === 'friend' && friendVisible) || isFamily(u));
   v.plan = planOf(w);
-  v.can_offer_swap = isFamily(u) && !mine && swappable(w);
   if (isFamily(u) || u.is_site_admin) {
     const queue = openEnquiries(w.id), i = queue.findIndex(e => e.family_id === u.family_id);
     v.enquiries = queue.length;
@@ -293,18 +307,27 @@ function weekView(w, u, s) {
     const fe = q1("SELECT id, created_at FROM friend_enquiries WHERE week_id=? AND user_id=? AND status='open'", w.id, u.id);
     v.my_friend_enquiry = fe || null; v.can_friend_enquire = !fe && undecidedWeek(w);
     v.offer_swap = 0; v.in_use = 0; v.plan = null; v.enquiry_until = null;
-  } else if (mine) v.friend_enquiries = q1("SELECT COUNT(*) n FROM friend_enquiries WHERE week_id=? AND status='open'", w.id).n;
+  } else if (mine) {
+    v.friend_enquiries = q1("SELECT COUNT(*) n FROM friend_enquiries WHERE week_id=? AND status='open'", w.id).n;
+    if (w.gained_by_request) v.income_cap = chargePerShare(w.year);   // let income on this week is capped (see confirmBooking)
+  }
   v.pending_swaps = isFamily(u) ? q1("SELECT COUNT(*) n FROM swaps WHERE status IN ('pending','proposed') AND target_week_id=?", w.id).n : 0;
   return v;
 }
 const today = () => new Date().toISOString().slice(0, 10);
 // A week can be asked for (or offered) in a swap if a family holds it, it isn't let/reserved, its family hasn't marked it in use, and it's in the future.
 const swappable = w => w.family_id != null && !w.in_use && !['pending', 'booked', 'syndicate'].includes(w.status) && w.start_date >= today();
-// Each week's setting: undecided | using | swap (willing to give it in a swap) | released (others can book it; income → that family's account, less the letting cost)
-const PLANS = ['undecided', 'using', 'swap', 'released'];
-const planOf = w => w.in_use ? 'using' : w.offer_friends ? 'released' : w.offer_swap ? 'swap' : 'undecided';
-// the weeks a family has marked Willing to swap (and that can still change hands): what the holder of a requested week picks from
-const swapWeeksOf = fid => q("SELECT * FROM weeks WHERE family_id=? AND offer_swap=1 AND offer_friends=0 AND in_use=0 ORDER BY start_date", fid).filter(swappable);
+const thisYear = () => new Date().getFullYear();
+const signedOff = year => year <= thisYear() || !!q1('SELECT 1 FROM year_status WHERE year=? AND signed_off_at IS NOT NULL', year);
+const openYears = () => q('SELECT DISTINCT year FROM weeks ORDER BY year').map(r => r.year).filter(y => !signedOff(y));
+const familyBalance = fid => round2(q1('SELECT COALESCE(SUM(amount),0) n FROM ledger WHERE family_id=?', fid).n);
+const creditAvailable = fid => Math.max(0, -familyBalance(fid));
+// the service charge per share for a year, or the latest one set before it
+const chargePerShare = year => (q1('SELECT rate_per_week r FROM budget_years WHERE rate_per_week IS NOT NULL ORDER BY (year<=?) DESC, year DESC LIMIT 1', year) || {}).r ?? null;
+// Each week's setting: undecided | using | released (others can book it; income → that family's account, less the letting cost)
+// (Willing to swap was retired: once a year is signed off, weeks are only bought and sold; swaps are next-year change requests.)
+const PLANS = ['undecided', 'using', 'released'];
+const planOf = w => w.in_use ? 'using' : w.offer_friends ? 'released' : 'undecided';
 const swapWeekView = w => w && { id: w.id, year: w.year, week_no: w.week_no, start_date: w.start_date, end_date: w.end_date, season: w.season, comment: w.comment, school_holiday: w.school_holiday, credits: creditValue(w) };
 
 // ---------------------------------------------------------------- credits & let income
@@ -333,7 +356,7 @@ function friendsFrom(w, s = settings()) {
 // Let income: each paid let is credited to the family that released the week, less the letting cost, which goes to
 // the maintenance fund. Credit sits on the family's account and carries forward against future charges.
 function letIncome(year) {
-  const g = q1(`SELECT COALESCE(SUM(b.amount),0) n, COUNT(*) c, COALESCE(SUM(b.letting_cost),0) f FROM bookings b JOIN weeks w ON w.id=b.week_id WHERE b.status='confirmed' AND w.year=?`, year);
+  const g = q1(`SELECT COALESCE(SUM(b.amount),0) n, COUNT(*) c, COALESCE(SUM(COALESCE(b.letting_cost,0) + COALESCE(b.fund_extra,0)),0) f FROM bookings b JOIN weeks w ON w.id=b.week_id WHERE b.status='confirmed' AND w.year=?`, year);
   return { gross: round2(g.n), lets: g.c, fund: round2(g.f), credited: round2(g.n - g.f) };
 }
 function creditSummary(year, s = settings()) {
@@ -345,7 +368,7 @@ function creditSummary(year, s = settings()) {
     // differences from this year's uneven swaps are already settled by credits carried into next year
     const settled = q1(`SELECT COALESCE(SUM(c.amount),0) n FROM credit_ledger c JOIN swaps sw ON sw.id=c.swap_id JOIN weeks t ON t.id=sw.target_week_id
       WHERE c.family_id=? AND c.year=? AND t.year=?`, f.id, year + 1, year).n;
-    const lets = q1(`SELECT COUNT(*) c, COALESCE(SUM(b.amount - COALESCE(b.letting_cost,0)),0) n FROM bookings b JOIN weeks w ON w.id=b.week_id WHERE b.status='confirmed' AND w.year=? AND b.seller_family_id=?`, year, f.id);
+    const lets = q1(`SELECT COUNT(*) c, COALESCE(SUM(b.amount - COALESCE(b.letting_cost,0) - COALESCE(b.fund_extra,0)),0) n FROM bookings b JOIN weeks w ON w.id=b.week_id WHERE b.status='confirmed' AND w.year=? AND b.seller_family_id=?`, year, f.id);
     return { id: f.id, name: f.name, color: f.color, shares: f.share_units, carried, entitlement, weeks: held.length, value, settled, diff: value - entitlement + settled,
       school_weeks: held.filter(w => w.school_holiday).length, released_weeks: held.filter(w => w.offer_friends && w.released_at).length, lets: lets.c, let_income: round2(lets.n) };
   });
@@ -369,7 +392,7 @@ function runReminders() {
   }
   const asked = w => { const n = openEnquiries(w.id).length; return n ? `, ${n} famil${n > 1 ? 'ies have' : 'y has'} enquired` : ''; };
   for (const [fid, ws] of Object.entries(due)) notify(familyAdmins(Number(fid)),
-    `Still undecided: ${ws.map(w => `week ${w.week_no} (${fmtDate(w.start_date)}${asked(w)})`).join('; ')}. Please mark ${ws.length > 1 ? 'them' : 'it'} Using it, Willing to swap or Released. If you release a week and it lets, the payment, less the ${s.currency}${s.letting_cost} letting cost, is credited to your account.`, '#/weeks');
+    `Still undecided: ${ws.map(w => `week ${w.week_no} (${fmtDate(w.start_date)}${asked(w)})`).join('; ')}. Please mark ${ws.length > 1 ? 'them' : 'it'} Using it or Released. If you release a week and it lets, the payment, less the ${s.currency}${s.letting_cost} letting cost, is credited to your account.`, '#/weeks');
 }
 
 // Called whenever a week stops being available, so swap offers that depend on it don't hang around:
@@ -404,7 +427,7 @@ function closeEnquiries(w, reason, winnerFamily = null) {
     if (!won) notify([e.user_id], `Your enquiry about ${weekLabel(w)} is closed: ${reason === 'using' ? `${famName(w.family_id)} are using it` : CLOSED_WHY[reason] || reason}.`, '#/enquiries');
   }
 }
-// trusted friends can enquire about a week only while its family hasn't decided (not Using it, Willing to swap or Released)
+// trusted friends can enquire about a week only while its family hasn't decided (not Using it or Released)
 const undecidedWeek = w => w.family_id != null && !w.in_use && !w.offer_swap && !w.offer_friends && w.status === 'own_use' && w.start_date >= today();
 const openFriendEnquiries = weekId => q("SELECT * FROM friend_enquiries WHERE week_id=? AND status='open' ORDER BY created_at, id", weekId);
 // close friends' enquiries when the week stops being theirs to ask for. Friends aren't told which household holds a week.
@@ -440,7 +463,8 @@ function resolveFirstRefusal() {
     if (winner) {
       const u = q1('SELECT * FROM users WHERE id=?', winner.user_id);
       try {
-        const b = createBooking(u, w, { method: winner.claim_method, guest_name: winner.claim_guest, party_size: winner.claim_party }, memberPriceOf(w));
+        const price = memberPriceOf(w), method = winner.claim_method === 'account' && creditAvailable(winner.family_id) + 0.005 < price ? 'bank' : winner.claim_method;
+        const b = createBooking(u, w, { method, guest_name: winner.claim_guest, party_size: winner.claim_party }, price);
         notify([winner.user_id, ...familyAdmins(winner.family_id)].filter((x, i, a) => a.indexOf(x) === i), b.status === 'confirmed'
           ? `Your family has ${weekLabel(w)}: it's booked and charged to your family account.`
           : `Your family has ${weekLabel(w)}. Please pay ${settings().currency}${b.amount} by bank transfer within ${settings().hold_days} days, reference ${b.reference}.`, '#/bookings');
@@ -460,17 +484,20 @@ function balances() {
 }
 function confirmBooking(b, byUser) {
   const s = settings(); const w = q1('SELECT * FROM weeks WHERE id=?', b.week_id);
-  const cost = round2(Math.min(b.amount, Number(s.letting_cost) || 0)), credit = round2(b.amount - cost);
+  const cost = round2(Math.min(b.amount, Number(s.letting_cost) || 0)), net = round2(b.amount - cost);
+  // a week gained through a change request earns its household no more than that year's service charge per share
+  const cap = w.gained_by_request && w.family_id === b.seller_family_id ? chargePerShare(w.year) : null;
+  const credit = cap != null ? round2(Math.min(net, cap)) : net, extra = round2(net - credit);
   const buyer = q1('SELECT * FROM users WHERE id=?', b.user_id), guest = b.guest_name || buyer.name;
-  run("UPDATE bookings SET status='confirmed', confirmed_at=datetime('now'), confirmed_by=?, letting_cost=? WHERE id=?", byUser.id, cost, b.id);
+  run("UPDATE bookings SET status='confirmed', confirmed_at=datetime('now'), confirmed_by=?, letting_cost=?, fund_extra=? WHERE id=?", byUser.id, cost, extra || null, b.id);
   if (credit > 0) run("INSERT INTO ledger (family_id,year,type,description,amount,booking_id,created_by) VALUES (?,?,'rental_credit',?,?,?,?)",
-    b.seller_family_id, w.year, `Week ${w.week_no} ${w.year} let to ${guest}: ${s.currency}${b.amount} less ${s.currency}${cost} letting cost`, -credit, b.id, byUser.id);
+    b.seller_family_id, w.year, `Week ${w.week_no} ${w.year} let to ${guest}: ${s.currency}${b.amount} less ${s.currency}${cost} letting cost${extra ? `, capped at ${s.currency}${cap} as the week came from a change request (${s.currency}${extra} to the maintenance fund)` : ''}`, -credit, b.id, byUser.id);
   run("UPDATE weeks SET status='booked' WHERE id=?", w.id);
   if (b.method === 'account') run("INSERT INTO ledger (family_id,year,type,description,amount,booking_id,created_by) VALUES (?,?,?,?,?,?,?)",
     b.buyer_family_id, w.year, 'purchase', `Bought week ${w.week_no} ${w.year} from ${famName(b.seller_family_id)}`, b.amount, b.id, byUser.id);
   releaseSwaps(w, 'let', byUser);
   notify([b.user_id], `Confirmed: ${weekLabel(w)} is booked. Reference ${b.reference}.`, '#/bookings');
-  notify(familyAdmins(b.seller_family_id), `${weekLabel(w)} has been let to ${guest}. ${s.currency}${credit} has been credited to your account (the ${s.currency}${b.amount} paid, less the ${s.currency}${cost} letting cost for the maintenance fund).`, '#/account');
+  notify(familyAdmins(b.seller_family_id), `${weekLabel(w)} has been let to ${guest}. ${s.currency}${credit} has been credited to your account (the ${s.currency}${b.amount} paid, less the ${s.currency}${cost} letting cost${extra ? ` and ${s.currency}${extra} above the cap for a week gained by request, both to the maintenance fund` : ' for the maintenance fund'}).`, '#/account');
 }
 
 // ---------------------------------------------------------------- routes
@@ -514,7 +541,8 @@ route('GET', '/api/me', ({ user }) => {
       + q1("SELECT COUNT(*) n FROM friend_enquiries f JOIN weeks w ON w.id=f.week_id WHERE w.family_id=? AND f.status='open' AND w.in_use=0 AND w.status IN ('own_use','offered')", user.family_id).n : 0)
     + q1("SELECT COUNT(*) n FROM enquiries e JOIN weeks w ON w.id=e.week_id WHERE e.family_id=? AND e.status='open' AND e.claim IS NULL AND w.status='offered' AND w.enquiry_until > datetime('now')", user.family_id).n;
   const families = q('SELECT id,name,color FROM families WHERE active=1 ORDER BY name');
-  return { user: publicUser(user), family: fam, settings: pub, unread, years, pendingSwaps, families };
+  const family = fam && isFamily(user) ? { ...fam, credit_available: creditAvailable(fam.id) } : fam;
+  return { user: publicUser(user), family, settings: pub, unread, years, open_years: openYears(), pendingSwaps, families };
 });
 route('PUT', '/api/me', ({ user, body }) => {
   need(user, true);
@@ -563,10 +591,10 @@ route('GET', '/api/home', ({ user }) => {
           : `They accepted ${q1('SELECT name FROM users WHERE id=?', sw.requester_id).name}'s offer of your ${weekLabel(W(sw.offered_week_id))} for their ${weekLabel(W(sw.target_week_id))}.`, link: '#/enquiries', cta: 'Confirm or decline' });
       for (const f of q(`SELECT f.*, u.name friend FROM friend_enquiries f JOIN weeks w ON w.id=f.week_id JOIN users u ON u.id=f.user_id WHERE w.family_id=? AND f.status='open' AND w.in_use=0 AND w.status IN ('own_use','offered') ORDER BY w.start_date`, fid)) attention.push({ tone: 'action',
         title: `${f.friend} (trusted friend) would like to book your ${weekLabel(W(f.week_id))}`, detail: `Let it to them at ${money(priceOf(W(f.week_id), s))}, or decline.${f.party_size ? ` Party of ${f.party_size}.` : ''}`, link: '#/enquiries', cta: 'Answer' });
-      // swap requests waiting for an answer: no week picked yet, not released, no "not sure yet" reply
+      // enquiries waiting for an answer: not released, not in use, no "not sure yet" reply
       for (const r of q(`SELECT w.*, COUNT(e.id) n FROM enquiries e JOIN weeks w ON w.id=e.week_id WHERE w.family_id=? AND e.status='open' AND e.reply IS NULL AND w.status='own_use' AND w.in_use=0
           AND NOT EXISTS (SELECT 1 FROM swaps x WHERE x.enquiry_id=e.id AND x.status IN ('pending','proposed')) GROUP BY w.id ORDER BY w.start_date`, fid)) if (!offered.has(r.id)) attention.push({ tone: 'action',
-        title: `${r.n} swap request${r.n > 1 ? 's' : ''} for your ${weekLabel(r)}`, detail: 'Pick one of their weeks marked Willing to swap, release it, or say you are using it.', link: '#/enquiries', cta: 'Answer' });
+        title: `${r.n} famil${r.n > 1 ? 'ies have' : 'y has'} enquired about your ${weekLabel(r)}`, detail: 'Release it (they get first refusal), say you are using it, or reply not sure yet.', link: '#/enquiries', cta: 'Answer' });
       const horizon = Math.max(...String(s.reminder_weeks || '16').split(',').map(Number).filter(n => n > 0), 0) * 7;
       const undecided = q("SELECT * FROM weeks WHERE family_id=? AND in_use=0 AND offer_friends=0 AND offer_swap=0 AND status='own_use' AND start_date >= ? AND start_date <= date(?, ?) ORDER BY start_date", fid, t, t, `+${horizon} days`);
       if (undecided.length) attention.push({ tone: 'action', title: `${undecided.length} of your weeks in the next ${horizon / 7} weeks ${undecided.length > 1 ? 'are' : 'is'} still undecided`,
@@ -581,7 +609,7 @@ route('GET', '/api/home', ({ user }) => {
   const upcoming = [];
   if (fam) for (const w of q("SELECT * FROM weeks WHERE family_id=? AND start_date >= ? ORDER BY start_date LIMIT 5", fid, t)) {
     const b = q1("SELECT * FROM bookings WHERE week_id=? AND status IN ('pending','confirmed')", w.id);
-    upcoming.push({ start: w.start_date, title: weekLabel(w), detail: b ? `Let to ${b.guest_name || q1('SELECT name FROM users WHERE id=?', b.user_id).name}` : planOf(w) === 'using' ? 'Your family is using it' : planOf(w) === 'released' ? 'Released' : planOf(w) === 'swap' ? 'Willing to swap' : 'Undecided', week_id: w.id, year: w.year, plan: b ? 'let' : planOf(w) });
+    upcoming.push({ start: w.start_date, title: weekLabel(w), detail: b ? `Let to ${b.guest_name || q1('SELECT name FROM users WHERE id=?', b.user_id).name}` : planOf(w) === 'using' ? 'Your family is using it' : planOf(w) === 'released' ? 'Released' : 'Undecided', week_id: w.id, year: w.year, plan: b ? 'let' : planOf(w) });
   }
   const trips = q(`SELECT b.*, w.start_date, w.week_no, w.year, w.end_date FROM bookings b JOIN weeks w ON w.id=b.week_id
     WHERE (b.user_id=? OR (? AND b.buyer_family_id=?)) AND b.status IN ('pending','confirmed') AND w.start_date >= ? ORDER BY w.start_date LIMIT 5`,
@@ -605,6 +633,13 @@ route('GET', '/api/home', ({ user }) => {
     const pend = q("SELECT * FROM bookings WHERE status='pending' AND method='bank'");
     if (pend.length) syndicate.push({ tone: 'action', title: `${pend.length} payment${pend.length > 1 ? 's' : ''} to confirm (${money(pend.reduce((a, b) => a + b.amount, 0))})`, detail: 'Check the bank statement for each reference, then mark it paid.', link: '#/admin/overview', cta: 'Payments' });
     const owing = balances().filter(b => b.balance > 0.005);
+    const tops = q("SELECT * FROM topups WHERE status='pending'");
+    if (tops.length) syndicate.push({ tone: 'action', title: `${tops.length} top-up${tops.length > 1 ? 's' : ''} expected (${money(tops.reduce((a, t) => a + t.amount, 0))})`, detail: 'Check the bank statement for each reference, then confirm the top-up on the Payments page.', link: '#/admin/overview', cta: 'Payments' });
+    for (const y of openYears()) {
+      const n = q1("SELECT COUNT(*) n FROM change_requests WHERE year=? AND status='open'", y).n;
+      syndicate.push(n ? { tone: 'action', title: `${n} change request${n > 1 ? 's' : ''} for the ${y} allocation`, detail: 'Approve or decline them, then sign off the allocation.', link: '#/admin/weeks', cta: 'Review' }
+        : { tone: 'info', title: `The ${y} allocation is open for change requests`, detail: 'Sign it off once it’s agreed. After that, families buy and sell weeks rather than swap them.', link: '#/admin/weeks', cta: 'Weeks' });
+    }
     if (owing.length) syndicate.push({ tone: 'info', title: `${owing.length} famil${owing.length > 1 ? 'ies owe' : 'y owes'} ${money(owing.reduce((a, b) => a + b.balance, 0))} in total`, detail: owing.map(b => `${b.name} ${money(b.balance)}`).join(' · '), link: '#/admin/overview', cta: 'Balances' });
     const noAdmin = q("SELECT name FROM families f WHERE active=1 AND NOT EXISTS (SELECT 1 FROM users u WHERE u.family_id=f.id AND u.role='family_admin' AND u.active=1)").map(r => r.name);
     if (noAdmin.length) syndicate.push({ tone: 'urgent', title: `${noAdmin.join(', ')} ${noAdmin.length > 1 ? 'have' : 'has'} no family admin`, detail: 'Nobody can manage their weeks or answer enquiries.', link: '#/admin/users', cta: 'All users' });
@@ -645,7 +680,8 @@ route('GET', '/api/home', ({ user }) => {
 route('GET', '/api/weeks', ({ user, query }) => {
   need(user, true); expireHolds(); const s = settings();
   const year = Number(query.year) || new Date().getFullYear(); resolveFirstRefusal();
-  return q('SELECT * FROM weeks WHERE year=? ORDER BY week_no', year).map(w => weekView(w, user, s));
+  const open = !signedOff(year);   // still open for next-year change requests
+  return q('SELECT * FROM weeks WHERE year=? ORDER BY week_no', year).map(w => ({ ...weekView(w, user, s), year_open: open }));
 });
 route('PUT', '/api/weeks/:id', ({ user, params, body }) => {
   const w = q1('SELECT * FROM weeks WHERE id=?', params.id) || fail(404, 'Week not found');
@@ -653,15 +689,16 @@ route('PUT', '/api/weeks/:id', ({ user, params, body }) => {
   if (['pending', 'booked'].includes(w.status)) fail(400, 'This week has a booking. Cancel the booking first.');
   let plan = body.plan !== undefined ? body.plan : planOf(w);
   if (plan === 'sell' || plan === 'swap_sell') plan = 'released';
+  if (plan === 'swap') plan = 'undecided';
   if (!PLANS.includes(plan)) fail(400, 'Unknown setting');
-  const using = plan === 'using', swap = plan === 'swap', sell = plan === 'released';
+  const using = plan === 'using', sell = plan === 'released';
   const price = body.price_override === undefined ? w.price_override : body.price_override === '' || body.price_override == null ? null : Number(body.price_override);
   if (price != null && (isNaN(price) || price < 0)) fail(400, 'Price must be a positive number');
   const saleTo = ['members', 'all', 'own'].includes(body.sale_to) ? body.sale_to : w.sale_to;
   tx(() => {
     run(`UPDATE weeks SET status=?, offer_friends=?, offer_swap=?, in_use=?, sale_to=?, price_override=?, note=?,
       released_at=${sell ? (w.offer_friends ? 'released_at' : "datetime('now')") : 'NULL'} WHERE id=?`,
-      sell ? 'offered' : 'own_use', sell ? 1 : 0, swap ? 1 : 0, using ? 1 : 0, saleTo, price, body.note !== undefined ? body.note || null : w.note, w.id);
+      sell ? 'offered' : 'own_use', sell ? 1 : 0, 0, using ? 1 : 0, saleTo, price, body.note !== undefined ? body.note || null : w.note, w.id);
     const now = q1('SELECT * FROM weeks WHERE id=?', w.id);
     if (sell && !w.offer_friends) {
       const s = settings(), enquirers = startFirstRefusal(now, s), rel = q1('SELECT * FROM weeks WHERE id=?', w.id);
@@ -675,8 +712,6 @@ route('PUT', '/api/weeks/:id', ({ user, params, body }) => {
     }
     if (using && !w.in_use) { releaseSwaps(now, 'in_use', user); closeEnquiries(now, 'using'); closeFriendEnquiries(now, 'using'); }
     if (sell && !w.offer_friends) closeFriendEnquiries(q1('SELECT * FROM weeks WHERE id=?', w.id), 'released');
-    if (swap && !w.offer_swap) for (const e of openEnquiries(w.id)) notify([e.user_id],
-      `${famName(w.family_id)} would swap ${weekLabel(now)}, which your family asked for. They can pick from your weeks marked Willing to swap, so check those are up to date in My weeks.`, '#/weeks');
   });
   audit(user.id, 'week.update', { week: w.id, ...body });
   return { ok: true };
@@ -686,7 +721,8 @@ route('PUT', '/api/weeks/:id', ({ user, params, body }) => {
 function createBooking(user, w, body, price) {
   const s = settings();
   const method = body.method === 'account' ? 'account' : 'bank';
-  if (method === 'account' && !(isFamily(user) && (user.role === 'family_admin' || s.allow_member_account_charge === '1'))) fail(403, 'Charging to a family account is not allowed for your login');
+  if (method === 'account' && !(isFamily(user) && (user.role === 'family_admin' || s.allow_member_account_charge === '1'))) fail(403, 'Paying from the family account is not allowed for your login');
+  if (method === 'account' && creditAvailable(user.family_id) + 0.005 < price) fail(400, `Your household has ${s.currency}${creditAvailable(user.family_id).toFixed(2).replace(/\.00$/, '')} in credit, which doesn’t cover ${s.currency}${price}. Top up your balance from the Account page, or pay by bank transfer.`);
   const ref = `NC${String(w.year).slice(2)}W${String(w.week_no).padStart(2, '0')}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
   const id = tx(() => {
     const r = run("UPDATE weeks SET status='pending', enquiry_until=CASE WHEN enquiry_until > datetime('now') THEN datetime('now') ELSE enquiry_until END WHERE id=? AND status='offered'", w.id);
@@ -747,12 +783,11 @@ route('POST', '/api/admin/bookings/:id/confirm', ({ user, params }) => {
   tx(() => confirmBooking(b, user)); audit(user.id, 'booking.confirm', { booking: b.id }); return { ok: true };
 });
 
-// --- enquiries & swap offers
-// 1. A family member requests another family's week (not Using it, not let). Their family joins the queue for it.
-// 2. The holder's admin sees the requesting family's weeks marked Willing to swap and can pick one in exchange
-//    (/enquiries/:id/pick). The requesting family's admin then confirms, and the weeks change hands.
-// 3. Or the holder releases the week: requesters get first refusal (enquiry_hours), first come first served.
-//    Using it → the queue closes. Not sure yet → the requester is told and stays in the queue.
+// --- enquiries (and the swap offers of earlier versions)
+// 1. A family member enquires about another family's week (not Using it, not let). Their family joins the queue for it.
+// 2. If the holder releases the week, enquirers get first refusal (enquiry_hours), first come first served, then all
+//    members, then trusted friends. Using it → the queue closes. Not sure yet → the enquirer is told and stays in the queue.
+// Swaps happen only as next-year change requests decided by the site admin; swap offers below are kept for old records.
 // (Older databases may hold swap offers where the requester named the week; those can still be accepted or declined.)
 const isAdminOf = (u, fid) => u && u.role === 'family_admin' && u.family_id === fid;
 function doSwap(sw, user) {
@@ -778,44 +813,29 @@ function doSwap(sw, user) {
   audit(user.id, 'swap.accept', { id: sw.id });
 }
 route('POST', '/api/enquiries', ({ user, body }) => {
-  need(user, isFamily(user), 'Only family members can request weeks');
+  need(user, isFamily(user), 'Only family members can enquire about weeks');
   resolveFirstRefusal();
   const w = q1('SELECT * FROM weeks WHERE id=?', body.week_id) || fail(404, 'Week not found');
   if (w.family_id === user.family_id) fail(400, 'That week is already your family’s');
-  if (w.family_id == null || w.start_date < today()) fail(400, 'You can’t request that week');
+  if (w.family_id == null || w.start_date < today()) fail(400, 'You can’t enquire about that week');
   if (w.in_use) fail(400, `${famName(w.family_id)} are using this week`);
   if (['pending', 'booked'].includes(w.status)) fail(400, 'That week has already been taken');
   if (w.status === 'offered') fail(400, 'This week has been released, so you can book it straight away');
-  if (q1("SELECT 1 FROM enquiries WHERE week_id=? AND family_id=? AND status='open'", w.id, user.family_id)) fail(400, 'Your family has already requested this week');
+  if (q1("SELECT 1 FROM enquiries WHERE week_id=? AND family_id=? AND status='open'", w.id, user.family_id)) fail(400, 'Your family has already enquired about this week');
   const id = run('INSERT INTO enquiries (week_id,family_id,user_id,message) VALUES (?,?,?,?)', w.id, user.family_id, user.id, body.message || null).lastInsertRowid;
-  const queue = openEnquiries(w.id), pos = queue.findIndex(x => x.id === id) + 1, n = swapWeeksOf(user.family_id).length;
-  notify(familyAdmins(w.family_id), `${user.name} (${famName(user.family_id)}) would like your ${weekLabel(w)}. ${n
-    ? `They have ${n} week${n > 1 ? 's' : ''} marked Willing to swap: pick one in exchange, release the week, or say you're using it.`
-    : 'They have no weeks marked Willing to swap yet, so you can release the week or say you’re using it.'}${queue.length > 1 ? ` ${queue.length} families have now asked for it.` : ''}`, '#/enquiries');
-  audit(user.id, 'enquiry.create', { id }); return { id, position: pos, queue: queue.length, swap_weeks: n };
+  const queue = openEnquiries(w.id), pos = queue.findIndex(x => x.id === id) + 1;
+  notify(familyAdmins(w.family_id), `${user.name} (${famName(user.family_id)}) enquired about your ${weekLabel(w)}. If you release it, the families who asked get first refusal, first come first served.${queue.length > 1 ? ` ${queue.length} families have now asked.` : ''}`, '#/enquiries');
+  audit(user.id, 'enquiry.create', { id }); return { id, position: pos, queue: queue.length };
 });
-// the holder picks one of the requesting family's Willing to swap weeks; the requesting family's admin then confirms
-route('POST', '/api/enquiries/:id/pick', ({ user, params, body }) => {
-  const e = q1("SELECT * FROM enquiries WHERE id=? AND status='open'", params.id) || fail(404, 'This request is closed');
-  const w = q1('SELECT * FROM weeks WHERE id=?', e.week_id);
-  need(user, isAdminOf(user, w.family_id), 'Only your family admin can agree a swap');
-  if (w.in_use || ['pending', 'booked'].includes(w.status) || w.start_date < today()) fail(400, 'This week can no longer be swapped');
-  const off = q1('SELECT * FROM weeks WHERE id=?', body.week_id) || fail(404, 'Week not found');
-  if (!swapWeeksOf(e.family_id).some(x => x.id === off.id)) fail(400, `That week isn’t one of ${famName(e.family_id)}’s weeks marked Willing to swap`);
-  if (q1("SELECT 1 FROM swaps WHERE enquiry_id=? AND status IN ('pending','proposed')", e.id)) fail(400, 'There is already a swap waiting on this request');
-  const id = run("INSERT INTO swaps (requester_id,from_family_id,offered_week_id,to_family_id,target_week_id,message,status,enquiry_id,picked,proposed_by,proposed_at) VALUES (?,?,?,?,?,?,'proposed',?,1,?,datetime('now'))",
-    e.user_id, e.family_id, off.id, w.family_id, w.id, body.message || null, e.id, user.id).lastInsertRowid;
-  run("UPDATE enquiries SET reply=NULL, replied_at=NULL WHERE id=?", e.id);
-  notify([...new Set([e.user_id, ...familyAdmins(e.family_id)])], `${famName(w.family_id)} would swap their ${weekLabel(w)} for your ${weekLabel(off)}, which they picked from your weeks marked Willing to swap. Your family admin confirms or declines on the Enquiries page.`, '#/enquiries');
-  audit(user.id, 'swap.pick', { id, enquiry: e.id, week: off.id }); return { id };
-});
+// Swaps between families are no longer made during a signed-off year (see the next-year change requests).
+route('POST', '/api/enquiries/:id/pick', () => fail(400, 'Swaps are now only for next year’s allocation, through the site admin'));
 // the holder isn't sure yet: the requesting family is told and keeps its place in the queue
 route('POST', '/api/enquiries/:id/reply', ({ user, params }) => {
   const e = q1("SELECT * FROM enquiries WHERE id=? AND status='open'", params.id) || fail(404, 'This request is closed');
   const w = q1('SELECT * FROM weeks WHERE id=?', e.week_id);
   need(user, isAdminOf(user, w.family_id), 'Only your family admin can answer requests');
   run("UPDATE enquiries SET reply='unsure', replied_at=datetime('now') WHERE id=?", e.id);
-  notify([e.user_id], `${famName(w.family_id)} aren’t sure about their ${weekLabel(w)} yet. Your family stays in the queue: if they release it you get first refusal, and they can still pick one of your weeks to swap.`, '#/enquiries');
+  notify([e.user_id], `${famName(w.family_id)} aren’t sure about their ${weekLabel(w)} yet. Your family stays in the queue: if they release it, you get first refusal.`, '#/enquiries');
   audit(user.id, 'enquiry.reply', { id: e.id }); return { ok: true };
 });
 // --- booking enquiries from trusted friends (weeks still Undecided)
@@ -882,8 +902,7 @@ route('GET', '/api/enquiries', ({ user }) => {
       week: { ...swapWeekView(w), family_name: famName(w.family_id), plan: planOf(w), state: w.status, member_price: memberPriceOf(w, s), first_refusal_until: windowOpen ? w.enquiry_until : null },
       position: e.status === 'open' ? queue.findIndex(x => x.id === e.id) + 1 : null, queue: queue.length,
       can_claim: ours && e.status === 'open' && windowOpen, can_withdraw: ours && e.status === 'open' && (e.user_id === user.id || isAdminOf(user, fid)),
-      reply: e.reply, swap_weeks: free ? swapWeeksOf(e.family_id).map(swapWeekView) : [],
-      can_pick: free && !live && isAdminOf(user, w.family_id), can_reply: free && !live && isAdminOf(user, w.family_id) && e.reply !== 'unsure',
+      reply: e.reply, can_reply: free && !live && isAdminOf(user, w.family_id) && e.reply !== 'unsure',
       offer: offer && { id: offer.id, status: offer.status, picked: !!offer.picked, decline_reason: offer.decline_reason, offered: swapWeekView(ofw), by: q1('SELECT name FROM users WHERE id=?', offer.requester_id).name,
         can_accept: offer.status === 'pending' && isAdminOf(user, offer.to_family_id), can_decline: live && isAdminOf(user, offer.to_family_id),
         can_confirm: offer.status === 'proposed' && isAdminOf(user, offer.from_family_id), can_cancel: live && (offer.requester_id === user.id || isAdminOf(user, offer.from_family_id)) } };
@@ -911,7 +930,8 @@ route('POST', '/api/enquiries/:id/claim', ({ user, params, body }) => {
   if (!(w.status === 'offered' && w.enquiry_until && w.enquiry_until > nowSql())) fail(400, 'First refusal isn’t open for this week');
   if (body.want) {
     const method = body.method === 'account' ? 'account' : 'bank';
-    if (method === 'account' && !(user.role === 'family_admin' || s.allow_member_account_charge === '1')) fail(403, 'Charging to a family account is not allowed for your login');
+    if (method === 'account' && !(user.role === 'family_admin' || s.allow_member_account_charge === '1')) fail(403, 'Paying from the family account is not allowed for your login');
+    if (method === 'account' && creditAvailable(e.family_id) + 0.005 < memberPriceOf(w, s)) fail(400, `Your household’s credit doesn’t cover ${s.currency}${memberPriceOf(w, s)}. Top up from the Account page, or pay by bank transfer.`);
     run("UPDATE enquiries SET claim='yes', claim_method=?, claim_guest=?, claim_party=?, claimed_at=datetime('now'), user_id=? WHERE id=?", method, body.guest_name || user.name, Number(body.party_size) || null, user.id, e.id);
   } else run("UPDATE enquiries SET claim='no', claimed_at=datetime('now') WHERE id=?", e.id);
   resolveFirstRefusal();
@@ -975,6 +995,123 @@ route('POST', '/api/swaps/:id/cancel', ({ user, params }) => {
   run("UPDATE swaps SET status='cancelled' WHERE id=?", sw.id);
   notify(familyAdmins(sw.to_family_id), `${famName(sw.from_family_id)} withdrew their swap offer for ${weekLabel(q1('SELECT * FROM weeks WHERE id=?', sw.target_week_id))}.`, '#/enquiries');
   return { ok: true };
+});
+
+// --- next-year allocation: change requests (decided by the site admin) and sign-off
+const weekBrief = w => w && `week ${w.week_no} (${fmtDate(w.start_date)} – ${fmtDate(w.end_date || w.start_date)})`;
+function changeView(r, user) {
+  const g = q1('SELECT * FROM weeks WHERE id=?', r.give_week_id), t = q1('SELECT * FROM weeks WHERE id=?', r.want_week_id);
+  return { id: r.id, year: r.year, status: r.status, note: r.note, admin_note: r.admin_note, created_at: r.created_at, decided_at: r.decided_at,
+    family: famName(r.family_id), family_id: r.family_id, by: q1('SELECT name FROM users WHERE id=?', r.user_id).name,
+    give: { ...swapWeekView(g), holder: famName(g.family_id) }, want: { ...swapWeekView(t), holder: t.family_id ? famName(t.family_id) : 'Syndicate', asked_of: r.want_family_id ? famName(r.want_family_id) : null },
+    can_withdraw: r.status === 'open' && isAdminOf(user, r.family_id), can_decide: r.status === 'open' && !!user.is_site_admin };
+}
+route('GET', '/api/change-requests', ({ user, query }) => {
+  need(user, isFamily(user) || user.is_site_admin);
+  const year = Number(query.year) || null;
+  const rows = user.is_site_admin
+    ? q(`SELECT * FROM change_requests WHERE (? IS NULL OR year=?) ORDER BY status<>'open', created_at`, year, year)
+    : q(`SELECT * FROM change_requests WHERE family_id=? AND (? IS NULL OR year=?) ORDER BY status<>'open', created_at DESC`, user.family_id, year, year);
+  return rows.map(r => changeView(r, user));
+});
+route('POST', '/api/change-requests', ({ user, body }) => {
+  need(user, user.role === 'family_admin', 'Only family admins can ask for allocation changes');
+  const g = q1('SELECT * FROM weeks WHERE id=?', body.give_week_id), t = q1('SELECT * FROM weeks WHERE id=?', body.want_week_id);
+  if (!g || !t || g.year !== t.year) fail(400, 'Choose one of your weeks and a week you would like instead, in the same year');
+  if (signedOff(g.year)) fail(400, `The ${g.year} allocation is signed off. Weeks can now only be bought and sold.`);
+  if (g.family_id !== user.family_id) fail(400, 'You can only offer one of your own household’s weeks');
+  if (t.family_id == null || t.family_id === user.family_id) fail(400, 'Choose a week held by another household');
+  if ([g, t].some(x => ['pending', 'booked'].includes(x.status))) fail(400, 'One of those weeks has a booking on it');
+  if (q1("SELECT 1 FROM change_requests WHERE status='open' AND give_week_id=? AND want_week_id=?", g.id, t.id)) fail(400, 'You have already asked for that change');
+  const id = run('INSERT INTO change_requests (year,family_id,user_id,give_week_id,want_week_id,want_family_id,note) VALUES (?,?,?,?,?,?,?)', g.year, user.family_id, user.id, g.id, t.id, t.family_id, body.note || null).lastInsertRowid;
+  notify(siteAdmins(), `${famName(user.family_id)} ask to change their ${weekBrief(g)} for ${famName(t.family_id)}’s ${weekBrief(t)} in the ${g.year} allocation.`, '#/admin/weeks');
+  audit(user.id, 'change_request.create', { id }); return { id };
+});
+route('POST', '/api/change-requests/:id/withdraw', ({ user, params }) => {
+  const r = q1("SELECT * FROM change_requests WHERE id=? AND status='open'", params.id) || fail(404, 'This request is already closed');
+  need(user, isAdminOf(user, r.family_id));
+  run("UPDATE change_requests SET status='withdrawn', decided_at=datetime('now') WHERE id=?", r.id);
+  return { ok: true };
+});
+route('POST', '/api/admin/change-requests/:id/decide', ({ user, params, body }) => {
+  needAdmin(user);
+  const r = q1("SELECT * FROM change_requests WHERE id=? AND status='open'", params.id) || fail(404, 'This request is already closed');
+  const g = q1('SELECT * FROM weeks WHERE id=?', r.give_week_id), t = q1('SELECT * FROM weeks WHERE id=?', r.want_week_id), who = famName(r.family_id);
+  const tell = [...new Set([r.user_id, ...familyAdmins(r.family_id)])];
+  if (!body.approve) {
+    run("UPDATE change_requests SET status='declined', admin_note=?, decided_by=?, decided_at=datetime('now') WHERE id=?", body.note || null, user.id, r.id);
+    notify(tell, `The site admin declined your request to change your ${weekBrief(g)} for ${weekBrief(t)} in ${r.year}.${body.note ? ` “${body.note}”` : ''}`, '#/weeks');
+    audit(user.id, 'change_request.decline', { id: r.id }); return { status: 'declined' };
+  }
+  if (signedOff(r.year)) fail(400, `The ${r.year} allocation is signed off`);
+  if (g.family_id !== r.family_id) fail(409, `Week ${g.week_no} is no longer ${who}’s`);
+  if (t.family_id == null || t.family_id === r.family_id || (r.want_family_id && t.family_id !== r.want_family_id)) fail(409, `Week ${t.week_no} has changed hands since this request was made`);
+  if ([g, t].some(x => ['pending', 'booked'].includes(x.status))) fail(409, 'One of the weeks has a booking. Cancel it first.');
+  const other = t.family_id;
+  tx(() => {
+    // the allocation itself changes; both weeks start afresh as Undecided
+    const fresh = "status='own_use', offer_friends=0, offer_swap=0, in_use=0, released_at=NULL, enquiry_until=NULL, price_override=NULL";
+    run(`UPDATE weeks SET family_id=?, original_family_id=?, ${fresh}, gained_by_request=1, note=? WHERE id=?`, r.family_id, r.family_id, `Changed at ${who}’s request (was ${famName(other)}’s)`, t.id);
+    run(`UPDATE weeks SET family_id=?, original_family_id=?, ${fresh}, gained_by_request=0, note=? WHERE id=?`, other, other, `Changed by the site admin (was ${who}’s)`, g.id);
+    run("UPDATE change_requests SET status='approved', admin_note=?, decided_by=?, decided_at=datetime('now') WHERE id=?", body.note || null, user.id, r.id);
+    for (const o of q("SELECT * FROM change_requests WHERE status='open' AND id<>? AND (give_week_id IN (?,?) OR want_week_id IN (?,?))", r.id, g.id, t.id, g.id, t.id)) {
+      run("UPDATE change_requests SET status='lapsed', decided_at=datetime('now') WHERE id=?", o.id);
+      notify(familyAdmins(o.family_id), `Your ${o.year} change request has lapsed because one of its weeks has been reallocated.`, '#/weeks');
+    }
+    for (const x of [g, t].map(x => q1('SELECT * FROM weeks WHERE id=?', x.id))) { releaseSwaps(x, 'reallocated', user); closeEnquiries(x, 'swapped'); closeFriendEnquiries(x, 'swapped'); }
+  });
+  notify(tell, `Approved: ${weekBrief(t)} in ${r.year} is now ${who}’s, and your ${weekBrief(g)} goes to ${famName(other)}.`, '#/weeks');
+  notify(familyAdmins(other), `The site admin has changed the ${r.year} allocation: your ${weekBrief(t)} has been exchanged for ${weekBrief(g)}, which was ${who}’s.`, '#/weeks');
+  audit(user.id, 'change_request.approve', { id: r.id }); return { status: 'approved' };
+});
+route('POST', '/api/admin/years/:year/signoff', ({ user, params, body }) => {
+  needAdmin(user); const year = Number(params.year);
+  if (!q1('SELECT 1 FROM weeks WHERE year=?', year)) fail(404, 'No weeks for that year');
+  if (body.undo) {
+    if (year <= thisYear()) fail(400, 'This year has started, so its allocation stays signed off');
+    run('DELETE FROM year_status WHERE year=?', year); audit(user.id, 'year.reopen', { year }); return { ok: true };
+  }
+  if (signedOff(year)) fail(400, `The ${year} allocation is already signed off`);
+  tx(() => {
+    for (const r of q("SELECT * FROM change_requests WHERE year=? AND status='open'", year)) {
+      run("UPDATE change_requests SET status='declined', admin_note=?, decided_by=?, decided_at=datetime('now') WHERE id=?", 'Not agreed before the allocation was signed off', user.id, r.id);
+      notify(familyAdmins(r.family_id), `Your ${year} change request wasn’t agreed before the allocation was signed off.`, '#/weeks');
+    }
+    run("INSERT INTO year_status (year,signed_off_at,signed_off_by) VALUES (?,datetime('now'),?) ON CONFLICT(year) DO UPDATE SET signed_off_at=excluded.signed_off_at, signed_off_by=excluded.signed_off_by", year, user.id);
+  });
+  notify(q("SELECT id FROM users WHERE active=1 AND role IN ('family_admin','family_member')").map(r => r.id),
+    `The ${year} allocation has been signed off. From now on, ${year} weeks are bought and sold rather than swapped: release a week you won’t use, and enquire about other families’ weeks.`, '#/weeks');
+  audit(user.id, 'year.signoff', { year }); return { ok: true };
+});
+
+// --- top-ups: a household pays money in to build up credit, which can then pay for weeks
+const famCode = fid => famName(fid).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10);
+route('POST', '/api/topups', ({ user, body }) => {
+  need(user, isFamily(user), 'Top-ups are for syndicate households');
+  const amount = round2(Number(body.amount)); if (!(amount > 0) || amount > 100000) fail(400, 'Enter the amount you are sending');
+  const id = run('INSERT INTO topups (family_id,user_id,amount) VALUES (?,?,?)', user.family_id, user.id, amount).lastInsertRowid, ref = `${famCode(user.family_id)}-TU${id}`;
+  run('UPDATE topups SET reference=? WHERE id=?', ref, id);
+  notify(siteAdmins(), `Top-up expected: ${settings().currency}${amount} from ${famName(user.family_id)} (${user.name}), reference ${ref}.`, '#/admin/overview');
+  audit(user.id, 'topup.create', { id, amount }); return { id, reference: ref, amount };
+});
+route('GET', '/api/topups', ({ user }) => {
+  need(user, isFamily(user));
+  return q("SELECT * FROM topups WHERE family_id=? AND (status='pending' OR created_at > datetime('now','-90 days')) ORDER BY id DESC", user.family_id);
+});
+route('POST', '/api/topups/:id/cancel', ({ user, params }) => {
+  const t = q1("SELECT * FROM topups WHERE id=? AND status='pending'", params.id) || fail(404, 'No pending top-up');
+  need(user, user.is_site_admin || (isFamily(user) && user.family_id === t.family_id));
+  run("UPDATE topups SET status='cancelled' WHERE id=?", t.id); return { ok: true };
+});
+route('POST', '/api/admin/topups/:id/confirm', ({ user, params, body }) => {
+  needAdmin(user); const t = q1("SELECT * FROM topups WHERE id=? AND status='pending'", params.id) || fail(404, 'No pending top-up');
+  const amount = body.amount != null && Number(body.amount) > 0 ? round2(Number(body.amount)) : t.amount, cur = settings().currency;
+  tx(() => {
+    run("UPDATE topups SET status='confirmed', amount=?, confirmed_at=datetime('now'), confirmed_by=? WHERE id=?", amount, user.id, t.id);
+    run("INSERT INTO ledger (family_id,year,type,description,amount,created_by) VALUES (?,?,'payment',?,?,?)", t.family_id, thisYear(), `Top-up received (${t.reference})`, -amount, user.id);
+  });
+  notify([...new Set([t.user_id, ...familyAdmins(t.family_id)])], `Your top-up of ${cur}${amount} has arrived. Your household now has ${cur}${creditAvailable(t.family_id)} in credit to spend on weeks.`, '#/account');
+  audit(user.id, 'topup.confirm', { id: t.id, amount }); return { ok: true };
 });
 
 // --- people (family members + trusted friends)
@@ -1083,7 +1220,8 @@ route('PUT', '/api/admin/settings', ({ user, body }) => {
 route('GET', '/api/admin/overview', ({ user }) => {
   needAdmin(user); expireHolds();
   const pending = q("SELECT b.*, u.name booker FROM bookings b JOIN users u ON u.id=b.user_id WHERE b.status='pending' ORDER BY b.id").map(b => ({ ...b, week: q1('SELECT year,week_no,start_date FROM weeks WHERE id=?', b.week_id), seller: famName(b.seller_family_id) }));
-  return { balances: balances(), pending };
+  const topups = q("SELECT t.*, u.name person FROM topups t JOIN users u ON u.id=t.user_id WHERE t.status='pending' ORDER BY t.id").map(t => ({ ...t, family: famName(t.family_id) }));
+  return { balances: balances(), pending, topups };
 });
 route('GET', '/api/admin/families', ({ user }) => {
   needAdmin(user);
@@ -1304,7 +1442,6 @@ if (!q1('SELECT 1 FROM families')) {
   // a few demo offers so the letting and swap features have something to show
   const plan = (n, f) => run(`UPDATE weeks SET ${f} WHERE year=2027 AND week_no=?`, n);
   for (const n of [19, 33, 37, 52]) plan(n, "status='offered', offer_friends=1, released_at=datetime('now','-8 days')"); // released
-  for (const n of [8, 21, 30, 44]) plan(n, 'offer_swap=1');                                         // willing to swap
   plan(25, "status='offered', offer_friends=1, released_at=datetime('now','-2 days')");              // released (members-only window)
   for (const n of [7, 26, 34, 35]) plan(n, 'in_use=1');                                             // using it
   const enq = (wk, fam, email, msg, ago) => run("INSERT INTO enquiries (week_id,family_id,user_id,message,created_at) VALUES ((SELECT id FROM weeks WHERE year=2027 AND week_no=?),?,(SELECT id FROM users WHERE email=?),?,datetime('now',?))", wk, fid(fam), email, msg, ago);
@@ -1341,6 +1478,16 @@ if (!q1("SELECT 1 FROM settings WHERE key='income_model'")) {
   });
   if (n) console.log(`Let income: ${n} paid let(s) credited to the families that released them`);
 }
+// One-off: in-year swaps are retired. Willing to swap becomes Undecided; open swap offers lapse (the enquiries stay in the queue).
+if (!q1("SELECT 1 FROM settings WHERE key='in_year_swaps'")) tx(() => {
+  for (const sw of q("SELECT * FROM swaps WHERE status IN ('pending','proposed')")) {
+    run("UPDATE swaps SET status='void' WHERE id=?", sw.id);
+    notify([...new Set([sw.requester_id, ...familyAdmins(sw.from_family_id), ...familyAdmins(sw.to_family_id)])],
+      `Swaps during the year have been replaced by buying and selling, so the swap for ${weekLabel(q1('SELECT * FROM weeks WHERE id=?', sw.target_week_id))} has lapsed. Any enquiry stays in the queue.`, '#/enquiries');
+  }
+  run('UPDATE weeks SET offer_swap=0 WHERE offer_swap=1');
+  run("INSERT INTO settings (key,value) VALUES ('in_year_swaps','retired')");
+});
 // Until the site admin has set a password, print their set-up link on every start (visible in the host's logs).
 for (const u of q("SELECT name, invite_token FROM users WHERE is_site_admin=1 AND invite_token IS NOT NULL AND password_hash IS NULL")) console.log(`Site admin set-up link for ${u.name}: ${BASE_URL}/#/invite/${u.invite_token}`);
 

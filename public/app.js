@@ -178,7 +178,7 @@ async function viewHome(main) {
       ${panelCard('key-round', friend ? 'Weeks you can book' : 'Weeks available to book', h.available.length ? h.available.map(x => weekRow({ ...x, detail: x.family ? `From ${x.family}` : '' }, `<span class="tag available">${money(x.price)}</span>`)).join('')
         : quiet('Nothing is available right now. You’ll get a notice when a week is released.'), `<a href="#/calendar">${friend ? 'All available weeks' : 'Open the calendar'} →</a>`)}
       ${friend ? '' : panelCard('messages-square', 'Your enquiries', h.enquiries.length ? h.enquiries.map(x => weekRow({ ...x, detail: `${x.holder} · ${PLAN[x.plan] ? PLAN[x.plan].label : ''}` }, `<span class="tag pending">${ordinal(x.position)} of ${x.queue}</span>`)).join('')
-        : quiet('Open any other household’s week on the calendar to request a swap. They pick one of your weeks marked Willing to swap, or release it and you get first refusal.'), '<a href="#/enquiries">All enquiries →</a>')}
+        : quiet('Open any other household’s week on the calendar to enquire about it. If they release it, you get first refusal.'), '<a href="#/enquiries">All enquiries →</a>')}
       ${f ? panelCard('coins', `${esc(f.name)} at a glance · ${f.year}`, `<dl class="kv" style="grid-template-columns:1fr auto">
           ${c ? `<dt>Credit value of your weeks</dt><dd class="num">${c.value.toLocaleString('en-GB')} of ${c.entitlement.toLocaleString('en-GB')} <span class="muted small">(${c.diff > 0 ? '+' : ''}${c.diff})</span></dd>
           <dt>Weeks released</dt><dd class="num">${c.released}</dd>
@@ -211,9 +211,8 @@ function adminHome(main, h, greet) {
 
 // ------------------------------------------------------------ calendar
 const PLAN = {
-  undecided: { label: 'Undecided', hint: 'Not decided yet. Other families can still ask to swap for it, and you’ll get reminders as it gets closer.' },
-  using: { label: 'Using it', hint: 'Definitely being used. No swap requests.' },
-  swap: { label: 'Willing to swap', hint: 'You’d give it up in exchange for another family’s week.' },
+  undecided: { label: 'Undecided', hint: 'Not decided yet. Other families and trusted friends can enquire about it, and you’ll get reminders as it gets closer.' },
+  using: { label: 'Using it', hint: 'Definitely being used. No enquiries.' },
   released: { label: 'Released', hint: 'You won’t use it. Members can book it, then trusted friends. If it lets, the payment is credited to your household’s account, less the letting cost for the maintenance fund.' },
 };
 const BAND = { school: 'School holidays', summer: 'Summer', shoulder: 'Shoulder', winter: 'Winter' };
@@ -227,7 +226,6 @@ function statusBadge(w) {
   const b = [];
   if (w.plan === 'using') b.push('<span class="badge accent">In use</span>');
   if (w.plan === 'released') b.push(`<span class="badge green">${money(w.price)}</span>`);
-  if (w.plan === 'swap') b.push('<span class="badge blue">Swap</span>');
   return b.join(' ');
 }
 // What a week means to the person looking: one of five muted states, always with a text label.
@@ -241,11 +239,10 @@ function weekState(w) {
   if (w.status === 'booked') return { k: 'booked', who: w.is_mine ? 'Your week' : fam, label: w.is_mine ? 'Let to guests' : 'Booked' };
   if (w.status === 'pending') return { k: 'pending', who: w.is_mine ? 'Your week' : fam, label: 'Reserved' };
   if (w.my_enquiry) return { k: 'pending', who: fam, label: w.first_refusal_until ? 'First refusal' : `Requested · ${ordinal(w.my_enquiry.position)}` };
-  if (w.is_mine) return { k: 'yours', who: 'Your week', label: { using: 'Yours · using', released: 'Yours · released', swap: 'Yours · will swap' }[w.plan] || 'Yours · undecided' };
+  if (w.is_mine) return { k: 'yours', who: 'Your week', label: { using: 'Yours · using', released: 'Yours · released' }[w.plan] || 'Yours · undecided' };
   if (w.can_book) return { k: 'available', who: fam, label: `Available · ${money(w.price)}` };
   if (w.plan === 'released' || w.first_refusal_until) return { k: 'available', who: fam, label: 'Released' };
   if (w.plan === 'using') return { k: 'other', who: fam, label: 'In use' };
-  if (w.plan === 'swap') return { k: 'other', who: fam, label: 'Would swap' };
   return { k: 'other', who: fam, label: 'Allocated' };
 }
 const STATUS_KEY = [['yours', 'Your household’s weeks'], ['other', 'Other households'], ['available', 'Available to book'], ['pending', 'Requested or pending'], ['booked', 'Booked']];
@@ -264,9 +261,9 @@ async function viewCalendar(main) {
   if (!years.length) { main.innerHTML = '<div class="card empty">No weeks have been set up yet. The site admin can create a year under Site admin → Weeks.</div>'; return; }
   S.weeks = await api('/weeks?year=' + S.year);
   const role = S.me.user.role;
-  const filters = [['all', 'All weeks'], ['book', role === 'friend' ? 'Available to book' : 'Available to buy'], isFam() && ['swap', 'Open to swap requests'], isFam() && ['mine', 'Your household’s weeks'], role === 'friend' && ['enquire', 'Open to enquiries'], role === 'friend' && ['mine', 'My bookings']].filter(Boolean);
+  const filters = [['all', 'All weeks'], ['book', role === 'friend' ? 'Available to book' : 'Available to buy'], isFam() && ['swap', 'Open to enquiries'], isFam() && ['mine', 'Your household’s weeks'], role === 'friend' && ['enquire', 'Open to enquiries'], role === 'friend' && ['mine', 'My bookings']].filter(Boolean);
   const intro = isSiteRole() ? 'Every household’s weeks. Open a week to see it, or to change its settings on the household’s behalf.' : role === 'friend' ? 'Weeks the households have made available to trusted friends: open one to book it. Weeks marked <b>Open to enquiries</b> haven’t been decided yet, so you can ask the household whether you could book them.'
-    : 'Open any other household’s week to request a swap, or to book it if it’s available. Mark the weeks you’d give in exchange as Willing to swap under <a href="#/weeks">My weeks</a>.';
+    : 'Open any other household’s week to enquire about it, or to book it if it’s been released. Set your plans for your own weeks under <a href="#/weeks">My weeks</a>.';
   const byMonth = {};
   for (const w of S.weeks) (byMonth[w.start_date.slice(0, 7)] ||= []).push(w);
   const visible = S.weeks.filter(filterMatch).length;
@@ -274,7 +271,7 @@ async function viewCalendar(main) {
   const band = w => w.school_holiday ? 'School holidays' : { summer: 'Summer', shoulder: 'Shoulder', winter: 'Winter' }[w.season];
   const st = S.me.settings, price = n => money(isFam() ? Math.round(n * st.member_rate_pct / 100) : n);
   main.innerHTML = `
-    <div class="page-head row between" style="align-items:flex-end"><div class="grow" style="min-width:280px"><h1>${role === 'friend' ? 'Available weeks' : 'Calendar'} ${S.year}</h1><p>${intro}</p></div>
+    <div class="page-head row between" style="align-items:flex-end"><div class="grow" style="min-width:280px"><h1>${role === 'friend' ? 'Available weeks' : 'Calendar'} ${S.year}</h1><p>${intro}${isFam() && S.weeks.length && S.weeks[0].year_open ? ` The ${S.year} allocation is still a draft: until the site admin signs it off, family admins can ask for changes from <a href="#/weeks">My weeks</a>.` : ''}</p></div>
       <div class="seg" aria-label="Year">${years.map(y => `<button data-year="${y}" class="${y === S.year ? 'on' : ''}">${y}</button>`).join('')}</div></div>
     <div class="cal-toolbar"><div class="seg" aria-label="Show">${filters.map(([k, l]) => `<button data-filter="${k}" class="${S.filter === k ? 'on' : ''}">${l}</button>`).join('')}</div>
       <span class="muted small">${visible} week${visible === 1 ? '' : 's'}</span></div>
@@ -309,10 +306,11 @@ async function openWeek(w) {
   if (w.status === 'syndicate') html += '<div class="section notice">This week is held by the syndicate (e.g. maintenance or the extra 53rd week) and isn’t allocated to a family.</div>';
 
   html += relNote;
+  if (w.is_mine && w.gained_by_request && w.income_cap != null) html += `<div class="section notice small">This week came to your household through a change request. If you let it, your credit is capped at ${money(w.income_cap)} (the service charge per share); anything above that goes to the maintenance fund.</div>`;
   if (w.can_manage && !['pending', 'booked'].includes(w.status) && !past) {
     html += `<form class="section" id="offerForm"><div class="row between"><h3 style="margin:0">${w.is_mine ? 'Your family’s plans for this week' : `${esc(w.family_name)}’s plans for this week (as site admin)`}</h3>${w.is_mine ? '<a class="small" href="#/weeks">All my weeks →</a>' : ''}</div>
       <div style="margin-top:10px">${planFields(w, s)}</div>
-      <div class="field" style="margin-top:12px"><label>Note for other families (optional)</label><input name="note" value="${esc(w.note || '')}" placeholder="e.g. Happy to swap for any October week"></div>
+      <div class="field" style="margin-top:12px"><label>Note for other families (optional)</label><input name="note" value="${esc(w.note || '')}" placeholder="e.g. Probably free: ask us"></div>
       <button class="btn primary">Save</button></form>`;
   } else if (w.can_manage && w.status === 'pending' && w.booking) {
     html += `<div class="section notice warn">This week is reserved and the syndicate is waiting for payment. If the payment isn’t confirmed in ${s.hold_days} days the hold lapses automatically.</div>`;
@@ -326,7 +324,7 @@ async function openWeek(w) {
       <div class="field"><label>Number in party</label><input name="party_size" type="number" min="1" max="20" value="2"></div></div>
       ${allowAcct ? `<div class="field"><label>How will you pay?</label>
         <label class="check"><input type="radio" name="method" value="bank" checked><span><b>Bank transfer</b>Pay the syndicate account within ${s.hold_days} days.</span></label>
-        <label class="check" style="margin-top:8px"><input type="radio" name="method" value="account"><span><b>Charge to my family’s account</b>Added to ${esc(S.me.family.name)}’s balance and confirmed straight away.</span></label></div>` : `<input type="hidden" name="method" value="bank">
+        <label class="check" style="margin-top:8px"><input type="radio" name="method" value="account" ${(S.me.family.credit_available || 0) + 0.005 < w.price ? 'disabled' : ''}><span><b>Pay from ${esc(S.me.family.name)}’s credit (${money(S.me.family.credit_available || 0, 2)} available)</b>${(S.me.family.credit_available || 0) + 0.005 < w.price ? 'Not enough credit for this week. You can top up from the <a href="#/account">Account</a> page.' : 'Taken from your household’s credit and confirmed straight away.'}</span></label></div>` : `<input type="hidden" name="method" value="bank">
         <p class="small muted">After you book, you’ll get the syndicate’s bank details and a payment reference. The week is held for you for <b>${s.hold_days} days</b> while the transfer arrives.</p>`}
       <div class="field"><label>Anything the family should know? (optional)</label><textarea name="notes" rows="2"></textarea></div>
       <button class="btn green">Reserve week</button></form>`;
@@ -352,7 +350,7 @@ async function openWeek(w) {
   if (of) {
     bindPlanFields(of);
     of.onsubmit = guard(async e => { e.preventDefault(); const d = formData(of);
-      if (d.plan === 'using' && (w.pending_swaps || w.enquiries || w.friend_enquiries) && !confirm('Marking this week “Using it” closes the enquiries and swap offers waiting for it. Continue?')) return;
+      if (d.plan === 'using' && (w.pending_swaps || w.enquiries || w.friend_enquiries) && !confirm('Marking this week “Using it” closes the enquiries waiting for it. Continue?')) return;
       await api('/weeks/' + w.id, { method: 'PUT', body: d }); toast('Week updated'); closeOverlay(); viewCalendar($('main')); refreshMe(); });
   }
   const bf = $('#bookForm', body);
@@ -366,11 +364,10 @@ async function openWeek(w) {
   if (fw) fw.onclick = guard(async () => { if (!confirm('Withdraw your enquiry about this week?')) return; await api(`/friend-enquiries/${fw.dataset.feWithdraw}/withdraw`, { body: {} }); toast('Enquiry withdrawn'); closeOverlay(); viewCalendar($('main')); });
   const ef = $('#enqForm', body);
   if (ef) ef.onsubmit = guard(async e => { e.preventDefault();
-    if (ef.dataset.none && !confirm(`Your family has no weeks marked Willing to swap, so ${w.family_name} will have nothing to pick from. They could still release the week to you. Send the request anyway?`)) return;
-    const r = await api('/enquiries', { body: { ...formData(ef), week_id: w.id } }); toast(`Swap request sent. You’re ${ordinal(r.position)} in the queue`); closeOverlay(); viewCalendar($('main')); });
+    const r = await api('/enquiries', { body: { ...formData(ef), week_id: w.id } }); toast(`Enquiry sent. You’re ${ordinal(r.position)} in the queue`); closeOverlay(); viewCalendar($('main')); });
   bindEnquiryActions(body, () => { closeOverlay(); viewCalendar($('main')); refreshMe(); });
 }
-// your family's future weeks for this year and later (offered in swaps)
+// your family's future weeks for this year and later
 async function myWeeks() {
   const ys = S.me.years.filter(y => y >= new Date().getFullYear());
   return (await Promise.all(ys.map(y => y === S.year && S.weeks.length ? S.weeks : api('/weeks?year=' + y)))).flat().filter(x => x.is_mine && x.start_date >= todayStr());
@@ -406,10 +403,11 @@ async function viewMyWeeks(main) {
   const weeks = all.filter(w => w.is_mine), me = cs.rows.find(r => r.id === S.me.user.family_id) || { value: 0, entitlement: 0, diff: 0, lets: 0, let_income: 0, released_weeks: 0, carried: 0 };
   const counts = {}; weeks.forEach(w => counts[w.plan] = (counts[w.plan] || 0) + 1);
   const locked = w => ['pending', 'booked'].includes(w.status) || w.start_date < todayStr();
+  const changeOpen = all.length ? !!all[0].year_open : (S.me.open_years || []).includes(year);
   main.innerHTML = `<div class="row between" style="margin-bottom:6px"><h1 style="margin:0">${esc(S.me.family.name)} weeks ${year}</h1>
       <div class="seg">${S.me.years.map(y => `<button data-y="${y}" class="${y === year ? 'on' : ''}">${y}</button>`).join('')}</div></div>
     <p class="muted" style="margin-top:0">${admin ? 'Set what your family plans for each week. Changes save straight away.' : 'Your family admin sets these. Ask them if something needs changing.'}
-      Other families can ask to swap for any week that isn’t <b>Using it</b>. When your family asks for someone else’s week, they choose from your <b>Willing to swap</b> weeks. A <b>Released</b> week that lets is credited to your account, less the ${money(s.letting_cost || 0)} letting cost.</p>
+      Other families can enquire about any week that isn’t <b>Using it</b>; if you release it, they get first refusal. A <b>Released</b> week that lets is credited to your account, less the ${money(s.letting_cost || 0)} letting cost.</p>
     <div class="grid-3" style="margin-bottom:18px">
       <div class="card"><div class="muted small">Credit value of your ${year} weeks</div><div class="stat num">${me.value.toLocaleString('en-GB')} <span class="small muted">credits</span></div>
         <div class="small muted" style="margin-top:6px">Entitlement ${me.entitlement.toLocaleString('en-GB')} (${S.me.family.share_units} shares × ${cs.per}${me.carried ? `, ${me.carried > 0 ? '+' : ''}${me.carried} carried` : ''}) · <b style="color:var(--ink)">${me.diff > 0 ? '+' : ''}${me.diff}</b></div></div>
@@ -417,30 +415,84 @@ async function viewMyWeeks(main) {
         <div class="small muted" style="margin-top:6px">Releasing early gives a week longer to find a guest. Members get the first chance, then trusted friends.</div></div>
       <div class="card"><div class="muted small">Let income credited for ${year}</div><div class="stat num credit">${money(me.let_income, 2)}</div>
         <div class="small muted" style="margin-top:6px">From ${me.lets} let${me.lets === 1 ? '' : 's'}, after the ${money(s.letting_cost || 0)} letting cost on each. It comes off your service charge, and any extra carries forward.</div></div></div>
+    ${changeOpen ? `<div class="notice small" style="margin-bottom:18px"><b>The ${year} allocation is still open.</b> Until the site admin signs it off, ${admin ? 'you can ask to change any of your weeks for another household’s week (<b>Ask to change</b> below). The site admin decides each request.' : 'your family admin can ask the site admin to change your weeks for other households’ weeks.'} Once it’s signed off, weeks are bought and sold rather than swapped.</div>` : ''}
     <div class="legend">${Object.entries(PLAN).map(([k, p]) => `<span><b>${counts[k] || 0}</b>&nbsp;${p.label}</span>`).join('')}</div>
     ${weeks.length ? `<div class="table-wrap"><table class="myweeks"><thead><tr><th>Week</th><th>Dates</th><th class="r">Credits</th><th>Setting</th><th>Price &amp; who can book</th><th>Activity</th></tr></thead><tbody>
     ${weeks.map(w => `<tr data-id="${w.id}" class="${w.start_date < todayStr() ? 'past-row' : ''}"><td><b>${w.week_no}</b><div class="tiny muted"><i class="season ${w.band}"></i> ${BAND[w.band]}</div></td>
-      <td>${range(w)}${nights(w) !== 7 ? `<div class="tiny muted">${nights(w)} nights</div>` : ''}${w.comment ? `<div class="cmt tiny" style="color:var(--accent)">${esc(w.comment)}</div>` : ''}${w.original_family_id !== w.family_id ? '<div class="tiny muted">swapped in</div>' : ''}</td>
+      <td>${range(w)}${nights(w) !== 7 ? `<div class="tiny muted">${nights(w)} nights</div>` : ''}${w.comment ? `<div class="cmt tiny" style="color:var(--accent)">${esc(w.comment)}</div>` : ''}${w.gained_by_request ? `<div class="tiny muted">From a change request · let income capped at ${money(w.income_cap || 0)}</div>` : ''}${w.original_family_id !== w.family_id ? '<div class="tiny muted">swapped in</div>' : ''}</td>
       <td class="r num">${w.credits}</td>
       ${admin && !locked(w) ? `<td colspan="2">${planFields(w, s, true)}</td>`
         : `<td>${w.start_date < todayStr() ? '<span class="muted small">Past</span>' : `<span class="badge ${w.plan === 'using' ? 'accent' : w.plan === 'undecided' ? '' : w.plan === 'swap' ? 'blue' : 'green'}">${PLAN[w.plan].label}</span>`}</td>
            <td class="small">${w.plan === 'released' ? `${money(w.member_price)} members · ${money(w.friend_price)} friends<div class="tiny muted">${SALE_TO[w.sale_to]}</div>` : '<span class="muted">—</span>'}</td>`}
-      <td class="small">${w.plan === 'released' && w.released_at ? `<div class="tiny muted">Released ${dfmt(w.released_at.slice(0, 10))}</div>` : ''}${statusBadge({ ...w, plan: null })}${w.booking?.guest ? `<div class="tiny muted">${esc(w.booking.guest)}</div>` : ''}${w.enquiries ? `<a href="#/enquiries" class="badge amber">${w.enquiries} enquir${w.enquiries > 1 ? 'ies' : 'y'}${w.pending_swaps ? ` · ${w.pending_swaps} swap offer${w.pending_swaps > 1 ? 's' : ''}` : ''}</a>` : ''}${w.friend_enquiries ? ` <a href="#/enquiries" class="badge amber">${w.friend_enquiries} friend enquir${w.friend_enquiries > 1 ? 'ies' : 'y'}</a>` : ''}${w.first_refusal_until ? `<div class="tiny muted">First refusal until ${whenTime(w.first_refusal_until)}</div>` : ''}</td></tr>`).join('')}
+      <td class="small">${w.plan === 'released' && w.released_at ? `<div class="tiny muted">Released ${dfmt(w.released_at.slice(0, 10))}</div>` : ''}${statusBadge({ ...w, plan: null })}${w.booking?.guest ? `<div class="tiny muted">${esc(w.booking.guest)}</div>` : ''}${w.enquiries ? `<a href="#/enquiries" class="badge amber">${w.enquiries} enquir${w.enquiries > 1 ? 'ies' : 'y'}${w.pending_swaps ? ` · ${w.pending_swaps} swap offer${w.pending_swaps > 1 ? 's' : ''}` : ''}</a>` : ''}${w.friend_enquiries ? ` <a href="#/enquiries" class="badge amber">${w.friend_enquiries} friend enquir${w.friend_enquiries > 1 ? 'ies' : 'y'}</a>` : ''}${w.first_refusal_until ? `<div class="tiny muted">First refusal until ${whenTime(w.first_refusal_until)}</div>` : ''}${changeOpen && admin && !['pending', 'booked'].includes(w.status) ? `<div style="margin-top:6px"><button class="btn sm" data-change="${w.id}">Ask to change</button></div>` : ''}</td></tr>`).join('')}
     </tbody></table></div>` : '<div class="card empty">Your family has no weeks in this year.</div>'}
+    <div id="crBox"></div>
     <h2 style="margin-top:32px">All families ${year}</h2><p class="muted small" style="margin-top:0">Every week is valued in credits by demand, so the syndicate can see whether each family’s weeks match its share. Gaps are evened out over time by carrying credits forward.</p>
     ${creditsTable(cs, S.me.user.family_id)}`;
   main.querySelectorAll('[data-y]').forEach(b => b.onclick = () => { S.myYear = Number(b.dataset.y); viewMyWeeks(main); });
+  changeRequestsBox($('#crBox', main), year, () => viewMyWeeks(main));
+  main.querySelectorAll('[data-change]').forEach(b => b.onclick = () => {
+    const w = weeks.find(x => x.id == b.dataset.change), others = all.filter(x => !x.is_mine && x.family_id && !['pending', 'booked'].includes(x.status));
+    const m = openModal(`<form id="crf"><h2>Ask to change week ${w.week_no}</h2><p class="small muted">Your week ${w.week_no} (${range(w)}, ${BAND[w.band]}, ${w.credits} credits) would go to the other household, and you’d get the week you choose. The site admin decides; the other household is told if it goes ahead.</p>
+      <div class="field"><label>Week you’d like instead</label><select name="want_week_id" required>${others.map(x => `<option value="${x.id}">Week ${x.week_no} · ${range(x)} · ${esc(x.family_name)} · ${BAND[x.band]} · ${x.credits} cr</option>`).join('')}</select></div>
+      <div class="field"><label>Note for the site admin (optional)</label><textarea name="note" rows="2" placeholder="e.g. We need a summer week for the grandchildren this year"></textarea></div>
+      <div class="row" style="justify-content:flex-end"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Send to the site admin</button></div></form>`);
+    $('#crf', m).onsubmit = guard(async e => { e.preventDefault(); await api('/change-requests', { body: { ...formData(e.target), give_week_id: w.id } }); closeOverlay(); toast('Request sent to the site admin'); viewMyWeeks(main); });
+  });
   main.querySelectorAll('tr[data-id]').forEach(tr => {
     if (!$('[name=plan]', tr)) return;
     bindPlanFields(tr);
     const w = weeks.find(x => x.id == tr.dataset.id);
     tr.querySelectorAll('select, input').forEach(el => el.onchange = guard(async () => {
       const body = Object.fromEntries([...tr.querySelectorAll('select, input')].map(i => [i.name, i.value]));
-      if (body.plan === 'using' && (w.enquiries || w.pending_swaps || w.friend_enquiries) && !confirm(`Marking week ${w.week_no} “Using it” closes the enquiries and swap offers waiting for it. Continue?`)) { viewMyWeeks(main); return; }
+      if (body.plan === 'using' && (w.enquiries || w.pending_swaps || w.friend_enquiries) && !confirm(`Marking week ${w.week_no} “Using it” closes the enquiries waiting for it. Continue?`)) { viewMyWeeks(main); return; }
       if (body.plan === 'released' && w.plan !== 'released' && w.enquiries && !confirm(`Release week ${w.week_no}? The ${w.enquiries} famil${w.enquiries > 1 ? 'ies' : 'y'} who enquired get first refusal for ${s.enquiry_hours || 48} hours, in queue order.`)) { viewMyWeeks(main); return; }
       await api('/weeks/' + w.id, { method: 'PUT', body }); toast(`Week ${w.week_no} saved`); if (el.name === 'plan') { viewMyWeeks(main); refreshMe(); }
     }));
   });
+}
+const CR_ST = { open: '<span class="badge amber">With the site admin</span>', approved: '<span class="badge green">Approved</span>', declined: '<span class="badge">Declined</span>', withdrawn: '<span class="badge">Withdrawn</span>', lapsed: '<span class="badge">Lapsed</span>' };
+async function changeRequestsBox(box, year, reload) {
+  const list = await api('/change-requests?year=' + year);
+  if (!list.length) { box.innerHTML = ''; return; }
+  box.innerHTML = `<h2 style="margin-top:32px">Change requests for ${year}</h2><div class="stack">${list.map(r => `<div class="card flat" style="padding:14px 16px"><div class="row between"><div class="small">Your ${swapWeek(r.give)} for ${esc(r.want.asked_of || r.want.holder)}’s ${swapWeek(r.want)}</div>${CR_ST[r.status]}</div>
+    ${r.note ? `<div class="small muted" style="margin-top:4px">“${esc(r.note)}”</div>` : ''}${r.admin_note ? `<div class="small" style="margin-top:4px">Site admin: “${esc(r.admin_note)}”</div>` : ''}
+    ${r.can_withdraw ? `<div class="row" style="margin-top:8px"><button class="btn sm danger" data-crw="${r.id}">Withdraw</button></div>` : ''}</div>`).join('')}</div>`;
+  box.querySelectorAll('[data-crw]').forEach(b => b.onclick = guard(async () => { if (!confirm('Withdraw this request?')) return; await api(`/change-requests/${b.dataset.crw}/withdraw`, { body: {} }); toast('Request withdrawn'); reload(); }));
+}
+async function adminChangeBox(box, year, reload) {
+  const open = (S.me.open_years || []).includes(year), list = await api('/change-requests?year=' + year), waiting = list.filter(r => r.status === 'open').length;
+  const reopen = !open && year > new Date().getFullYear();
+  box.innerHTML = `<div class="card" style="margin-bottom:18px"><div class="row between" style="align-items:flex-start"><div class="grow" style="min-width:260px"><h3 style="margin:0">${year} allocation · ${open ? 'open for change requests' : 'signed off'}</h3>
+      <p class="small muted" style="margin:4px 0 0;max-width:70ch">${open ? 'Family admins can ask to change their weeks for other households’ weeks. You decide each request: approving one exchanges the two weeks, and both start afresh as Undecided. Sign off when the allocation is agreed; after that, families buy and sell weeks rather than swap them.' : 'Families now buy and sell these weeks rather than swap them.'}</p></div>
+      ${open ? `<button class="btn primary" id="signoff">Sign off ${year} allocation</button>` : reopen ? '<button class="btn" id="reopen">Reopen for changes</button>' : ''}</div>
+    ${list.length ? `<div class="table-wrap" style="margin-top:14px"><table><thead><tr><th>Household</th><th>Gives</th><th>Wants</th><th class="r">Credits</th><th>Status</th><th></th></tr></thead><tbody>${list.map(r => `<tr>
+      <td><b>${esc(r.family)}</b><div class="tiny muted">${esc(r.by)} · ${asked(r.created_at)}</div>${r.note ? `<div class="tiny">“${esc(r.note)}”</div>` : ''}</td>
+      <td class="small">${swapWeek(r.give)}</td><td class="small">${swapWeek(r.want)}<div class="tiny muted">held by ${esc(r.want.holder)}</div></td>
+      <td class="r num">${r.want.credits - r.give.credits > 0 ? '+' : ''}${r.want.credits - r.give.credits}</td><td>${CR_ST[r.status]}${r.admin_note ? `<div class="tiny muted">${esc(r.admin_note)}</div>` : ''}</td>
+      <td class="r" style="white-space:nowrap">${r.can_decide ? `<button class="btn sm green" data-cra="${r.id}">Approve</button> <button class="btn sm" data-crd="${r.id}">Decline</button>` : ''}</td></tr>`).join('')}</tbody></table></div>`
+      : open ? '<p class="small muted" style="margin:12px 0 0">No change requests yet.</p>' : ''}</div>`;
+  box.querySelectorAll('[data-cra]').forEach(b => b.onclick = guard(async () => { const r = list.find(x => x.id == b.dataset.cra);
+    if (!confirm(`Approve? ${r.family} get week ${r.want.week_no} and ${r.want.holder} get week ${r.give.week_no} in the ${year} allocation. Both weeks start afresh as Undecided.`)) return;
+    await api(`/admin/change-requests/${r.id}/decide`, { body: { approve: true } }); toast('Approved and reallocated'); reload(); }));
+  box.querySelectorAll('[data-crd]').forEach(b => b.onclick = guard(async () => { const note = prompt('Reason, if you’d like to give one (shown to the household):', ''); if (note === null) return;
+    await api(`/admin/change-requests/${b.dataset.crd}/decide`, { body: { approve: false, note } }); toast('Declined'); reload(); }));
+  const so = $('#signoff', box); if (so) so.onclick = guard(async () => {
+    if (!confirm(`Sign off the ${year} allocation?${waiting ? ` The ${waiting} request${waiting > 1 ? 's' : ''} still waiting will be declined.` : ''} Every family is told that ${year} weeks are now bought and sold rather than swapped.`)) return;
+    await api(`/admin/years/${year}/signoff`, { body: {} }); await refreshMe(); toast(`${year} allocation signed off`); reload(); });
+  const ro = $('#reopen', box); if (ro) ro.onclick = guard(async () => { if (!confirm(`Reopen the ${year} allocation for change requests?`)) return; await api(`/admin/years/${year}/signoff`, { body: { undo: true } }); await refreshMe(); toast('Reopened'); reload(); });
+}
+async function topupBox(box, credit, reload) {
+  const list = await api('/topups'), pend = list.filter(t => t.status === 'pending');
+  box.innerHTML = `<div class="card" style="margin-bottom:28px"><div class="row between" style="align-items:flex-start"><div class="grow" style="min-width:260px"><h3 style="margin:0">Credit for buying weeks: ${money(credit, 2)}</h3>
+      <p class="small muted" style="margin:4px 0 0;max-width:62ch">Income from weeks you let, and any top-ups, build up credit once your charges are paid. You can spend it on weeks other households release, or keep it against future charges.</p></div>
+      <form id="tuf" class="row" style="gap:8px;flex-wrap:nowrap"><input name="amount" type="number" min="1" step="1" placeholder="Amount (£)" style="max-width:150px" required><button class="btn primary">Top up</button></form></div>
+    ${pend.map(t => `<div class="row between" style="padding:10px 0 0;margin-top:10px;border-top:1px solid var(--line)"><span class="small">Top-up of <b>${money(t.amount, 2)}</b>, reference <code>${esc(t.reference)}</code>: waiting for the transfer to arrive</span>
+      <span class="row" style="gap:6px"><button class="btn sm" data-tupay="${t.id}">Bank details</button><button class="btn sm danger" data-tucancel="${t.id}">Cancel</button></span></div>`).join('')}</div>`;
+  const show = t => openModal(`<h2>Top up ${money(t.amount, 2)}</h2><p class="small muted">Send this from your bank. When the site admin sees it arrive, it’s added to your household’s credit.</p>${payBox(t.reference, t.amount)}<div class="row" style="margin-top:16px;justify-content:flex-end"><button class="btn" data-close>Close</button></div>`);
+  $('#tuf', box).onsubmit = guard(async e => { e.preventDefault(); const r = await api('/topups', { body: formData(e.target) }); show(r); reload(); });
+  box.querySelectorAll('[data-tupay]').forEach(b => b.onclick = () => show(pend.find(t => t.id == b.dataset.tupay)));
+  box.querySelectorAll('[data-tucancel]').forEach(b => b.onclick = guard(async () => { if (!confirm('Cancel this top-up?')) return; await api(`/topups/${b.dataset.tucancel}/cancel`, { body: {} }); toast('Top-up cancelled'); reload(); }));
 }
 function payBox(ref, amount) {
   const b = S.me.settings.bank;
@@ -469,7 +521,7 @@ function claimForm(id, price, claim, until) {
   if (claim === 'yes') return `<div class="notice small" style="margin-top:10px">You’ve said yes. Families who enquired before you have until ${whenTime(until)} to answer; if none of them take it, it’s yours. <button class="btn sm" data-pass="${id}">Pass instead</button></div>`;
   return `<div class="claim" data-claim="${id}" style="margin-top:10px"><div class="grid-2" style="gap:10px"><div class="field" style="margin:0"><label>Lead guest</label><input name="guest_name" value="${esc(S.me.user.name)}"></div>
     <div class="field" style="margin:0"><label>Party size</label><input name="party_size" type="number" min="1" max="20" value="2"></div></div>
-    ${acct ? `<div class="field" style="margin:10px 0 0"><label>Pay by</label><select name="method"><option value="bank">Bank transfer within ${s.hold_days} days</option><option value="account">Charge to ${esc(S.me.family.name)}’s account</option></select></div>` : '<input type="hidden" name="method" value="bank">'}
+    ${acct ? `<div class="field" style="margin:10px 0 0"><label>Pay by</label><select name="method"><option value="bank">Bank transfer within ${s.hold_days} days</option><option value="account" ${(S.me.family.credit_available || 0) + 0.005 < price ? 'disabled' : ''}>Pay from ${esc(S.me.family.name)}’s credit (${money(S.me.family.credit_available || 0, 2)} available)</option></select></div>` : '<input type="hidden" name="method" value="bank">'}
     <div class="row" style="margin-top:10px"><button class="btn green sm" data-take="${id}">Take it · ${money(price)}</button><button class="btn sm" data-pass="${id}">Not this time</button></div></div>`;
 }
 async function enquirySection(w, s) {
@@ -477,22 +529,12 @@ async function enquirySection(w, s) {
   if (w.first_refusal_until) return w.my_enquiry
     ? `<div class="section"><h3>Your family has first refusal</h3><p class="small" style="margin:0">${esc(w.family_name)} have released this week. You’re ${ordinal(w.my_enquiry.position)} of ${q} who enquired; whoever enquired first and says yes gets it. First refusal ends ${whenTime(w.first_refusal_until)}.</p>${claimForm(w.my_enquiry.id, w.member_price, w.my_enquiry.claim, w.first_refusal_until)}</div>`
     : `<div class="section notice small">The families who enquired about this week have first refusal until ${whenTime(w.first_refusal_until)}. After that, any member can book it.</div>`;
-  if (w.my_enquiry) {
-    const n = (await myWeeks()).filter(x => x.plan === 'swap' && x.swappable).length;
-    return `<div class="section"><h3>Your family has requested this week</h3><p class="small" style="margin:0">Asked on ${asked(w.my_enquiry.created_at)}. You’re <b>${ordinal(w.my_enquiry.position)} of ${q}</b> in the queue.
-      ${n ? `${esc(w.family_name)} can see your ${n} week${n > 1 ? 's' : ''} marked Willing to swap and pick one in exchange.` : `You have no weeks marked Willing to swap, so ${esc(w.family_name)} have nothing to pick from yet.`}
-      If they release it instead, you’ll get first refusal for ${s.enquiry_hours || 48} hours, in queue order.</p><p class="small" style="margin:8px 0 0"><a href="#/enquiries">See it on the Enquiries page →</a>${n ? '' : ` · <a href="#/weeks">${isFamAdmin() ? 'Mark weeks in My weeks' : 'Your household’s weeks'}</a>`}</p></div>`;
-  }
-  if (w.can_enquire) {
-    const mine = (await myWeeks()).filter(x => x.plan === 'swap' && x.swappable);
-    return `<form class="section" id="enqForm" ${mine.length ? '' : 'data-none="1"'}><h3>Request a swap</h3>
-      <p class="muted small" style="margin-top:0">Your request goes to ${esc(w.family_name)}. They’ll see your weeks marked <b>Willing to swap</b> and can pick one in exchange; your family admin then confirms. If they release the week instead, families who asked get first refusal for ${s.enquiry_hours || 48} hours, first come first served.${q ? ` <b>${q} famil${q > 1 ? 'ies have' : 'y has'} already asked.</b>` : ''}</p>
-      ${mine.length ? `<div class="pick-list"><div class="tiny muted" style="margin-bottom:6px">${esc(w.family_name)} will be able to pick from:</div>${mine.map(x => `<div class="pick-row">${swapWeek(x)}</div>`).join('')}
-        <div class="tiny muted" style="margin-top:6px">This week is worth ${credits(w.credits)}. Any difference in a swap is carried to next year’s credits.</div></div>`
-        : `<div class="notice small" style="margin-bottom:12px">Your family has no weeks marked Willing to swap, so ${esc(w.family_name)} would have nothing to pick from. ${isFamAdmin() ? 'Mark some in <a href="#/weeks">My weeks</a> first, or send the request anyway and they can still release it to you.' : 'Ask your family admin to mark some in My weeks, or send the request anyway.'}</div>`}
+  if (w.my_enquiry) return `<div class="section"><h3>Your family has enquired</h3><p class="small" style="margin:0">Asked on ${asked(w.my_enquiry.created_at)}. You’re <b>${ordinal(w.my_enquiry.position)} of ${q}</b> in the queue.
+    If ${esc(w.family_name)} release it, you’ll get first refusal for ${s.enquiry_hours || 48} hours, in queue order.</p><p class="small" style="margin:8px 0 0"><a href="#/enquiries">See it on the Enquiries page →</a></p></div>`;
+  if (w.can_enquire) return `<form class="section" id="enqForm"><h3>Enquire about this week</h3>
+      <p class="muted small" style="margin-top:0">${esc(w.family_name)} will see your enquiry. If they release the week, families who enquired get first refusal for ${s.enquiry_hours || 48} hours at the member price (${money(w.member_price)}), first come first served.${q ? ` <b>${q} famil${q > 1 ? 'ies have' : 'y has'} already enquired.</b>` : ''}</p>
       <div class="field"><label>Message (optional)</label><textarea name="message" rows="2" placeholder="e.g. We’d love this week if your plans change."></textarea></div>
-      <button class="btn primary">Send swap request</button></form>`;
-  }
+      <button class="btn primary">Enquire</button></form>`;
   if (w.in_use) return `<div class="section notice small">${esc(w.family_name)} are using this week, so it isn’t open to enquiries.</div>`;
   return '';
 }
@@ -513,15 +555,15 @@ function offerBox(e) {
 }
 function incomingCard(g) {
   const w = g.week, open = g.items.filter(e => e.status === 'open'), fopen = g.friends.filter(f => f.status === 'open'), admin = isFamAdmin(), free = !['pending', 'booked'].includes(w.state);
-  const planBtns = admin && free && (open.length || fopen.length) ? [['released', 'Release it'], ['swap', 'Willing to swap'], ['using', 'We’re using it']].filter(([k]) => k !== w.plan)
+  const planBtns = admin && free && (open.length || fopen.length) ? [['released', 'Release it'], ['using', 'We’re using it']].filter(([k]) => k !== w.plan)
     .map(([k, l]) => `<button class="btn sm" data-plan-week="${w.id}" data-plan="${k}">${l}</button>`).join('') : '';
   return `<div class="card flat" style="padding:16px"><div class="row between"><div>${swapWeek(w)}</div><span class="badge">${PLAN[w.plan].label}</span></div>
     ${w.first_refusal_until ? `<p class="small" style="margin:8px 0 0">Released. The families who enquired have first refusal until ${whenTime(w.first_refusal_until)}.</p>` : ''}
     ${g.items.length ? `<ol class="queue">${g.items.map(e => `<li class="${e.status === 'open' ? '' : 'done'}"><div class="row between"><div><b>${esc(e.family)}</b> <span class="muted small">${esc(e.user)} · asked ${asked(e.created_at)}</span></div>${e.status === 'open' ? (e.claim === 'yes' ? '<span class="badge green">Said yes</span>' : e.claim === 'no' ? '<span class="badge">Passed</span>' : '') : enquiryStatus(e)}</div>
-      ${e.message ? `<div class="small" style="margin-top:4px">“${esc(e.message)}”</div>` : ''}${offerBox(e)}${pickBox(e, w)}</li>`).join('')}</ol>` : ''}
+      ${e.message ? `<div class="small" style="margin-top:4px">“${esc(e.message)}”</div>` : ''}${offerBox(e)}${pickBox(e)}</li>`).join('')}</ol>` : ''}
     ${g.friends.length ? `<div class="small muted" style="margin:12px 0 0">Booking enquiries from trusted friends</div>${g.friends.map(friendEnquiry).join('')}` : ''}
     ${planBtns ? `<div class="row" style="margin-top:10px;gap:8px"><span class="tiny muted">Your plans for this week:</span>${planBtns}</div>` : ''}
-    ${!admin && (open.length || fopen.length) ? '<p class="tiny muted" style="margin:8px 0 0">Your family admin answers these: picking a week to swap, letting it to a friend, releasing it, or saying you’re using it.</p>' : ''}</div>`;
+    ${!admin && (open.length || fopen.length) ? '<p class="tiny muted" style="margin:8px 0 0">Your family admin answers these: releasing the week, letting it to a friend, or saying you’re using it.</p>' : ''}</div>`;
 }
 // a trusted friend's booking enquiry, on the holding family's side
 const FE_CLOSED = { using: 'Closed: you’re using it', taken: 'Closed: booked by someone else', swapped: 'Closed: swapped', released: 'Closed: week released' };
@@ -533,26 +575,19 @@ function friendEnquiry(f) {
     ${info ? `<div class="tiny muted" style="margin-top:4px">${info}</div>` : ''}${f.message ? `<div class="small" style="margin-top:4px">“${esc(f.message)}”</div>` : ''}
     ${f.can_answer ? `<div class="row" style="margin-top:8px;gap:8px"><button class="btn green sm" data-fe-accept="${f.id}" data-fe-name="${esc(f.friend)}" data-fe-price="${f.price}" data-fe-week="${f.week.week_no}" data-fe-members="${f.members_asked}">Let it to them · ${money(f.price)}</button><button class="btn sm" data-fe-decline="${f.id}">Decline</button></div>` : ''}</div>`;
 }
-// on the holder's side of a request: the weeks the requesting family has marked Willing to swap
-function pickBox(e, w) {
+// on the holder's side of an enquiry: tell them you're not sure yet (they keep their place in the queue)
+function pickBox(e) {
   if (e.status !== 'open' || (e.offer && ['pending', 'proposed'].includes(e.offer.status))) return '';
-  const reply = e.reply === 'unsure' ? '<span class="badge">You replied: not sure yet</span>' : '';
-  if (!e.swap_weeks.length) return `<div class="offer small muted">${esc(e.family)} have no weeks marked Willing to swap, so there’s nothing to pick from yet.${e.can_reply ? ` <button class="btn sm" data-unsure="${e.id}" style="margin-left:6px">Not sure yet</button>` : ''} ${reply}</div>`;
-  return `<div class="offer"><div class="row between"><div class="small">Their weeks marked Willing to swap${e.can_pick ? ': pick one to swap for your week' : ''}</div>${reply}</div>
-    <div class="pick-list">${e.swap_weeks.map(x => { const d = x.credits - w.credits; return `<div class="pick-row"><span class="grow">${swapWeek(x)}${d ? ` <span class="tiny muted">· ${d > 0 ? `${d} credits more than yours` : `${-d} credits less than yours`}</span>` : ''}</span>${e.can_pick ? `<button class="btn sm green" data-pick="${e.id}" data-pick-week="${x.id}">Swap for this</button>` : ''}</div>`; }).join('')}</div>
-    ${e.can_reply ? `<div class="row" style="margin-top:8px"><button class="btn sm" data-unsure="${e.id}">Not sure yet</button><span class="tiny muted">They stay in the queue.</span></div>` : ''}</div>`;
+  if (e.reply === 'unsure') return '<div class="row" style="margin-top:6px"><span class="badge">You replied: not sure yet</span></div>';
+  return e.can_reply ? `<div class="row" style="margin-top:6px"><button class="btn sm" data-unsure="${e.id}">Not sure yet</button><span class="tiny muted">They stay in the queue.</span></div>` : '';
 }
 function outgoingCard(e) {
-  const live = e.offer && ['pending', 'proposed'].includes(e.offer.status);
   return `<div class="card flat" style="padding:16px"><div class="row between"><div>${swapWeek(e.week)} <span class="muted small">· ${esc(e.week.family_name)}</span></div>${enquiryStatus(e)}</div>
     <p class="tiny muted" style="margin:6px 0 0">${esc(e.user)} asked on ${asked(e.created_at)}${e.status === 'open' ? ` · they’ve marked it <b>${PLAN[e.week.plan].label}</b>` : ''}</p>
     ${e.message ? `<div class="small" style="margin-top:4px">“${esc(e.message)}”</div>` : ''}
     ${e.can_claim ? claimForm(e.id, e.week.member_price, e.claim, e.week.first_refusal_until) : ''}
     ${offerBox(e)}
-    ${e.status === 'open' && !live && !e.week.first_refusal_until && e.week.state !== 'offered' ? `<p class="tiny muted" style="margin:8px 0 0">${e.swap_weeks.length
-      ? `${esc(e.week.family_name)} can pick from your ${e.swap_weeks.length} week${e.swap_weeks.length > 1 ? 's' : ''} marked Willing to swap: ${e.swap_weeks.map(x => 'week ' + x.week_no).join(', ')}.`
-      : `You have no weeks marked Willing to swap, so ${esc(e.week.family_name)} have nothing to pick from. ${isFamAdmin() ? '<a href="#/weeks">Mark some in My weeks</a>.' : 'Your family admin can mark some in My weeks.'}`}
-      ${e.reply === 'unsure' ? ` <b>${esc(e.week.family_name)} replied: not sure yet.</b>` : ''}</p>` : ''}
+    ${e.status === 'open' && e.reply === 'unsure' && !e.week.first_refusal_until ? `<p class="tiny muted" style="margin:8px 0 0"><b>${esc(e.week.family_name)} replied: not sure yet.</b> You stay in the queue.</p>` : ''}
     ${e.can_withdraw ? `<div class="row" style="margin-top:10px"><button class="btn sm danger" data-withdraw="${e.id}">Withdraw enquiry</button></div>` : ''}</div>`;
 }
 function bindEnquiryActions(root, reload) {
@@ -561,8 +596,6 @@ function bindEnquiryActions(root, reload) {
     const r = await api(`/enquiries/${b.dataset.take}/claim`, { body: { ...d, want: true } }); toast(r.status === 'won' ? 'It’s yours! See Bookings for payment details' : 'Noted. If nobody ahead of you takes it, it’s yours'); });
   act('[data-pass]', async b => { if (!confirm('Pass on this week? The next family in the queue gets the chance.')) return false; await api(`/enquiries/${b.dataset.pass}/claim`, { body: { want: false } }); toast('Passed'); });
   act('[data-withdraw]', async b => { if (!confirm('Withdraw your enquiry? Your family loses its place in the queue.')) return false; await api(`/enquiries/${b.dataset.withdraw}/withdraw`, { body: {} }); toast('Enquiry withdrawn'); });
-  act('[data-pick]', async b => { if (!confirm('Swap your week for this one? Their family admin will be asked to confirm before the weeks change hands.')) return false;
-    await api(`/enquiries/${b.dataset.pick}/pick`, { body: { week_id: Number(b.dataset.pickWeek) } }); toast('Swap proposed. Waiting for them to confirm'); });
   act('[data-fe-accept]', async b => { const d = b.dataset, n = Number(d.feMembers);
     if (!confirm(`Let week ${d.feWeek} to ${d.feName} at ${money(Number(d.fePrice))}?\n\nThe week is released and reserved for them. They pay the syndicate within ${S.me.settings.hold_days} days, and the payment is credited to your household’s account, less the ${money(S.me.settings.letting_cost || 0)} letting cost.${n ? `\n\n${n} member famil${n > 1 ? 'ies have' : 'y has'} also asked for this week and will be told it has been taken.` : ''}`)) return false;
     await api(`/friend-enquiries/${d.feAccept}/answer`, { body: { accept: true } }); toast('Reserved for them. They’ve been sent the payment details'); });
@@ -575,7 +608,7 @@ function bindEnquiryActions(root, reload) {
   act('[data-dec-inuse]', async b => { await api(`/swaps/${b.dataset.decInuse}/respond`, { body: { reason: 'in_use' } }); toast('Declined, and the week is now marked “Using it”'); });
   act('[data-dec-unsure]', async b => { await api(`/swaps/${b.dataset.decUnsure}/respond`, { body: { reason: 'unsure' } }); toast('Withdrawn. They stay in the queue'); });
   act('[data-plan-week]', async b => { const plan = b.dataset.plan;
-    if (plan === 'using' && !confirm('Mark this week “Using it”? The enquiries and swap offers for it will close.')) return false;
+    if (plan === 'using' && !confirm('Mark this week “Using it”? The enquiries for it will close.')) return false;
     if (plan === 'released' && !confirm('Release this week? The families who enquired get first refusal, in queue order, then all members.')) return false;
     await api('/weeks/' + b.dataset.planWeek, { method: 'PUT', body: { plan } }); toast('Week updated'); });
 }
@@ -589,7 +622,7 @@ function enquiryLists(d, opts = {}) {
 }
 async function viewEnquiries(main) {
   const d = await api('/enquiries'), s = S.me.settings;
-  main.innerHTML = `<h1>Enquiries</h1><p class="muted">Request any other family’s week that isn’t marked <b>Using it</b> by clicking it on the calendar. The family that holds it sees your weeks marked <b>Willing to swap</b> and can pick one in exchange; your family admin then confirms. If they release it instead, those who asked get first refusal for ${s.enquiry_hours || 48} hours, first come first served. Trusted friends can also ask to book your weeks that are still <b>Undecided</b>: you can let the week to them at the friend price, or decline.</p>
+  main.innerHTML = `<h1>Enquiries</h1><p class="muted">Enquire about any other family’s week that isn’t marked <b>Using it</b> by clicking it on the calendar. If they release it, those who enquired get first refusal for ${s.enquiry_hours || 48} hours at the member price, first come first served; then it opens to all members, then trusted friends. Trusted friends can also ask to book your weeks that are still <b>Undecided</b>: you can let the week to them at the friend price, or decline. Swapping weeks is only for next year’s allocation: ask the site admin from <a href="#/weeks">My weeks</a>.</p>
     ${enquiryLists(d)}
     ${d.swaps.length ? `<h2 style="margin-top:32px">Recent swaps</h2><div class="table-wrap"><table><tbody>${d.swaps.map(x => `<tr><td class="small">${asked(x.at)}</td><td>${esc(x.from_family)} gave ${swapWeek(x.offered)}</td><td>${esc(x.to_family)} gave ${swapWeek(x.target)}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
   bindEnquiryActions(main, () => viewEnquiries(main));
@@ -632,11 +665,12 @@ async function viewAccount(main, familyId) {
       <div class="card"><div class="muted small">Ownership share</div><div class="stat num">${a.family.share_units} <span class="small muted">weeks</span></div>
         <div class="small muted" style="margin-top:6px">${a.weeks.map(w => `${w.n} weeks held in ${w.year}`).join(' · ')}</div></div>
       <div class="card"><div class="muted small">By year</div>${a.byYear.map(y => `<div class="row between small"><span>${y.year}</span><span class="num">${Math.abs(y.total) < 0.005 ? 'Settled' : y.total > 0 ? money(y.total, 2) + ' due' : money(-y.total, 2) + ' credit'}</span></div>`).join('') || '<div class="small muted">No entries yet</div>'}</div></div>
-    ${!familyId ? `<div id="acctSwaps"></div>` : ''}
+    ${!familyId ? `<div id="topupBox"></div><div id="acctSwaps"></div>` : ''}
     <h2>Statement</h2><p class="muted small">When one of your released weeks lets, the payment is credited here as soon as it arrives, less the ${money(S.me.settings.letting_cost || 0)} letting cost for the maintenance fund. Any credit carries forward against future charges. Charges are positive; credits and payments are negative.</p>
     ${a.lines.length ? `<div class="table-wrap"><table><thead><tr><th>Date</th><th>Year</th><th>Type</th><th>Description</th><th class="r">Amount</th><th class="r">Balance</th></tr></thead><tbody>
     ${a.lines.map(l => `<tr><td class="small">${new Date(l.created_at + 'Z').toLocaleDateString('en-GB')}</td><td>${l.year}</td><td><span class="badge ${l.amount < 0 ? 'green' : 'accent'}">${typeName[l.type]}</span></td><td>${esc(l.description)}</td>
       <td class="r num">${l.amount < 0 ? '−' : ''}${money(Math.abs(l.amount), 2)}</td><td class="r num">${money(l.running, 2)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="card empty">No charges or credits yet.</div>'}`;
+  const tb = $('#topupBox', main); if (tb) topupBox(tb, Math.max(0, -a.balance), () => viewAccount(main));
   const box = $('#acctSwaps', main);
   if (box) {
     box.innerHTML = `<div class="row between" style="margin-bottom:10px"><h2 style="margin:0">Open enquiries</h2><a class="btn sm" href="#/enquiries">All enquiries →</a></div>
@@ -658,7 +692,7 @@ async function viewPeople(main) {
     <td class="r">${canEdit(p) ? `<button class="btn sm" data-edit="${p.id}">Edit</button>` : ''}</td></tr>`;
   const tbl = (rows, empty) => rows.length ? `<div class="table-wrap"><table><thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Access</th><th></th></tr></thead><tbody>${rows.map(row).join('')}</tbody></table></div>` : `<div class="card flat empty small">${empty}</div>`;
   main.innerHTML = `<div class="row between"><h1 style="margin:0">${esc(S.me.family.name)}</h1><div class="row">${isFamAdmin() ? '<button class="btn" data-add="family_member">Add family member</button>' : ''}<button class="btn primary" data-add="friend">Add trusted friend</button></div></div>
-    <p class="muted">Everyone with an email address gets their own login. ${isFamAdmin() ? 'Family admins can offer weeks, accept swaps and manage people.' : 'Only your family admin can add family members or change access.'}</p>
+    <p class="muted">Everyone with an email address gets their own login. ${isFamAdmin() ? 'Family admins can release weeks, answer enquiries and manage people.' : 'Only your family admin can add family members or change access.'}</p>
     <section class="stack"><h2>Family</h2>${tbl(fam, 'No family members yet')}</section>
     <section class="stack" style="margin-top:28px"><h2>Trusted friends</h2><p class="muted small" style="margin:0">Trusted friends can log in, see weeks offered for letting and book them. They can’t see other families’ details or request swaps.</p>${tbl(friends, 'No trusted friends added yet')}</section>
     <section style="margin-top:28px"><h2>My login</h2><div class="grid-2">${profileCard()}</div></section>`;
@@ -731,13 +765,19 @@ async function viewAdmin(main) {
 async function admOverview(el) {
   const o = await api('/admin/overview');
   el.innerHTML = `<div class="grid-2" style="align-items:start">
-    <section class="stack"><h2>Payments to confirm</h2><p class="muted small" style="margin:0">Check the syndicate bank statement for each reference, then confirm. Confirming credits the family that offered the week.</p>
+    <section class="stack"><h2>Payments to confirm</h2><p class="muted small" style="margin:0">Check the syndicate bank statement for each reference, then confirm. Confirming credits the household that released the week, less the letting cost.</p>
     ${o.pending.length ? `<div class="table-wrap"><table><thead><tr><th>Ref</th><th>Week</th><th>From</th><th class="r">Amount</th><th></th></tr></thead><tbody>${o.pending.map(b => `<tr><td class="small"><code>${esc(b.reference)}</code><div class="tiny muted">expires ${new Date(b.expires_at + 'Z').toLocaleDateString('en-GB')}</div></td><td>${b.week.week_no} / ${b.week.year}<div class="tiny muted">${esc(b.seller)}</div></td><td>${esc(b.booker)}</td><td class="r num">${money(b.amount, 2)}</td>
       <td class="r"><button class="btn sm green" data-conf="${b.id}">Paid</button> <button class="btn sm danger" data-rej="${b.id}">Cancel</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="card flat empty small">Nothing waiting</div>'}</section>
+    ${o.topups.length ? `<section class="stack" style="grid-column:1/-1"><h2>Top-ups expected</h2><p class="muted small" style="margin:0">Households sending money in to build up credit for buying weeks. When the transfer arrives, confirm it to add it to their account.</p>
+      <div class="table-wrap"><table><thead><tr><th>Ref</th><th>Household</th><th>From</th><th class="r">Amount</th><th></th></tr></thead><tbody>${o.topups.map(t => `<tr><td class="small"><code>${esc(t.reference)}</code></td><td>${esc(t.family)}</td><td class="small">${esc(t.person)} · ${asked(t.created_at)}</td><td class="r num">${money(t.amount, 2)}</td>
+      <td class="r"><button class="btn sm green" data-tuconf="${t.id}" data-amt="${t.amount}">Arrived</button> <button class="btn sm danger" data-tucan="${t.id}">Cancel</button></td></tr>`).join('')}</tbody></table></div></section>` : ''}
     <section class="stack"><h2>Family balances</h2><div class="table-wrap"><table><thead><tr><th>Family</th><th class="r">Balance</th><th></th></tr></thead><tbody>
       ${o.balances.map(b => `<tr><td><i class="swatch" style="background:${b.color}"></i> <a href="#/admin/account-${b.id}">${esc(b.name)}</a></td><td class="r num ${b.balance > 0 ? '' : 'muted'}">${b.balance > 0 ? money(b.balance, 2) + ' owed' : b.balance < 0 ? money(-b.balance, 2) + ' credit' : 'Settled'}</td><td class="r"><button class="btn sm" data-pay="${b.id}">Record payment</button></td></tr>`).join('')}</tbody>
       <tfoot><tr><td>Total outstanding</td><td class="r num">${money(o.balances.reduce((a, b) => a + Math.max(0, b.balance), 0), 2)}</td><td></td></tr></tfoot></table></div></section></div>`;
   el.querySelectorAll('[data-conf]').forEach(b => b.onclick = guard(async () => { await api(`/admin/bookings/${b.dataset.conf}/confirm`, { body: {} }); toast('Payment confirmed'); admOverview(el); }));
+  el.querySelectorAll('[data-tuconf]').forEach(b => b.onclick = guard(async () => { const amt = prompt('Amount received (£):', b.dataset.amt); if (amt === null) return;
+    await api(`/admin/topups/${b.dataset.tuconf}/confirm`, { body: { amount: amt } }); toast('Top-up added to their account'); admOverview(el); }));
+  el.querySelectorAll('[data-tucan]').forEach(b => b.onclick = guard(async () => { if (!confirm('Cancel this expected top-up?')) return; await api(`/topups/${b.dataset.tucan}/cancel`, { body: {} }); toast('Cancelled'); admOverview(el); }));
   el.querySelectorAll('[data-rej]').forEach(b => b.onclick = guard(async () => { if (!confirm('Cancel this reservation and release the week?')) return; await api(`/bookings/${b.dataset.rej}/cancel`, { body: {} }); admOverview(el); }));
   el.querySelectorAll('[data-pay]').forEach(b => b.onclick = () => {
     const f = o.balances.find(x => x.id == b.dataset.pay);
@@ -795,6 +835,7 @@ async function admWeeks(el, year) {
   const counts = {}; weeks.forEach(w => counts[w.original_family_id] = (counts[w.original_family_id] || 0) + 1);
   el.innerHTML = `<div class="row between" style="margin-bottom:14px"><div class="seg">${years.map(y => `<button data-y="${y}" class="${y === year ? 'on' : ''}">${y}</button>`).join('')}<button data-new>+ Year</button></div>
     <div class="row"><button class="btn" id="imp">Import allocation</button><button class="btn" id="rot">Roll forward from ${year - 1}…</button></div></div>
+    ${weeks.length ? '<div id="crAdmin"></div>' : ''}
     ${weeks.length ? `<div class="legend">${fams.map(f => `<span><i class="swatch" style="background:${f.color}"></i>${esc(f.name)}: ${counts[f.id] || 0} weeks</span>`).join('')}<span>Syndicate: ${counts[null] || counts['null'] || 0}</span></div>
     <div class="table-wrap"><table><thead><tr><th>Week</th><th>Starts</th><th>Nights</th><th>School hols</th><th class="r">Credits</th><th>Season</th><th>Allocated to</th><th>Currently held by</th><th>Status</th></tr></thead><tbody>
     ${weeks.map(w => `<tr data-id="${w.id}"><td><b>${w.week_no}</b></td><td><input type="date" name="start_date" value="${w.start_date}" style="max-width:150px"><div class="tiny muted">${dfmt(w.start_date, { weekday: 'long' })}</div></td><td class="num ${nights(w) !== 7 ? '' : 'muted'}">${nights(w)}</td>
@@ -804,6 +845,7 @@ async function admWeeks(el, year) {
       <td>${w.family_id !== w.original_family_id ? `<i class="swatch" style="background:${w.family_color}"></i> ${esc(w.family_name)} <span class="badge">swapped</span>` : '<span class="muted small">same</span>'}</td><td>${statusBadge(w) || '<span class="muted small">Own use</span>'}<input name="comment" value="${esc(w.comment || '')}" placeholder="Calendar note" style="margin-top:4px;font-size:12px"></td></tr>`).join('')}</tbody></table></div>
     <p class="tiny muted">Changing “Allocated to” resets that week’s holder. Weeks with a booking can’t be reallocated. Changing a start date also moves the end of the week before.</p>` : '<div class="card empty">No weeks for this year yet.</div>'}`;
   el.querySelectorAll('[data-y]').forEach(x => x.onclick = () => admWeeks(el, Number(x.dataset.y)));
+  if ($('#crAdmin', el)) adminChangeBox($('#crAdmin', el), year, () => admWeeks(el, year));
   $('[data-new]', el).onclick = guard(async () => { const y = Number(prompt('Create weeks for which year?', Math.max(...years) + 1)); if (!y) return; const r = await api('/admin/years', { body: { year: y } }); toast(`Created ${r.weeks} weeks for ${y}`); await refreshMe(); admWeeks(el, y); });
   el.querySelectorAll('tr[data-id] select, tr[data-id] input').forEach(s => s.onchange = guard(async () => { await api('/admin/weeks/' + s.closest('tr').dataset.id, { method: 'PUT', body: { [s.name]: s.type === 'checkbox' ? s.checked : s.value } }); toast('Saved'); admWeeks(el, year); }));
   $('#imp', el).onclick = () => importDialog('allocation', year, async () => { await refreshMe(); admWeeks(el, year); }, weeks);

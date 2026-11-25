@@ -1,6 +1,6 @@
 # Nab Camas syndicate portal
 
-A self-contained web portal for the syndicate: availability calendar, week letting, week swaps, family accounts and budget-driven service charges.
+A self-contained web portal for the syndicate: availability calendar, buying and letting weeks, next-year allocation changes, family accounts and budget-driven service charges.
 
 ## Run it
 
@@ -76,7 +76,7 @@ Everyone lands on the **Overview** (Home), headed *Welcome to Camas*, with who's
 |---|---|---|
 | Trusted friend | Home, Available weeks, My bookings, My details | Bookings to pay for |
 | Family member | Home, Calendar, My weeks (view only), Enquiries, Bookings, Family & friends | Bookings to pay for, and first refusals to take or pass |
-| Family admin | The same, plus Account | Also: swap requests to answer (pick a week, release or say using it), swaps to confirm, undecided weeks in the next 16 weeks, the balance to pay, and people who haven't set up their login |
+| Family admin | The same, plus Account | Also: enquiries to answer (release, using it or not sure yet), friends' booking enquiries, undecided weeks in the next 16 weeks, the balance to pay, and people who haven't set up their login |
 | Site admin | A separate login with no family: Home, Calendar, Payments, Budget, Weeks, Credits & lets, Families, Users, Settings, Activity | Syndicate jobs: payments to confirm, families owing money, families with no admin, service charges not issued, let-income pots not shared out, next year's weeks not set up, demo logins still active, email not switched on, and storage problems. Home also shows balances, credits, the pot and recent activity. |
 
 The panels are:
@@ -97,10 +97,11 @@ Opening a page you don't have access to takes you back to Home.
 |---|---|---|---|---|
 | See calendar | Only weeks offered to them | All weeks and holders | All | All |
 | Book a let week (pay by bank transfer) | ✓ | ✓ (buying from another family) | ✓ | ✓ |
-| Charge a purchase to own family account | — | ✓ (switchable in settings) | ✓ | ✓ |
-| Request a swap | — | ✓ | ✓ | ✓ |
-| Offer own family's week for letting or swaps, set a price | — | — | ✓ | ✓ |
-| Accept or decline swaps for own family | — | — | ✓ | ✓ |
+| Pay for a week from the household's credit | — | ✓ (switchable in settings) | ✓ | ✓ |
+| Enquire about another family's week | Undecided weeks only | ✓ | ✓ | — |
+| Release own family's week, set a price | — | — | ✓ | ✓ |
+| Ask to change a week in next year's allocation | — | — | ✓ | Decides |
+| Top up the household's credit | — | — | ✓ | Confirms |
 | Add trusted friends | — | ✓ | ✓ | ✓ |
 | Add family members, change roles | — | — | ✓ | ✓ |
 | See own family account | — | ✓ | ✓ | All families |
@@ -114,19 +115,19 @@ Opening a page you don't have access to takes you back to Home.
 - **Wrong-year protection.** The allocation importer compares the file's title, weekday names and dates with the year you're importing into, and warns if they don't match.
 - **Seasons are set per week.** New years get seasons from month settings, and the admin can override any week.
 - **Rotation.** If every family kept the same week numbers each year, they would always get the same season. **Roll forward** copies last year's allocation with an optional shift, or you can import a new allocation each year.
-- **Ownership vs. holding.** Each week records who it was *allocated* to and who currently *holds* it. Swaps change the holder for that year only and never touch future years.
+- **Ownership vs. holding.** Each week records who it was *allocated* to and who currently *holds* it. An approved next-year change request reallocates both weeks for that year only and never touches other years.
 
 **Letting to friends and families**
 - **Double booking.** Booking a week puts a hold on it immediately. A second person trying to book sees "someone else has just booked this week".
 - **Bank transfer payments.** The site can't see the bank account. Each booking gets a **unique reference**, and the week is held for N days (3 by default). The site admin ticks it as paid once the money arrives. Unpaid holds lapse automatically and the week becomes available again.
 - **Where the money goes.** When payment is confirmed, the offering family gets a **credit dated to the following year**, which reduces next year's service charge. An optional **syndicate commission %** (default 0) can keep a cut for wear and tear or cleaning.
 - **Family members buying from another family** can pay by bank transfer like a friend. They can also **charge it to their own family account**, which is confirmed instantly and the family admins are notified. This saves a bank transfer and is cancelled out in the ledgers.
-- **Friend scope.** A family can let a week to *any* family's trusted friends, or only *their own*. Friends never see family contact details, swap activity or weeks that aren't offered to them.
+- **Friend scope.** A family can let a week to *any* family's trusted friends, or only *their own*. Friends never see family contact details, other families' activity or weeks that aren't offered to them.
 - **Price.** The default comes from the site-wide season rate. A family admin can override it for any one week.
 - **Cancellations.** The booker or the family can cancel an unpaid hold. A paid booking can only be cancelled by the site admin, and the ledger entries are reversed automatically. The refund itself is handled outside the site, under whatever cancellation policy you agree.
 
 **Credits: measuring fairness**
-- **Entitlement:** each share is worth **100 credits** a year (5,200 for 52 shares). Uneven swaps and admin adjustments carry credits from one year to the next.
+- **Entitlement:** each share is worth **100 credits** a year (5,200 for 52 shares). Admin adjustments can carry credits from one year to the next.
 - **Week values:** every week has a credit value from its band: school holidays, summer, shoulder or winter (illustrative weights 170 / 130 / 100 / 45). The site scales the weights so each year adds up to about 5,200, give or take rounding; this also handles 53-week years.
 - **School holidays:** the site admin marks school-holiday weeks under **Weeks & allocation**. 2026 and 2027 are preloaded with assumed English school holidays, so check them.
 - **Fairness table:** **My weeks** and **Site admin → Credits & lets** show, for each family, the credit value of the weeks it holds against its entitlement.
@@ -135,7 +136,6 @@ Opening a page you don't have access to takes you back to Home.
 - The family admin gives each week a setting:
   - **Undecided** (the default)
   - **Using it**
-  - **Willing to swap**
   - **Released**: the family won't use it, and others can book it
 - For released weeks, the family can set its own **friend price** (blank means the admin's default for the band) and **who can book**: other members only; members and any family's trusted friends; or members and our own trusted friends.
 - **Reminders:** family admins are reminded about weeks still **Undecided** at 16 and 8 weeks before arrival. Nothing is released automatically.
@@ -143,27 +143,30 @@ Opening a page you don't have access to takes you back to Home.
 **Released weeks and let income**
 - **Booking:** a released week can be booked by other members first, at the **member price** (75% of the friend price by default). Trusted friends can book it **7 days later**, and always from 3 weeks before arrival.
 - **Your week, your income:** when the payment for a let is confirmed, the household that released the week is credited with what was paid, less the **letting cost** (£100 a let by default, set under Settings), which goes to the maintenance fund. The credit comes off that household's service charge, and anything beyond it carries forward against future charges. A released week that doesn't let earns nothing, so releasing early helps.
-- **Members buying weeks:** a member who charges a week to their family account is charged the member price, and the seller is credited the same less the letting cost.
+- **Members buying weeks:** members can pay by bank transfer, or from their household's **credit** (account in credit from lets or top-ups) if it covers the price. The seller is credited the member price less the letting cost.
+- **Top-ups:** a family admin can top up the household's credit from the Account page. They get the bank details and a reference; the site admin confirms it on the Payments page when the money arrives.
+- **Weeks gained by a change request:** if a household lets a week it got through a next-year change request, its credit is capped at that year's service charge per share (£370 in 2026). Anything above goes to the maintenance fund, so there's no profit in asking for peak weeks just to let them.
 - **Cancellations:** if the site admin cancels a paid booking, the credit is reversed.
 - **Moving from the old pot:** on the first start of this version, paid lets that were waiting for a pot share-out are credited to the families that released them. Years already shared out are left as they were.
 
-**Swaps**
-- **Asking:** any family member can request any other family's week that isn't *Using it*, from the week's panel on the calendar. They only name the week they want. The panel shows which of their own weeks are marked *Willing to swap*, and warns them before sending if there are none.
-- **The owning family's admin** sees the requesting family's *Willing to swap* weeks on the Enquiries page, with how many credits each is worth compared with their own week. They can:
-  - **pick one** of those weeks in exchange ("Swap for this"); or
-  - **release** the week, and everyone who asked gets first refusal, first come first served; or
-  - say **we're using it**, which marks the week *Using it* and closes the requests; or
-  - reply **not sure yet**, and the requesting family keeps its place in the queue.
-- **The requesting family's admin** then **confirms**, and the weeks change hands, or **declines**, and the owning family can pick a different week.
-- **Uneven swaps:** the family that gets the more valuable week has the difference taken off next year's credits, and the other family gains it.
-- **Tidying up:** requests sort themselves out when weeks change (marked using, released, booked or swapped), and everyone involved is notified.
+**Enquiries (signed-off years)**
+- Once a year's allocation is signed off, weeks change hands only by being **released and bought**: there are no swaps between families.
+- Any family member can **enquire** about another family's week that isn't *Using it*. If the family releases it, those who enquired get **first refusal** for 48 hours at the member price, first come first served; then all members for 7 days; then trusted friends.
+- The holding family can also mark it *Using it* (the enquiries close) or reply **not sure yet** (enquirers keep their place).
+
+**Next-year allocation: change requests and sign-off**
+- The next year's allocation stays **open** until the site admin **signs it off** (the syndicate does this in November). The current year and earlier are always signed off.
+- While it's open, a family admin can **ask to change** any of their weeks for another household's week, from **My weeks** ("Ask to change"), with a note.
+- The **site admin alone decides** (Site admin → Weeks). Approving exchanges the two weeks in the allocation, and both start afresh as *Undecided*. Other requests involving either week lapse. Both households are told.
+- **Sign off** closes the year to changes. Any requests still waiting are declined, and everyone is told that weeks are now bought and sold. A future year can be reopened if needed.
+- **Moving from the old swaps:** on the first start of this version, *Willing to swap* becomes *Undecided*. Swap offers still waiting lapse (with a notice); their enquiries stay in the queue.
 
 **Booking enquiries from trusted friends**
 - **Asking:** a trusted friend can enquire about any week its household hasn't decided about yet (*Undecided*). On their calendar these weeks are marked *Open to enquiries*. They give the lead guest, party size and an optional message. Friends still don't see which household holds a week.
 - **The holding family's admin** sees the enquiry on the Enquiries page and Overview, with the friend's contact details and whose friend they are. They can:
   - **let it to them**: the week is released and reserved for the friend at the friend price, and the friend gets the bank details and a reference, as with any booking. The payment, less the letting cost, is credited to the family's account. Members who had requested the week are told it has been taken; or
   - **decline**, and the friend is told it isn't available this time.
-- **Closing automatically:** if the family marks the week *Using it*, releases it in the usual way, swaps it, or someone else books it, the friend's enquiry closes and they're told why. Friends see their enquiries under **My bookings** and can withdraw them.
+- **Closing automatically:** if the family marks the week *Using it*, releases it in the usual way, the allocation changes, or someone else books it, the friend's enquiry closes and they're told why. Friends see their enquiries under **My bookings** and can withdraw them.
 
 **Accounts and the budget**
 - **Service charge = charge per week × the family's weeks.** The calculated rate is budget ÷ total weeks (2026: £19,332 ÷ 52 = £371.77). You can set a rounded figure, as the syndicate does (£370), and the page shows the resulting shortfall or surplus (2026: £19,240 raised, £92 short). Re-issuing a year's charges replaces only that year's service-charge lines. Payments, credits and adjustments are kept.
