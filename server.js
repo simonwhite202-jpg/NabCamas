@@ -168,6 +168,8 @@ CREATE TABLE IF NOT EXISTS topups (
 try { db.exec('ALTER TABLE weeks ADD COLUMN gained_by_request INTEGER NOT NULL DEFAULT 0'); } catch { }
 // let income above that cap, which goes to the maintenance fund along with the letting cost
 try { db.exec('ALTER TABLE bookings ADD COLUMN fund_extra REAL'); } catch { }
+// a week the holding family lets another family use free of charge, after an enquiry: recorded as a £0 booking
+try { db.exec('ALTER TABLE bookings ADD COLUMN gift INTEGER'); } catch { }
 // picked = 1: the family holding the week chose this week from the requesting family's Willing to swap weeks
 try { db.exec('ALTER TABLE swaps ADD COLUMN picked INTEGER NOT NULL DEFAULT 0'); } catch { }
 // the holder's reply to an enquiry without picking a week or releasing ('unsure' = not sure yet; they stay in the queue)
@@ -313,7 +315,8 @@ function weekView(w, u, s) {
   if (b) {
     const seeGuest = u.is_site_admin || b.user_id === u.id || (isFamily(u) && (u.family_id === w.family_id || u.family_id === b.buyer_family_id));
     v.booking = { id: b.id, status: b.status, mine: b.user_id === u.id, guest: seeGuest ? (b.guest_name || q1('SELECT name FROM users WHERE id=?', b.user_id).name) : null, reference: seeGuest ? b.reference : null, expires_at: b.expires_at,
-      ...(u.is_site_admin ? { amount: b.amount, method: b.method, seller: famName(b.seller_family_id), buyer: b.buyer_family_id ? famName(b.buyer_family_id) : null } : {}) };
+      ...(u.is_site_admin ? { amount: b.amount, method: b.method, seller: famName(b.seller_family_id), buyer: b.buyer_family_id ? famName(b.buyer_family_id) : null } : {}),
+      ...(b.gift && (isFamily(u) || u.is_site_admin) ? { gift: true, given_to: famName(b.buyer_family_id), ours: isFamily(u) && u.family_id === b.buyer_family_id } : {}) };
   }
   // what this user can do
   const friendVisible = w.offer_friends && (w.sale_to === 'all' || (w.sale_to === 'own' && u.family_id === w.family_id)) && (friendsFrom(w, s) || '9') <= today();
@@ -391,7 +394,7 @@ function friendsFrom(w, s = settings()) {
 // Let income: each paid let is credited to the family that released the week, less the letting cost, which goes to
 // the maintenance fund. Credit sits on the family's account and carries forward against future charges.
 function letIncome(year) {
-  const g = q1(`SELECT COALESCE(SUM(b.amount),0) n, COUNT(*) c, COALESCE(SUM(COALESCE(b.letting_cost,0) + COALESCE(b.fund_extra,0)),0) f FROM bookings b JOIN weeks w ON w.id=b.week_id WHERE b.status='confirmed' AND w.year=?`, year);
+  const g = q1(`SELECT COALESCE(SUM(b.amount),0) n, COUNT(*) c, COALESCE(SUM(COALESCE(b.letting_cost,0) + COALESCE(b.fund_extra,0)),0) f FROM bookings b JOIN weeks w ON w.id=b.week_id WHERE b.status='confirmed' AND COALESCE(b.gift,0)=0 AND w.year=?`, year);
   return { gross: round2(g.n), lets: g.c, fund: round2(g.f), credited: round2(g.n - g.f) };
 }
 function creditSummary(year, s = settings()) {
@@ -403,7 +406,7 @@ function creditSummary(year, s = settings()) {
     // differences from this year's uneven swaps are already settled by credits carried into next year
     const settled = q1(`SELECT COALESCE(SUM(c.amount),0) n FROM credit_ledger c JOIN swaps sw ON sw.id=c.swap_id JOIN weeks t ON t.id=sw.target_week_id
       WHERE c.family_id=? AND c.year=? AND t.year=?`, f.id, year + 1, year).n;
-    const lets = q1(`SELECT COUNT(*) c, COALESCE(SUM(b.amount - COALESCE(b.letting_cost,0) - COALESCE(b.fund_extra,0)),0) n FROM bookings b JOIN weeks w ON w.id=b.week_id WHERE b.status='confirmed' AND w.year=? AND b.seller_family_id=?`, year, f.id);
+    const lets = q1(`SELECT COUNT(*) c, COALESCE(SUM(b.amount - COALESCE(b.letting_cost,0) - COALESCE(b.fund_extra,0)),0) n FROM bookings b JOIN weeks w ON w.id=b.week_id WHERE b.status='confirmed' AND COALESCE(b.gift,0)=0 AND w.year=? AND b.seller_family_id=?`, year, f.id);
     return { id: f.id, name: f.name, color: f.color, shares, carried, entitlement, weeks: held.length, value, settled, diff: value - entitlement + settled,
       school_weeks: held.filter(w => w.school_holiday).length, released_weeks: held.filter(w => w.offer_friends && w.released_at).length, lets: lets.c, let_income: round2(lets.n) };
   });
@@ -453,7 +456,7 @@ function releaseSwaps(w, why, byUser, exceptId = 0) {
 const nowSql = () => new Date().toISOString().replace('T', ' ').slice(0, 19);
 const ordinal = n => n + (n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] || 'th');
 const openEnquiries = weekId => q("SELECT * FROM enquiries WHERE week_id=? AND status='open' ORDER BY created_at, id", weekId);
-const CLOSED_WHY = { using: 'they are using it', taken: 'it has been taken', swapped: 'it has been swapped' };
+const CLOSED_WHY = { using: 'they are using it', taken: 'it has been taken', swapped: 'it has been swapped', given: 'it has been given to another family' };
 // close the queue for a week; the winning family's enquiry (if any) is marked won
 function closeEnquiries(w, reason, winnerFamily = null) {
   for (const e of openEnquiries(w.id)) {
@@ -648,11 +651,11 @@ route('GET', '/api/home', ({ user }) => {
   const upcoming = [];
   if (fam) for (const w of q("SELECT * FROM weeks WHERE family_id=? AND start_date >= ? ORDER BY start_date LIMIT 5", fid, t)) {
     const b = q1("SELECT * FROM bookings WHERE week_id=? AND status IN ('pending','confirmed')", w.id);
-    upcoming.push({ start: w.start_date, title: weekLabel(w), detail: b ? `Let to ${b.guest_name || q1('SELECT name FROM users WHERE id=?', b.user_id).name}` : planOf(w) === 'using' ? 'Your family is using it' : planOf(w) === 'released' ? 'Released' : 'Undecided', week_id: w.id, year: w.year, plan: b ? 'let' : planOf(w) });
+    upcoming.push({ start: w.start_date, title: weekLabel(w), detail: b ? (b.gift ? `Given to ${famName(b.buyer_family_id)}, free` : `Let to ${b.guest_name || q1('SELECT name FROM users WHERE id=?', b.user_id).name}`) : planOf(w) === 'using' ? 'Your family is using it' : planOf(w) === 'released' ? 'Released' : 'Undecided', week_id: w.id, year: w.year, plan: b ? 'let' : planOf(w) });
   }
   const trips = q(`SELECT b.*, w.start_date, w.week_no, w.year, w.end_date FROM bookings b JOIN weeks w ON w.id=b.week_id
     WHERE (b.user_id=? OR (? AND b.buyer_family_id=?)) AND b.status IN ('pending','confirmed') AND w.start_date >= ? ORDER BY w.start_date LIMIT 5`,
-    user.id, fam ? 1 : 0, fid ?? 0, t).map(b => ({ start: b.start_date, title: weekLabel(b), detail: `${b.status === 'confirmed' ? 'Booked' : 'Reserved, awaiting payment'} · ${b.guest_name || ''} · from ${famName(b.seller_family_id)}`, week_id: b.week_id, year: b.year, plan: b.status === 'confirmed' ? 'booked' : 'reserved' }));
+    user.id, fam ? 1 : 0, fid ?? 0, t).map(b => ({ start: b.start_date, title: weekLabel(b), detail: b.gift ? `Given to your family free by ${famName(b.seller_family_id)}` : `${b.status === 'confirmed' ? 'Booked' : 'Reserved, awaiting payment'} · ${b.guest_name || ''} · from ${famName(b.seller_family_id)}`, week_id: b.week_id, year: b.year, plan: b.status === 'confirmed' ? 'booked' : 'reserved' }));
   // weeks this person can book now
   const available = q("SELECT * FROM weeks WHERE status='offered' AND offer_friends=1 AND start_date >= ? ORDER BY start_date LIMIT 40", t).map(w => weekView(w, user, s)).filter(v => v.can_book).slice(0, 6)
     .map(v => ({ week_id: v.id, year: v.year, title: weekLabel(v), price: v.price, band: bandOf(v), family: user.role === 'friend' ? null : v.family_name }));
@@ -696,6 +699,8 @@ route('GET', '/api/home', ({ user }) => {
     const base = { week_no: w.week_no, year: w.year, start: w.start_date, end: w.end_date, week_id: w.id, mine: fam && w.family_id === fid };
     if (friend) return { ...base, household: b && b.user_id === user.id ? 'Your stay' : null,
       status: b && b.user_id === user.id ? 'Your stay' : b || p !== 'released' ? 'Occupied' : 'Available' };
+    if (b && b.gift) return { ...base, household: famName(b.buyer_family_id), detail: `Given by ${famName(w.family_id)}`, status: 'Using it', mine: fam && b.buyer_family_id === fid,
+      contact: fam && b.buyer_family_id === fid ? null : familyContact(b.buyer_family_id) };
     if (b) return { ...base, household: b.guest_name || q1('SELECT name FROM users WHERE id=?', b.user_id).name, detail: `Guests, via ${famName(w.family_id)}`, status: b.status === 'confirmed' ? 'Booked' : 'Reserved',
       contact: user.is_site_admin || base.mine ? reach(q1('SELECT name, email, phone FROM users WHERE id=?', b.user_id)) : familyContact(w.family_id) };
     if (!w.family_id) return { ...base, household: 'Syndicate week', detail: '', status: 'Syndicate' };
@@ -803,7 +808,8 @@ route('GET', '/api/bookings', ({ user, query }) => {
 route('POST', '/api/bookings/:id/cancel', ({ user, params, body }) => {
   need(user, true); const b = q1('SELECT * FROM bookings WHERE id=?', params.id) || fail(404, 'Not found');
   const w = q1('SELECT * FROM weeks WHERE id=?', b.week_id);
-  if (b.status === 'pending') need(user, b.user_id === user.id || user.is_site_admin || canManageFamily(user, b.seller_family_id));
+  if (b.gift) need(user, b.status === 'confirmed' && user.is_site_admin, 'Only the site admin can cancel this');
+  else if (b.status === 'pending') need(user, b.user_id === user.id || user.is_site_admin || canManageFamily(user, b.seller_family_id));
   else if (b.status === 'confirmed') need(user, user.is_site_admin, 'Only the site admin can cancel a confirmed (paid) booking — contact them to arrange a refund');
   else fail(400, 'Booking already closed');
   tx(() => {
@@ -812,13 +818,21 @@ route('POST', '/api/bookings/:id/cancel', ({ user, params, body }) => {
         run("INSERT INTO ledger (family_id,year,type,description,amount,booking_id,created_by) VALUES (?,?,'adjustment',?,?,?,?)", l.family_id, l.year, 'Reversal: ' + l.description, -l.amount, b.id, user.id);
     }
     run("UPDATE bookings SET status='cancelled' WHERE id=?", b.id);
-    run("UPDATE weeks SET status='offered' WHERE id=?", w.id);
+    // a week given free goes back to its family as Undecided; a let week goes back on offer
+    run(b.gift ? "UPDATE weeks SET status='own_use', offer_friends=0, in_use=0 WHERE id=?" : "UPDATE weeks SET status='offered' WHERE id=?", w.id);
   });
   const reason = String((body && body.reason) || '').trim().slice(0, 500), s = settings();
-  const refundNote = b.status !== 'confirmed' ? '' : b.method === 'account' ? ` The ${s.currency}${b.amount} has gone back on ${famName(b.buyer_family_id)}’s account.` : ' Any refund is arranged with the site admin.';
-  const msg = `Booking ${b.reference} for ${weekLabel(w)} was cancelled by ${user.name}.${reason ? ` Reason: ${reason}${/[.!?]$/.test(reason) ? '' : '.'}` : ''}`;
-  notify([b.user_id].filter(i => i !== user.id), msg + refundNote, '#/bookings');
-  notify(familyAdmins(b.seller_family_id).filter(i => i !== user.id && i !== b.user_id), msg + (b.status === 'confirmed' ? ' The let income credited for it has been reversed and the week is available again.' : ' The week is available again.'), '#/calendar');
+  const why = reason ? ` Reason: ${reason}${/[.!?]$/.test(reason) ? '' : '.'}` : '';
+  if (b.gift) {
+    const msg = `${famName(b.seller_family_id)}’s free use of ${weekLabel(w)} given to ${famName(b.buyer_family_id)} was cancelled by ${user.name}.${why}`;
+    notify([...new Set([b.user_id, ...familyAdmins(b.buyer_family_id)])].filter(i => i !== user.id), msg, '#/calendar');
+    notify(familyAdmins(b.seller_family_id).filter(i => i !== user.id), msg + ' The week is back with your family as Undecided.', '#/calendar');
+  } else {
+    const refundNote = b.status !== 'confirmed' ? '' : b.method === 'account' ? ` The ${s.currency}${b.amount} has gone back on ${famName(b.buyer_family_id)}’s account.` : ' Any refund is arranged with the site admin.';
+    const msg = `Booking ${b.reference} for ${weekLabel(w)} was cancelled by ${user.name}.${why}`;
+    notify([b.user_id].filter(i => i !== user.id), msg + refundNote, '#/bookings');
+    notify(familyAdmins(b.seller_family_id).filter(i => i !== user.id && i !== b.user_id), msg + (b.status === 'confirmed' ? ' The let income credited for it has been reversed and the week is available again.' : ' The week is available again.'), '#/calendar');
+  }
   audit(user.id, 'booking.cancel', { booking: b.id, was: b.status, reason: reason || undefined }); return { ok: true };
 });
 route('POST', '/api/admin/bookings/:id/confirm', ({ user, params }) => {
@@ -855,9 +869,10 @@ function doSwap(sw, user) {
     `Swap agreed! ${famName(sw.from_family_id)} now has ${weekLabel(b)} and ${famName(sw.to_family_id)} has ${weekLabel(a)}.`, '#/enquiries');
   audit(user.id, 'swap.accept', { id: sw.id });
 }
-// Members asking for another family's week ("requests", with first refusal when it's released) are switched off for now.
-// The code stays; set this to true to bring it back. Trusted friends' booking enquiries are separate and stay on.
-const MEMBER_REQUESTS_OPEN = false;
+// Members enquire about another family's week from the calendar; the enquiry goes to that family's Enquiries page.
+// The holder can give it to them free, release it (enquirers get first refusal), or say they're using it.
+// Trusted friends' booking enquiries are separate. Set this to false to switch members' enquiries off again.
+const MEMBER_REQUESTS_OPEN = true;
 route('POST', '/api/enquiries', ({ user, body }) => {
   if (!MEMBER_REQUESTS_OPEN) fail(400, 'Requests for other families’ weeks are switched off for now');
   need(user, isFamily(user), 'Only family members can enquire about weeks');
@@ -871,7 +886,7 @@ route('POST', '/api/enquiries', ({ user, body }) => {
   if (q1("SELECT 1 FROM enquiries WHERE week_id=? AND family_id=? AND status='open'", w.id, user.family_id)) fail(400, 'Your family has already enquired about this week');
   const id = run('INSERT INTO enquiries (week_id,family_id,user_id,message) VALUES (?,?,?,?)', w.id, user.family_id, user.id, body.message || null).lastInsertRowid;
   const queue = openEnquiries(w.id), pos = queue.findIndex(x => x.id === id) + 1;
-  notify(familyAdmins(w.family_id), `${user.name} (${famName(user.family_id)}) enquired about your ${weekLabel(w)}. If you release it, the families who asked get first refusal, first come first served.${queue.length > 1 ? ` ${queue.length} families have now asked.` : ''}`, '#/enquiries');
+  notify(familyAdmins(w.family_id), `${user.name} (${famName(user.family_id)}) enquired about your ${weekLabel(w)}. On the Enquiries page you can give it to them free, release it (the families who asked get first refusal, first come first served) or say you’re using it.${queue.length > 1 ? ` ${queue.length} families have now asked.` : ''}`, '#/enquiries');
   audit(user.id, 'enquiry.create', { id }); return { id, position: pos, queue: queue.length };
 });
 // Swaps between families are no longer made during a signed-off year (see the next-year change requests).
@@ -884,6 +899,26 @@ route('POST', '/api/enquiries/:id/reply', ({ user, params }) => {
   run("UPDATE enquiries SET reply='unsure', replied_at=datetime('now') WHERE id=?", e.id);
   notify([e.user_id], `${famName(w.family_id)} aren’t sure about their ${weekLabel(w)} yet. Your family stays in the queue: if they release it, you get first refusal.`, '#/enquiries');
   audit(user.id, 'enquiry.reply', { id: e.id }); return { ok: true };
+});
+// the holder lets the family who enquired use the week free of charge. It isn't a let, so there's no letting cost and
+// nothing on either account; it's recorded as a £0 booking so the calendar shows who is there.
+route('POST', '/api/enquiries/:id/give', ({ user, params }) => {
+  const e = q1("SELECT * FROM enquiries WHERE id=? AND status='open'", params.id) || fail(404, 'This enquiry is closed');
+  const w = q1('SELECT * FROM weeks WHERE id=?', e.week_id);
+  need(user, isAdminOf(user, w.family_id), 'Only your family admin can give a week to another family');
+  if (w.in_use || ['pending', 'booked'].includes(w.status) || w.start_date < today()) fail(400, 'This week can no longer be given');
+  const ref = `NC${String(w.year).slice(2)}W${String(w.week_no).padStart(2, '0')}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`;
+  const id = tx(() => {
+    const ins = run(`INSERT INTO bookings (week_id,user_id,seller_family_id,buyer_family_id,amount,method,status,reference,notes,confirmed_at,confirmed_by,letting_cost,gift)
+      VALUES (?,?,?,?,0,'account','confirmed',?,?,datetime('now'),?,0,1)`, w.id, e.user_id, w.family_id, e.family_id, ref, `Given free by ${user.name} after an enquiry`, user.id);
+    run("UPDATE weeks SET status='booked', offer_friends=0, offer_swap=0, in_use=0, enquiry_until=NULL WHERE id=?", w.id);
+    releaseSwaps(w, 'given to another family', user);
+    closeEnquiries(w, 'given', e.family_id);
+    closeFriendEnquiries(w, 'taken');
+    return Number(ins.lastInsertRowid);
+  });
+  notify([...new Set([e.user_id, ...familyAdmins(e.family_id)])].filter(i => i !== user.id), `Good news: ${famName(w.family_id)} have given your family ${weekLabel(w)}, free of charge. It’s yours to use.`, '#/calendar');
+  audit(user.id, 'enquiry.give', { id: e.id, booking: id, to: e.family_id }); return { ok: true, booking: id };
 });
 // --- booking enquiries from trusted friends (weeks still Undecided)
 route('POST', '/api/friend-enquiries', ({ user, body }) => {
@@ -950,6 +985,8 @@ route('GET', '/api/enquiries', ({ user }) => {
       position: e.status === 'open' ? queue.findIndex(x => x.id === e.id) + 1 : null, queue: queue.length,
       can_claim: ours && e.status === 'open' && windowOpen, can_withdraw: ours && e.status === 'open' && (e.user_id === user.id || isAdminOf(user, fid)),
       reply: e.reply, can_reply: free && !live && isAdminOf(user, w.family_id) && e.reply !== 'unsure',
+      given: e.status === 'won' && !!q1("SELECT 1 FROM bookings WHERE week_id=? AND buyer_family_id=? AND gift=1 AND status='confirmed'", w.id, e.family_id),
+      can_give: e.status === 'open' && !w.in_use && !['pending', 'booked'].includes(w.status) && w.start_date >= today() && isAdminOf(user, w.family_id),
       offer: offer && { id: offer.id, status: offer.status, picked: !!offer.picked, decline_reason: offer.decline_reason, offered: swapWeekView(ofw), by: q1('SELECT name FROM users WHERE id=?', offer.requester_id).name,
         can_accept: offer.status === 'pending' && isAdminOf(user, offer.to_family_id), can_decline: live && isAdminOf(user, offer.to_family_id),
         can_confirm: offer.status === 'proposed' && isAdminOf(user, offer.from_family_id), can_cancel: live && (offer.requester_id === user.id || isAdminOf(user, offer.from_family_id)) } };

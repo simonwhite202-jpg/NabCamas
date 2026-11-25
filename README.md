@@ -163,10 +163,19 @@ Opening a page you don't have access to takes you back to Home.
 - **Moving from the old pot:** on the first start of this version, paid lets that were waiting for a pot share-out are credited to the families that released them. Years already shared out are left as they were.
 
 **Enquiries (signed-off years)**
-- **Switched off for now:** members can't currently request (enquire about) another family's week, so there's no queue or first refusal; a released week goes straight to members, then trusted friends. Trusted friends' booking enquiries still work. To bring member requests back, set `MEMBER_REQUESTS_OPEN` to `true` in `server.js`. When it was switched off, any open requests were closed and the families told.
-- Once a year's allocation is signed off, weeks change hands only by being **released and bought**: there are no swaps between families.
-- Any family member can **enquire** about another family's week that isn't *Using it*. If the family releases it, those who enquired get **first refusal** for 48 hours at the member price, first come first served; then all members for 7 days; then trusted friends.
-- The holding family can also mark it *Using it* (the enquiries close) or reply **not sure yet** (enquirers keep their place).
+- Once a year's allocation is signed off, there are no swaps between families. Weeks change hands only when they are:
+  - **given** free to a family that enquired;
+  - **released and bought**;
+  - **let to a trusted friend**.
+- Any family member can **enquire** about another family's week marked **Enquire** on the calendar, that is, one not yet *Using it* or *Released*. They open the week and send an optional message. The week panel also has Email and WhatsApp buttons to ask the holding family directly.
+- The enquiry is logged on both families' **Enquiries** pages, in queue order, and the holding family's admin is notified.
+- The holding family's admin can answer in one of these ways:
+  - **Give it to them free.** The enquiring family can use the week. It is recorded as a £0 booking: no letting cost, nothing on either account, and it doesn't count as a let. The calendar shows *Given to Mackay* to the holder, *Given by Bonar* to the family that receives it, and the receiving family's name to everyone else. The week appears under the receiving family's *Our weeks* filter, and the other enquiries close. Only the site admin can cancel a gift; the week then goes back to its holder as *Undecided*.
+  - **Let it to a trusted friend** who has enquired, at the friend price. See below.
+  - **Release it.** Those who enquired get **first refusal** for 48 hours at the member price, first come first served; then all members for 7 days; then trusted friends.
+  - Mark it **Using it**, which closes the enquiries.
+  - Reply **not sure yet**, which keeps the enquirers' places in the queue.
+- To switch members' enquiries off again, set `MEMBER_REQUESTS_OPEN` to `false` in `server.js`.
 
 **Next-year allocation: changes and sign-off**
 - Next year's allocation shows as a **Draft** (on the family calendar and the site admin's Overview) until the site admin **signs it off** (the syndicate does this in November). The current year and earlier are always signed off.

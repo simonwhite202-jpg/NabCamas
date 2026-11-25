@@ -162,18 +162,18 @@ function openModal(html, wide) {
 // Site admin: cancel a booking (awaiting payment or paid). b = {id, status, method, amount, reference, guest, label, seller, buyer}
 function cancelBookingModal(b, done) {
   const paid = b.status === 'confirmed';
-  const what = paid
+  const what = b.gift ? [`${esc(b.seller)} gave this week to <b>${esc(b.buyer)}</b> free, so no money moves.`, `The week goes back to ${esc(b.seller)} as Undecided.`] : paid
     ? [`The let income <b>${esc(b.seller)}</b> was credited for it (${money(b.amount, 2)} less the letting cost) comes back off their account.`,
        b.method === 'account' ? `The ${money(b.amount, 2)} goes back on <b>${esc(b.buyer || 'the buyer')}</b>’s account.` : `The guest paid by bank transfer: refund them from the syndicate account yourself (the portal doesn’t move money).`]
     : ['No payment has been confirmed, so no money moves.'];
-  what.push(`The week goes back on offer as released by ${esc(b.seller)}. Open it on the calendar if it should be Undecided or Using it instead.`);
-  const m = openModal(`<h2>Cancel booking ${esc(b.reference || '')}?</h2>
-    <p style="margin-top:0">${esc(b.label)} · ${esc(b.guest || '')} · <span class="badge ${paid ? 'blue' : 'amber'}">${paid ? 'Paid' : 'Awaiting payment'}</span></p>
+  if (!b.gift) what.push(`The week goes back on offer as released by ${esc(b.seller)}. Open it on the calendar if it should be Undecided or Using it instead.`);
+  const m = openModal(`<h2>${b.gift ? `Cancel ${esc(b.buyer)}’s free week?` : `Cancel booking ${esc(b.reference || '')}?`}</h2>
+    <p style="margin-top:0">${esc(b.label)} · ${esc(b.gift ? b.buyer : b.guest || '')} · <span class="badge ${b.gift ? 'green' : paid ? 'blue' : 'amber'}">${b.gift ? 'Given free' : paid ? 'Paid' : 'Awaiting payment'}</span></p>
     <ul class="small" style="padding-left:18px;margin:0 0 14px">${what.map(t => `<li style="margin-bottom:4px">${t}</li>`).join('')}</ul>
-    <form id="cbf"><div class="field"><label>Message to the guest and household (optional)</label><textarea name="reason" rows="2" maxlength="500" placeholder="e.g. The house is closed for repairs that week"></textarea></div>
-    <div class="row" style="justify-content:flex-end;gap:8px"><button type="button" class="btn" data-close>Keep booking</button><button class="btn danger">Cancel booking</button></div></form>`);
+    <form id="cbf"><div class="field"><label>Message to ${b.gift ? 'both families' : 'the guest and household'} (optional)</label><textarea name="reason" rows="2" maxlength="500" placeholder="e.g. The house is closed for repairs that week"></textarea></div>
+    <div class="row" style="justify-content:flex-end;gap:8px"><button type="button" class="btn" data-close>Keep booking</button><button class="btn danger">${b.gift ? 'Cancel it' : 'Cancel booking'}</button></div></form>`);
   $('#cbf', m).onsubmit = guard(async e => { e.preventDefault();
-    await api(`/bookings/${b.id}/cancel`, { body: formData($('#cbf', m)) }); closeOverlay(); toast('Booking cancelled. The guest and household have been told'); done && done(); });
+    await api(`/bookings/${b.id}/cancel`, { body: formData($('#cbf', m)) }); closeOverlay(); toast(b.gift ? 'Cancelled. Both families have been told' : 'Booking cancelled. The guest and household have been told'); done && done(); });
 }
 
 // ------------------------------------------------------------ home
@@ -269,7 +269,7 @@ const BAND = { school: 'School holidays', summer: 'Summer', shoulder: 'Shoulder'
 const SALE_TO = { members: 'Other syndicate members only', all: 'Members + any family’s trusted friends', own: 'Members + our own trusted friends' };
 function statusBadge(w) {
   if (w.status === 'syndicate') return '<span class="badge">Syndicate</span>';
-  if (w.status === 'booked') return `<span class="badge blue">${w.booking?.mine ? 'Your booking' : 'Let'}</span>`;
+  if (w.status === 'booked') return `<span class="badge blue">${w.booking?.gift ? `Given to ${esc(w.booking.given_to)}` : w.booking?.mine ? 'Your booking' : 'Let'}</span>`;
   if (w.status === 'pending') return `<span class="badge amber">${w.booking?.mine ? 'Awaiting your payment' : 'Reserved'}</span>`;
   if (S.me.user.role === 'friend') return w.can_book ? `<span class="badge green">${money(w.price)}</span>` : '';
   const b = [];
@@ -280,6 +280,8 @@ function statusBadge(w) {
 // What a week means to the person looking: one of five muted states, always with a text label.
 function weekState(w) {
   const friend = S.me.user.role === 'friend', fam = esc(w.family_name);
+  if (w.booking?.gift) return w.is_mine ? { k: 'booked', who: 'Your week', label: `Given to ${esc(w.booking.given_to)}` }
+    : w.booking.ours ? { k: 'yours', who: 'Your week', label: `Given by ${fam}` } : { k: 'other', who: esc(w.booking.given_to), label: `Given by ${fam}` };
   if (w.booking?.mine) return w.booking.status === 'confirmed' ? { k: 'booked', who: 'Your booking', label: 'Booked' } : { k: 'pending', who: 'Your booking', label: 'Awaiting payment' };
   if (friend) return w.can_book ? { k: 'available', who: 'Available', label: `Available · ${money(w.price)}` }
     : w.my_friend_enquiry ? { k: 'pending', who: 'Enquiry sent', label: 'Enquired' }
@@ -287,7 +289,7 @@ function weekState(w) {
   if (w.status === 'syndicate') return { k: 'other', who: 'Syndicate', label: 'Syndicate week' };
   if (w.status === 'booked') return { k: 'booked', who: w.is_mine ? 'Your week' : fam, label: w.is_mine ? 'Let to guests' : 'Booked' };
   if (w.status === 'pending') return { k: 'pending', who: w.is_mine ? 'Your week' : fam, label: 'Reserved' };
-  if (w.my_enquiry) return { k: 'pending', who: fam, label: w.first_refusal_until ? 'First refusal' : `Requested · ${ordinal(w.my_enquiry.position)}` };
+  if (w.my_enquiry) return { k: 'pending', who: fam, label: w.first_refusal_until ? 'First refusal' : `Enquired · ${ordinal(w.my_enquiry.position)}` };
   if (w.is_mine) return { k: 'yours', who: 'Your week', label: { using: 'Yours · using', released: 'Yours · released' }[w.plan] || 'Yours · undecided' };
   if (w.can_book) return { k: 'available', who: fam, label: `Available · ${money(w.price)}` };
   if (w.plan === 'released' || w.first_refusal_until) return { k: 'available', who: fam, label: 'Released' };
@@ -299,7 +301,7 @@ function filterMatch(w) {
     case 'book': return w.can_book;
     case 'swap': return w.can_enquire || !!w.my_enquiry;
     case 'enquire': return w.can_friend_enquire || !!w.my_friend_enquiry;
-    case 'mine': return w.is_mine || w.booking?.mine;
+    case 'mine': return w.is_mine || w.booking?.mine || w.booking?.ours;
     // released weeks to buy, and other families' weeks they haven't decided about yet
     case 'open': return !w.is_mine && !!w.family_id && w.start_date >= todayStr() && !['pending', 'booked'].includes(w.status) && (w.plan === 'released' || w.plan === 'undecided');
     case 'offered': return w.status === 'offered';
@@ -348,7 +350,8 @@ async function openWeek(w) {
       : `<dt>Price</dt><dd><b>${money(w.member_price)}</b> for members · ${money(w.friend_price)} for trusted friends${w.price_override != null ? ' <span class="muted small">(set by family)</span>' : ''}
         <div class="tiny muted">${w.sale_to === 'members' ? 'Members only' : (w.friends_from > todayStr() ? `Members only until ${dfmt(w.friends_from)}, then ` : 'Open to ') + (w.sale_to === 'own' ? `${esc(w.family_name)}’s trusted friends` : 'trusted friends')}</div></dd>`) : ''}
     ${w.note && role !== 'friend' ? `<dt>Note</dt><dd>${esc(w.note)}</dd>` : ''}
-    ${w.booking?.guest ? `<dt>Booking</dt><dd>${esc(w.booking.guest)} · <span class="badge ${w.booking.status === 'confirmed' ? 'blue' : 'amber'}">${w.booking.status === 'confirmed' ? 'Paid' : 'Awaiting payment'}</span><div class="tiny muted">Ref ${esc(w.booking.reference)}${w.booking.amount != null ? ` · ${money(w.booking.amount, 2)} by ${w.booking.method === 'account' ? `${esc(w.booking.buyer || '')} account` : 'bank transfer'}` : ''}</div>${isSiteRole() ? `<button class="btn sm danger" data-admin-cancel style="margin-top:8px">${icon('x')}Cancel booking</button>` : ''}</dd>` : ''}</dl>`;
+    ${w.booking?.gift ? `<dt>Given to</dt><dd>${esc(w.booking.given_to)} · <span class="badge green">Free</span><div class="tiny muted">${esc(w.family_name)} let them use it free of charge${w.booking.reference ? ` · ref ${esc(w.booking.reference)}` : ''}</div>${isSiteRole() ? `<button class="btn sm danger" data-admin-cancel style="margin-top:8px">${icon('x')}Cancel</button>` : ''}</dd>`
+    : w.booking?.guest ? `<dt>Booking</dt><dd>${esc(w.booking.guest)} · <span class="badge ${w.booking.status === 'confirmed' ? 'blue' : 'amber'}">${w.booking.status === 'confirmed' ? 'Paid' : 'Awaiting payment'}</span><div class="tiny muted">Ref ${esc(w.booking.reference)}${w.booking.amount != null ? ` · ${money(w.booking.amount, 2)} by ${w.booking.method === 'account' ? `${esc(w.booking.buyer || '')} account` : 'bank transfer'}` : ''}</div>${isSiteRole() ? `<button class="btn sm danger" data-admin-cancel style="margin-top:8px">${icon('x')}Cancel booking</button>` : ''}</dd>` : ''}</dl>`;
   const past = w.start_date < todayStr();
   if (w.status === 'syndicate') html += '<div class="section notice">This week is held by the syndicate (e.g. maintenance or the extra 53rd week) and isn’t allocated to a family.</div>';
 
@@ -409,7 +412,7 @@ async function openWeek(w) {
     else openModal(`<h2>Week reserved</h2><p>Please pay within <b>${s.hold_days} days</b> to secure the week. You’ll be notified when the payment is confirmed.</p>${payBox(b.reference, b.amount)}<div class="row" style="margin-top:18px;justify-content:flex-end"><button class="btn primary" data-close>Done</button></div>`);
     viewCalendar($('main')); await refreshMe(); });
   const ac = $('[data-admin-cancel]', body);
-  if (ac) ac.onclick = () => cancelBookingModal({ ...w.booking, label: `Week ${w.week_no} · ${dfmt(w.start_date, { day: 'numeric', month: 'short', year: 'numeric' })}`, seller: w.booking.seller || w.family_name },
+  if (ac) ac.onclick = () => cancelBookingModal({ ...w.booking, label: `Week ${w.week_no} · ${dfmt(w.start_date, { day: 'numeric', month: 'short', year: 'numeric' })}`, seller: w.booking.seller || w.family_name, buyer: w.booking.given_to || w.booking.buyer },
     () => { viewCalendar($('main')); refreshMe(); });
   const ff = $('#feForm', body);
   if (ff) ff.onsubmit = guard(async e => { e.preventDefault(); await api('/friend-enquiries', { body: { ...formData(ff), week_id: w.id } }); toast('Enquiry sent. The household will let you know'); closeOverlay(); viewCalendar($('main')); });
@@ -464,9 +467,9 @@ const swapWeek = w => `<b>Week ${w.week_no}</b> ${w.year} <span class="muted">·
 const ordinal = n => n + (n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] || 'th');
 const whenTime = t => new Date(t.replace(' ', 'T') + 'Z').toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 const asked = t => dfmt(t.slice(0, 10));
-const CLOSED = { using: 'Closed: they’re using it', taken: 'Closed: taken by someone else', swapped: 'Closed: swapped', passed: 'You passed', no_reply: 'Closed: no answer in time' };
+const CLOSED = { using: 'Closed: they’re using it', taken: 'Closed: taken by someone else', given: 'Closed: given to another family', swapped: 'Closed: swapped', passed: 'You passed', no_reply: 'Closed: no answer in time' };
 function enquiryStatus(e) {
-  if (e.status === 'won') return `<span class="badge green">${e.mine ? 'Your family got it' : 'Got it'}</span>`;
+  if (e.status === 'won') return `<span class="badge green">${e.given ? (e.mine ? 'Given to your family free' : 'Given free') : e.mine ? 'Your family got it' : 'Got it'}</span>`;
   if (e.status === 'withdrawn') return '<span class="badge">Withdrawn</span>';
   if (e.status === 'closed') return `<span class="badge">${CLOSED[e.close_reason] || 'Closed'}</span>`;
   return e.week.first_refusal_until ? `<span class="badge amber">First refusal until ${whenTime(e.week.first_refusal_until)}</span>` : `<span class="badge amber">${ordinal(e.position)} of ${e.queue} in the queue</span>`;
@@ -486,11 +489,11 @@ async function enquirySection(w, s) {
     ? `<div class="section"><h3>Your family has first refusal</h3><p class="small" style="margin:0">${esc(w.family_name)} have released this week. You’re ${ordinal(w.my_enquiry.position)} of ${q} who enquired; whoever enquired first and says yes gets it. First refusal ends ${whenTime(w.first_refusal_until)}.</p>${claimForm(w.my_enquiry.id, w.member_price, w.my_enquiry.claim, w.first_refusal_until)}</div>`
     : `<div class="section notice small">The families who enquired about this week have first refusal until ${whenTime(w.first_refusal_until)}. After that, any member can book it.</div>`;
   if (w.my_enquiry) return `<div class="section"><h3>Your family has enquired</h3><p class="small" style="margin:0">Asked on ${asked(w.my_enquiry.created_at)}. You’re <b>${ordinal(w.my_enquiry.position)} of ${q}</b> in the queue.
-    If ${esc(w.family_name)} release it, you’ll get first refusal for ${s.enquiry_hours || 48} hours, in queue order.</p><p class="small" style="margin:8px 0 0"><a href="#/enquiries">See it on the Enquiries page →</a></p></div>`;
+    ${esc(w.family_name)} can give it to your family free, or release it, when you’ll get first refusal for ${s.enquiry_hours || 48} hours, in queue order.</p><p class="small" style="margin:8px 0 0"><a href="#/enquiries">See it on the Enquiries page →</a></p></div>`;
   if (w.can_enquire) return `<form class="section" id="enqForm"><h3>Enquire about this week</h3>
-      <p class="muted small" style="margin-top:0">${esc(w.family_name)} will see your enquiry. If they release the week, families who enquired get first refusal for ${s.enquiry_hours || 48} hours at the member price (${money(w.member_price)}), first come first served.${q ? ` <b>${q} famil${q > 1 ? 'ies have' : 'y has'} already enquired.</b>` : ''}</p>
+      <p class="muted small" style="margin-top:0">Your enquiry goes to ${esc(w.family_name)}’s Enquiries page. They can give the week to your family free, or release it: then families who enquired get first refusal for ${s.enquiry_hours || 48} hours at the member price (${money(w.member_price)}), first come first served.${q ? ` <b>${q} famil${q > 1 ? 'ies have' : 'y has'} already enquired.</b>` : ''}</p>
       <div class="field"><label>Message (optional)</label><textarea name="message" rows="2" placeholder="e.g. We’d love this week if your plans change."></textarea></div>
-      <button class="btn primary">Enquire</button></form>`;
+      <button class="btn primary">Enquire</button>${w.holder_contact ? `<p class="tiny muted" style="margin:14px 0 6px">Or ask ${w.holder_contact.name ? esc(w.holder_contact.name) : 'them'} directly:</p>${contactButtons(w.holder_contact)}` : ''}</form>`;
   if (w.in_use) return `<div class="section notice small">${esc(w.family_name)} are using this week, so it isn’t open to enquiries.</div>`;
   return '';
 }
@@ -514,10 +517,10 @@ function incomingCard(g) {
   return `<div class="card flat" style="padding:16px"><div class="row between"><div>${swapWeek(w)}</div><span class="badge">${PLAN[w.plan].label}</span></div>
     ${w.first_refusal_until ? `<p class="small" style="margin:8px 0 0">Released. The families who enquired have first refusal until ${whenTime(w.first_refusal_until)}.</p>` : ''}
     ${g.items.length ? `<ol class="queue">${g.items.map(e => `<li class="${e.status === 'open' ? '' : 'done'}"><div class="row between"><div><b>${esc(e.family)}</b> <span class="muted small">${esc(e.user)} · asked ${asked(e.created_at)}</span></div>${e.status === 'open' ? (e.claim === 'yes' ? '<span class="badge green">Said yes</span>' : e.claim === 'no' ? '<span class="badge">Passed</span>' : '') : enquiryStatus(e)}</div>
-      ${e.message ? `<div class="small" style="margin-top:4px">“${esc(e.message)}”</div>` : ''}${offerBox(e)}${pickBox(e)}</li>`).join('')}</ol>` : ''}
+      ${e.message ? `<div class="small" style="margin-top:4px">“${esc(e.message)}”</div>` : ''}${offerBox(e)}${pickBox(e, e.can_give ? `<button class="btn green sm" data-give="${e.id}" data-give-fam="${esc(e.family)}" data-give-week="${w.week_no}" data-give-others="${open.length - 1}" data-give-friends="${fopen.length}">Give it to them free</button>` : '')}</li>`).join('')}</ol>` : ''}
     ${g.friends.length ? `<div class="small muted" style="margin:12px 0 0">Booking enquiries from trusted friends</div>${g.friends.map(friendEnquiry).join('')}` : ''}
     ${planBtns ? `<div class="row" style="margin-top:10px;gap:8px"><span class="tiny muted">Your plans for this week:</span>${planBtns}</div>` : ''}
-    ${!admin && (open.length || fopen.length) ? '<p class="tiny muted" style="margin:8px 0 0">Your family admin answers these: releasing the week, letting it to a friend, or saying you’re using it.</p>' : ''}</div>`;
+    ${!admin && (open.length || fopen.length) ? '<p class="tiny muted" style="margin:8px 0 0">Your family admin answers these: giving the week to a family free, letting it to a trusted friend, releasing it, or saying you’re using it.</p>' : ''}</div>`;
 }
 // a trusted friend's booking enquiry, on the holding family's side
 const FE_CLOSED = { using: 'Closed: you’re using it', taken: 'Closed: booked by someone else', swapped: 'Closed: swapped', released: 'Closed: week released' };
@@ -530,10 +533,10 @@ function friendEnquiry(f) {
     ${f.can_answer ? `<div class="row" style="margin-top:8px;gap:8px"><button class="btn green sm" data-fe-accept="${f.id}" data-fe-name="${esc(f.friend)}" data-fe-price="${f.price}" data-fe-week="${f.week.week_no}" data-fe-members="${f.members_asked}">Let it to them · ${money(f.price)}</button><button class="btn sm" data-fe-decline="${f.id}">Decline</button></div>` : ''}</div>`;
 }
 // on the holder's side of an enquiry: tell them you're not sure yet (they keep their place in the queue)
-function pickBox(e) {
+function pickBox(e, give = '') {
   if (e.status !== 'open' || (e.offer && ['pending', 'proposed'].includes(e.offer.status))) return '';
-  if (e.reply === 'unsure') return '<div class="row" style="margin-top:6px"><span class="badge">You replied: not sure yet</span></div>';
-  return e.can_reply ? `<div class="row" style="margin-top:6px"><button class="btn sm" data-unsure="${e.id}">Not sure yet</button><span class="tiny muted">They stay in the queue.</span></div>` : '';
+  const unsure = e.reply === 'unsure' ? '<span class="badge">You replied: not sure yet</span>' : e.can_reply ? `<button class="btn sm" data-unsure="${e.id}">Not sure yet</button><span class="tiny muted">They stay in the queue.</span>` : '';
+  return give || unsure ? `<div class="row" style="margin-top:8px;gap:8px;flex-wrap:wrap;align-items:center">${give}${unsure}</div>` : '';
 }
 function outgoingCard(e) {
   return `<div class="card flat" style="padding:16px"><div class="row between"><div>${swapWeek(e.week)} <span class="muted small">· ${esc(e.week.family_name)}</span></div>${enquiryStatus(e)}</div>
@@ -554,6 +557,9 @@ function bindEnquiryActions(root, reload) {
     if (!confirm(`Let week ${d.feWeek} to ${d.feName} at ${money(Number(d.fePrice))}?\n\nThe week is released and reserved for them. They pay the syndicate within ${S.me.settings.hold_days} days, and the payment is credited to your household’s account, less the ${money(S.me.settings.letting_cost || 0)} letting cost.${n ? `\n\n${n} member famil${n > 1 ? 'ies have' : 'y has'} also asked for this week and will be told it has been taken.` : ''}`)) return false;
     await api(`/friend-enquiries/${d.feAccept}/answer`, { body: { accept: true } }); toast('Reserved for them. They’ve been sent the payment details'); });
   act('[data-fe-decline]', async b => { if (!confirm('Decline this booking enquiry? They’ll be told the week isn’t available.')) return false; await api(`/friend-enquiries/${b.dataset.feDecline}/answer`, { body: { accept: false } }); toast('Declined'); });
+  act('[data-give]', async b => { const d = b.dataset, others = Number(d.giveOthers), fr = Number(d.giveFriends);
+    if (!confirm(`Give week ${d.giveWeek} to ${d.giveFam}, free of charge?\n\nThey can use the week. Nothing is paid, there’s no letting cost, and nothing goes on either family’s account.${others || fr ? `\n\nThe other enquiries for this week close (${[others && `${others} famil${others > 1 ? 'ies' : 'y'}`, fr && `${fr} trusted friend${fr > 1 ? 's' : ''}`].filter(Boolean).join(', ')}).` : ''}`)) return false;
+    await api(`/enquiries/${d.give}/give`, { body: {} }); toast(`Given to ${d.giveFam}. They’ve been told`); });
   act('[data-unsure]', async b => { await api(`/enquiries/${b.dataset.unsure}/reply`, { body: { reply: 'unsure' } }); toast('They’ve been told you’re not sure yet'); });
   act('[data-accept]', async b => { if (!confirm('Accept this swap?')) return false; const r = await api(`/swaps/${b.dataset.accept}/accept`, { body: {} }); toast(r.status === 'accepted' ? 'Swap agreed' : 'Accepted. Their family admin now confirms'); });
   act('[data-confirm]', async b => { if (!confirm('Confirm this swap? The two weeks change hands now, and both are marked “Using it”.')) return false; await api(`/swaps/${b.dataset.confirm}/confirm`, { body: { accept: true } }); toast('Swap agreed'); });
@@ -578,7 +584,7 @@ function enquiryLists(d, opts = {}) {
 }
 async function viewEnquiries(main) {
   const d = await api('/enquiries'), s = S.me.settings;
-  main.innerHTML = `<h1>Enquiries</h1>${s.member_requests ? `<p class="muted">Enquire about any other family’s week that isn’t marked <b>Using it</b> by clicking it on the calendar. If they release it, those who enquired get first refusal for ${s.enquiry_hours || 48} hours at the member price, first come first served; then it opens to all members, then trusted friends. Trusted friends can also ask to book your weeks that are still <b>Undecided</b>: you can let the week to them at the friend price, or decline. For changes to next year’s allocation, ask the site admin.</p>` : `<p class="muted">Trusted friends can ask to book your household’s weeks that are still <b>Undecided</b>. You can let the week to them at the friend price, or decline. (Members asking for other families’ weeks is switched off for now.)</p>`}
+  main.innerHTML = `<h1>Enquiries</h1>${s.member_requests ? `<p class="muted">Enquire about any other family’s week marked <b>Enquire</b> on the calendar: your enquiry appears here and on their Enquiries page. The family that holds the week can give it to you free, or release it, when those who enquired get first refusal for ${s.enquiry_hours || 48} hours at the member price, first come first served; then it opens to all members, then trusted friends. Trusted friends can also ask to book your weeks that are still <b>Undecided</b>: you can let the week to them at the friend price, or decline. For changes to next year’s allocation, ask the site admin.</p>` : `<p class="muted">Trusted friends can ask to book your household’s weeks that are still <b>Undecided</b>. You can let the week to them at the friend price, or decline. (Members asking for other families’ weeks is switched off for now.)</p>`}
     ${enquiryLists(d)}
     ${d.swaps.length ? `<h2 style="margin-top:32px">Recent swaps</h2><div class="table-wrap"><table><tbody>${d.swaps.map(x => `<tr><td class="small">${asked(x.at)}</td><td>${esc(x.from_family)} gave ${swapWeek(x.offered)}</td><td>${esc(x.to_family)} gave ${swapWeek(x.target)}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
   bindEnquiryActions(main, () => viewEnquiries(main));
@@ -597,7 +603,7 @@ async function viewBookings(main) {
   const table = (rows, showBooker) => rows.length ? `<div class="table-wrap"><table><thead><tr><th>Week</th><th>Dates</th>${showBooker ? '<th>Booked by</th>' : '<th>From</th>'}<th>Guest</th><th class="r">Amount</th><th>Ref</th><th>Status</th><th></th></tr></thead><tbody>
     ${rows.map(b => `<tr><td><b>${b.week.week_no}</b> <span class="muted">${b.week.year}</span></td><td>${range(b.week)}</td>
       <td>${showBooker ? esc(b.booker) + (b.booker_contact ? `<div class="tiny muted">${esc(b.booker_contact.email || '')} ${esc(b.booker_contact.phone || '')}</div>` : '') : esc(b.seller)}</td>
-      <td>${esc(b.guest_name || '')}${b.party_size ? ` <span class="muted small">(${b.party_size})</span>` : ''}</td><td class="r num">${money(b.amount)}${b.method === 'account' ? '<div class="tiny muted">on account</div>' : ''}</td>
+      <td>${esc(b.guest_name || '')}${b.party_size ? ` <span class="muted small">(${b.party_size})</span>` : ''}</td><td class="r num">${b.gift ? 'Free' : money(b.amount)}${b.gift ? `<div class="tiny muted">given by ${esc(b.seller)}</div>` : b.method === 'account' ? '<div class="tiny muted">on account</div>' : ''}</td>
       <td class="small"><code>${esc(b.reference)}</code></td><td>${st(b)}</td>
       <td class="r">${b.status === 'pending' && b.mine ? `<button class="btn sm" data-pay="${b.id}">Pay</button> ` : ''}${b.status === 'pending' ? `<button class="btn sm danger" data-cancel="${b.id}">Cancel</button>` : ''}</td></tr>`).join('')}</tbody></table></div>` : '';
   main.innerHTML = `<h1>Bookings</h1>
@@ -961,10 +967,10 @@ async function admCredits(el, year) {
   const [c, all] = await Promise.all([api('/credits?year=' + year), api('/bookings?all=1')]);
   const bks = all.filter(b => b.week.year === year).sort((x, y) => x.week.start_date.localeCompare(y.week.start_date) || y.id - x.id);
   const bState = { pending: ['amber', 'Awaiting payment'], confirmed: ['blue', 'Paid'], cancelled: ['', 'Cancelled'], expired: ['', 'Expired'] };
-  const bRow = b => { const [tone, label] = bState[b.status] || ['', b.status], live = ['pending', 'confirmed'].includes(b.status);
+  const bRow = b => { const [tone, label] = b.gift && b.status === 'confirmed' ? ['green', 'Given free'] : bState[b.status] || ['', b.status], live = ['pending', 'confirmed'].includes(b.status);
     return `<tr class="${live ? '' : 'muted'}"><td>${b.week.week_no} <span class="muted small">${dfmt(b.week.start_date)}</span></td>
-      <td>${esc(b.guest_name || b.booker)}${b.guest_name && b.guest_name !== b.booker ? `<div class="tiny muted">booked by ${esc(b.booker)}</div>` : ''}</td>
-      <td>${esc(b.seller)}</td><td class="r num">${money(b.amount, 2)}</td><td class="small">${b.method === 'account' ? 'Account' : 'Bank'}</td>
+      <td>${b.gift ? `${esc(b.buyer)}<div class="tiny muted">asked by ${esc(b.booker)}</div>` : esc(b.guest_name || b.booker)}${!b.gift && b.guest_name && b.guest_name !== b.booker ? `<div class="tiny muted">booked by ${esc(b.booker)}</div>` : ''}</td>
+      <td>${esc(b.seller)}</td><td class="r num">${money(b.amount, 2)}</td><td class="small">${b.gift ? 'Free' : b.method === 'account' ? 'Account' : 'Bank'}</td>
       <td class="small"><code>${esc(b.reference)}</code></td><td><span class="badge ${tone}">${label}</span></td>
       <td class="r">${live ? `<button class="btn sm danger" data-bcancel="${b.id}">Cancel</button>` : ''}</td></tr>`; };
   el.innerHTML = `<div class="row between" style="margin-bottom:14px"><div class="seg">${S.me.years.map(y => `<button data-y="${y}" class="${y === year ? 'on' : ''}">${y}</button>`).join('')}</div></div>
@@ -977,7 +983,7 @@ async function admCredits(el, year) {
     ${bks.length ? `<div class="table-wrap"><table><thead><tr><th>Week</th><th>Guest</th><th>Household</th><th class="r">Amount</th><th>Paid by</th><th>Ref</th><th>Status</th><th></th></tr></thead><tbody>${bks.map(bRow).join('')}</tbody></table></div>` : `<div class="card flat empty small">No bookings for ${year} yet</div>`}</section>`;
   el.querySelectorAll('[data-y]').forEach(b => b.onclick = () => admCredits(el, Number(b.dataset.y)));
   el.querySelectorAll('[data-bcancel]').forEach(btn => btn.onclick = () => { const b = bks.find(x => x.id == btn.dataset.bcancel);
-    cancelBookingModal({ ...b, guest: b.guest_name || b.booker, label: `Week ${b.week.week_no} · ${dfmt(b.week.start_date, { day: 'numeric', month: 'short', year: 'numeric' })}` }, () => { admCredits(el, year); refreshMe(); }); });
+    cancelBookingModal({ ...b, gift: !!b.gift, guest: b.guest_name || b.booker, label: `Week ${b.week.week_no} · ${dfmt(b.week.start_date, { day: 'numeric', month: 'short', year: 'numeric' })}` }, () => { admCredits(el, year); refreshMe(); }); });
 }
 async function admAudit(el) {
   const rows = await api('/admin/audit');
