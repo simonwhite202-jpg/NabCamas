@@ -190,6 +190,9 @@ Opening a page you don't have access to takes you back to Home.
 **Next-year allocation: changes and sign-off**
 - Next year's allocation shows as a **Draft** (on the family calendar and the site admin's Overview) until the site admin **signs it off** (the syndicate does this in November). The current year and earlier are always signed off.
 - **Changes are arranged directly with the site admin**, who makes them on **Site admin → Weeks** with the "Allocated to" dropdowns. The bar above the table shows the year as *Draft* or *Signed off*, with **Sign off** (and **Reopen as draft** for a future year). Signing off tells every family.
+  - **Before signing off,** the portal checks each family's allocated weeks against its shares for that year (set on **Families**).
+  - **If any differ,** a pop-up lists them, for example "Bonar: 9 weeks allocated, 8 shares, 1 too many", with **Go back and fix** or **Sign off anyway**.
+  - The table shows each week's start date, school holidays, season and who it's allocated to. Calendar notes come from the allocation import.
 - Change requests through the portal have been removed; any that were still waiting were closed, and the families told.
 - **Moving from the old swaps:** on the first start of this version, *Willing to swap* becomes *Undecided*. Swap offers still waiting lapse (with a notice); their enquiries stay in the queue.
 
