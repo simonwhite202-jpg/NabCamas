@@ -652,7 +652,7 @@ route('GET', '/api/home', ({ user }) => {
     for (const y of openYears()) {
       const n = q1("SELECT COUNT(*) n FROM change_requests WHERE year=? AND status='open'", y).n;
       syndicate.push(n ? { tone: 'action', title: `${n} change request${n > 1 ? 's' : ''} for the ${y} allocation`, detail: 'Approve or decline them, then sign off the allocation.', link: '#/admin/weeks', cta: 'Review' }
-        : { tone: 'info', title: `The ${y} allocation is open for change requests`, detail: 'Sign it off once it’s agreed. After that, families buy and sell weeks rather than swap them.', link: '#/admin/weeks', cta: 'Weeks' });
+        : { tone: 'info', title: `The ${y} allocation is still a draft`, detail: 'Make any agreed changes on the Weeks page, then sign it off. After that, families buy and sell weeks rather than swap them.', link: '#/admin/weeks', cta: 'Weeks' });
     }
     if (owing.length) syndicate.push({ tone: 'info', title: `${owing.length} famil${owing.length > 1 ? 'ies owe' : 'y owes'} ${money(owing.reduce((a, b) => a + b.balance, 0))} in total`, detail: owing.map(b => `${b.name} ${money(b.balance)}`).join(' · '), link: '#/admin/overview', cta: 'Balances' });
     const noAdmin = q("SELECT name FROM families f WHERE active=1 AND NOT EXISTS (SELECT 1 FROM users u WHERE u.family_id=f.id AND u.role='family_admin' AND u.active=1)").map(r => r.name);
@@ -1045,7 +1045,11 @@ route('GET', '/api/change-requests', ({ user, query }) => {
     : q(`SELECT * FROM change_requests WHERE family_id=? AND (? IS NULL OR year=?) ORDER BY status<>'open', created_at DESC`, user.family_id, year, year);
   return rows.map(r => changeView(r, user));
 });
+// For now changes are arranged with the site admin directly (who edits the allocation on the Weeks page), so families
+// can't send requests through the portal. The request and decision code is kept for when this is switched back on.
+const CHANGE_REQUESTS_OPEN = false;
 route('POST', '/api/change-requests', ({ user, body }) => {
+  if (!CHANGE_REQUESTS_OPEN) fail(400, 'For now, ask the site admin directly if you’d like to change a week');
   need(user, user.role === 'family_admin', 'Only family admins can ask for allocation changes');
   const g = q1('SELECT * FROM weeks WHERE id=?', body.give_week_id), t = q1('SELECT * FROM weeks WHERE id=?', body.want_week_id);
   if (!g || !t || g.year !== t.year) fail(400, 'Choose one of your weeks and a week you would like instead, in the same year');

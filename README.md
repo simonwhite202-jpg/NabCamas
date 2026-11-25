@@ -102,7 +102,7 @@ Opening a page you don't have access to takes you back to Home.
 | Pay for a week from the household's credit | — | ✓ (switchable in settings) | ✓ | ✓ |
 | Enquire about another family's week | Undecided weeks only | ✓ | ✓ | — |
 | Release own family's week, set a price | — | — | ✓ | ✓ |
-| Ask to change a week in next year's allocation | — | — | ✓ | Decides |
+| Change next year's allocation | — | — | Asks the site admin | ✓ |
 | Top up the household's credit | — | — | ✓ | Confirms |
 | Add trusted friends | — | ✓ | ✓ | ✓ |
 | Add family members, change roles | — | — | ✓ | ✓ |
@@ -147,7 +147,7 @@ Opening a page you don't have access to takes you back to Home.
 - **Your week, your income:** when the payment for a let is confirmed, the household that released the week is credited with what was paid, less the **letting cost** (£100 a let by default, set under Settings), which goes to the maintenance fund. The credit comes off that household's service charge, and anything beyond it carries forward against future charges. A released week that doesn't let earns nothing, so releasing early helps.
 - **Members buying weeks:** members can pay by bank transfer, or from their household's **credit** (account in credit from lets or top-ups) if it covers the price. The seller is credited the member price less the letting cost.
 - **Top-ups:** a family admin can top up the household's credit from the Account page. They get the bank details and a reference; the site admin confirms it on the Payments page when the money arrives.
-- **Weeks gained by a change request:** if a household lets a week it got through a next-year change request, its credit is capped at that year's service charge per share (£370 in 2026). Anything above goes to the maintenance fund, so there's no profit in asking for peak weeks just to let them.
+- **Weeks gained by a change request** (when requests are switched on): if a household lets a week it got through a next-year change request, its credit is capped at that year's service charge per share (£370 in 2026). Anything above goes to the maintenance fund, so there's no profit in asking for peak weeks just to let them.
 - **Cancellations:** if the site admin cancels a paid booking, the credit is reversed.
 - **Moving from the old pot:** on the first start of this version, paid lets that were waiting for a pot share-out are credited to the families that released them. Years already shared out are left as they were.
 
@@ -156,11 +156,10 @@ Opening a page you don't have access to takes you back to Home.
 - Any family member can **enquire** about another family's week that isn't *Using it*. If the family releases it, those who enquired get **first refusal** for 48 hours at the member price, first come first served; then all members for 7 days; then trusted friends.
 - The holding family can also mark it *Using it* (the enquiries close) or reply **not sure yet** (enquirers keep their place).
 
-**Next-year allocation: change requests and sign-off**
-- The next year's allocation stays **open** until the site admin **signs it off** (the syndicate does this in November). The current year and earlier are always signed off.
-- While it's open, a family admin can **ask to change** any of their weeks for another household's week, from **My weeks** ("Ask to change"), with a note.
-- The **site admin alone decides** (Site admin → Weeks). Approving exchanges the two weeks in the allocation, and both start afresh as *Undecided*. Other requests involving either week lapse. Both households are told.
-- **Sign off** closes the year to changes. Any requests still waiting are declined, and everyone is told that weeks are now bought and sold. A future year can be reopened if needed.
+**Next-year allocation: changes and sign-off**
+- The next year's allocation stays a **draft** until the site admin **signs it off** (the syndicate does this in November). The current year and earlier are always signed off.
+- **For now, changes are arranged directly with the site admin**, who makes them on **Site admin → Weeks** ("Allocated to"). The portal's change-request feature (family admins asking from My weeks, the site admin approving) is built but switched off (`CHANGE_REQUESTS_OPEN` in `server.js`).
+- **Sign off** closes the year to changes and tells everyone that weeks are now bought and sold.
 - **Moving from the old swaps:** on the first start of this version, *Willing to swap* becomes *Undecided*. Swap offers still waiting lapse (with a notice); their enquiries stay in the queue.
 
 **Booking enquiries from trusted friends**
