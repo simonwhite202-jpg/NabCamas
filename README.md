@@ -77,7 +77,7 @@ Everyone lands on the **Overview** (Home), headed *Welcome to Camas*, with who's
 | Who | Navigation | Needs your attention shows |
 |---|---|---|
 | Trusted friend | Home, Available weeks, My bookings, My details | Bookings to pay for |
-| Family member | Home, Calendar, My weeks (view only), Enquiries, Bookings, Family & friends | Bookings to pay for, and first refusals to take or pass |
+| Family member | Home, Calendar, Enquiries, Bookings, Family & friends | Bookings to pay for, and first refusals to take or pass |
 | Family admin | The same, plus Account | Also: enquiries to answer (release, using it or not sure yet), friends' booking enquiries, undecided weeks in the next 16 weeks, the balance to pay, and people who haven't set up their login |
 | Site admin | A separate login with no family: Home, Calendar, Payments, Budget, Weeks, Lets, Families, Users, Settings, Activity | Syndicate jobs: payments to confirm, families owing money, families with no admin, service charges not issued, let-income pots not shared out, next year's weeks not set up, demo logins still active, email not switched on, and storage problems. Home also shows balances, credits, the pot and recent activity. |
 
@@ -134,7 +134,8 @@ Opening a page you don't have access to takes you back to Home.
 - **School holidays:** the site admin marks school-holiday weeks under **Weeks & allocation**. 2026 and 2027 are preloaded with assumed English school holidays, so check them.
 
 
-**My weeks**
+**Your weeks (on the calendar)**
+- There is no separate My weeks page for now: everything is done from the **Calendar**. **Your household's weeks** shows just your own, and opening one of them lets the family admin set it.
 - The family admin gives each week a setting:
   - **Undecided** (the default)
   - **Using it**

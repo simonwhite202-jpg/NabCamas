@@ -614,7 +614,7 @@ route('GET', '/api/home', ({ user }) => {
       const horizon = Math.max(...String(s.reminder_weeks || '16').split(',').map(Number).filter(n => n > 0), 0) * 7;
       const undecided = q("SELECT * FROM weeks WHERE family_id=? AND in_use=0 AND offer_friends=0 AND offer_swap=0 AND status='own_use' AND start_date >= ? AND start_date <= date(?, ?) ORDER BY start_date", fid, t, t, `+${horizon} days`);
       if (undecided.length) attention.push({ tone: 'action', title: `${undecided.length} of your weeks in the next ${horizon / 7} weeks ${undecided.length > 1 ? 'are' : 'is'} still undecided`,
-        detail: `${undecided.slice(0, 5).map(w => `week ${w.week_no} (${fmtDate(w.start_date)})`).join(', ')}${undecided.length > 5 ? '…' : ''}. If you release a week and it lets, the payment, less the ${s.currency}${s.letting_cost} letting cost, is credited to your account.`, link: '#/weeks', cta: 'Set in My weeks' });
+        detail: `${undecided.slice(0, 5).map(w => `week ${w.week_no} (${fmtDate(w.start_date)})`).join(', ')}${undecided.length > 5 ? '…' : ''}. If you release a week and it lets, the payment, less the ${s.currency}${s.letting_cost} letting cost, is credited to your account.`, link: '#/weeks', cta: 'See your weeks' });
       const bal = round2(q1('SELECT COALESCE(SUM(amount),0) n FROM ledger WHERE family_id=?', fid).n);
       if (bal > 0.005) attention.push({ tone: 'action', title: `Balance to pay: ${money(bal)}`, detail: `Pay ${s.bank_account_name} using reference ${famName(fid).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10)}-SC.`, link: '#/account', cta: 'View account' });
       const invited = q("SELECT name FROM users WHERE family_id=? AND active=1 AND email IS NOT NULL AND password_hash IS NULL", fid).map(r => r.name);
