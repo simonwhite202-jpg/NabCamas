@@ -290,6 +290,17 @@ ol.queue > li.done { opacity: .55; }
 .pick-row { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); font-size: var(--fs-sm); }
 .offer { margin-top: var(--sp-2); padding: var(--sp-3) 14px; border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--line); }
 
+/* "View as" (site admin testing): picker in the sidebar, banner above the page */
+.viewas { display: block; margin-top: var(--sp-3); }
+.viewas .whoami-label { display: flex; align-items: center; gap: 6px; margin: 0 0 6px var(--sp-1); }
+.viewas .whoami-label .ico { width: 14px; height: 14px; }
+.viewas select { width: 100%; min-height: 40px; padding: 0 36px 0 12px; border-radius: var(--r-md); border: 1px solid rgba(229,235,226,.22); background-color: rgba(255,255,255,.06); color: #fff; font: inherit; font-size: var(--fs-sm);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23CBD6CE' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); }
+.viewas select option, .viewas select optgroup { color: var(--ink); background: #fff; }
+.viewas-bar { margin-left: var(--sidebar-w); position: sticky; top: 0; z-index: 15; display: flex; align-items: center; gap: var(--sp-3); padding: 10px 56px; background: var(--st-pending-soft); color: var(--ink); border-bottom: 1px solid var(--line); font-size: var(--fs-sm); }
+.viewas-bar[hidden] { display: none; }
+.viewas-bar .ico { width: 20px; height: 20px; flex: none; }
+
 /* short laptop screens: keep the whole sidebar, Sign out included, in view */
 @media (min-width: 1024px) and (max-height: 860px) {
   .sidebar { padding-top: var(--sp-5); }
@@ -317,6 +328,9 @@ ol.queue > li.done { opacity: .55; }
   .mobilebar .iconbtn:hover { background: rgba(255,255,255,.08); border-color: transparent; color: #fff; }
   .mobilebar .count { position: absolute; top: 2px; right: 0; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--sage); color: var(--woodland); font-size: 11px; font-weight: 600; display: grid; place-items: center; }
   main { margin-left: 0; }
+  .viewas-bar { margin-left: 0; position: static; padding: 10px var(--sp-4); flex-wrap: wrap; }
+  .viewas-bar .grow { flex-basis: calc(100% - 40px); }
+  .viewas-bar .btn { margin-left: 32px; }
   .login { grid-template-columns: 1fr; }
   .login-art { min-height: 260px; padding: var(--sp-6) var(--sp-5); }
   .login-art h2 { font-size: var(--fs-2xl); }

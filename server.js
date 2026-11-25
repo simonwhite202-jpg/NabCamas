@@ -118,6 +118,8 @@ try {
 try { db.exec('ALTER TABLE weeks ADD COLUMN released_at TEXT'); db.exec("UPDATE weeks SET released_at=datetime('now') WHERE offer_friends=1"); } catch { }
 try { db.exec('ALTER TABLE weeks ADD COLUMN reminded INTEGER NOT NULL DEFAULT 0'); } catch { }
 try { db.exec('ALTER TABLE ledger ADD COLUMN pot_year INTEGER'); } catch { }
+// "View as": while the site admin views the portal as another login, the session keeps the admin's id here
+try { db.exec('ALTER TABLE sessions ADD COLUMN viewer_id INTEGER'); } catch { }
 // letting cost kept from each paid let for the maintenance fund (the rest is credited to the family that released the week)
 try { db.exec('ALTER TABLE bookings ADD COLUMN letting_cost REAL'); } catch { }
 // Enquiries: a family's place in the queue for another family's week. If the holder releases the week, enquirers get
@@ -180,7 +182,7 @@ const round2 = n => Math.round(n * 100) / 100;
 
 const DEFAULT_SETTINGS = {
   site_name: 'Nab Camas', place_line: 'Loch Carron · Scottish Highlands', hero_version: '', currency: '£', rate_summer: '1200', rate_shoulder: '800', rate_winter: '500',
-  commission_pct: '0', letting_cost: '100', hold_days: '3', winter_changeover_day: '5', summer_changeover_day: '6', summer_changeover_from: '12', summer_changeover_to: '43',
+  commission_pct: '0', letting_cost: '100', view_as_enabled: '1', hold_days: '3', winter_changeover_day: '5', summer_changeover_day: '6', summer_changeover_from: '12', summer_changeover_to: '43',
   bank_name: 'Syndicate bank account', bank_account_name: 'Nab Camas Syndicate', bank_sort_code: '00-00-00', bank_account_no: '00000000', bank_iban: '',
   summer_months: '6,7,8', shoulder_months: '4,5,9,10', allow_member_account_charge: '1',
   // prices: rate_* are trusted-friend prices per week; members pay member_rate_pct of that
@@ -217,7 +219,12 @@ function sendEmail(userIds, text, link) {
 }
 const familyAdmins = fid => q("SELECT id FROM users WHERE family_id=? AND role='family_admin' AND active=1", fid).map(r => r.id);
 const siteAdmins = () => q('SELECT id FROM users WHERE is_site_admin=1 AND active=1').map(r => r.id);
-const audit = (uid, action, detail) => run('INSERT INTO audit (user_id,action,detail) VALUES (?,?,?)', uid, action, typeof detail === 'string' ? detail : JSON.stringify(detail));
+let actingAdmin = null;   // set for the duration of a request made while the site admin views as someone
+const audit = (uid, action, detail) => {
+  let d = typeof detail === 'string' ? detail : JSON.stringify(detail);
+  if (actingAdmin && uid !== actingAdmin) { d = `site admin acting as ${(q1('SELECT name FROM users WHERE id=?', uid) || {}).name || uid}: ${d}`; uid = actingAdmin; }
+  run('INSERT INTO audit (user_id,action,detail) VALUES (?,?,?)', uid, action, d);
+};
 const famName = id => (q1('SELECT name FROM families WHERE id=?', id) || {}).name || 'Syndicate';
 const weekLabel = w => `Week ${w.week_no} ${w.year} (${fmtDate(w.start_date)})`;
 function fmtDate(d) { return new Date(d + 'T00:00:00Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' }); }
@@ -267,7 +274,10 @@ function expireHolds() {
 function currentUser(req) {
   const m = /(?:^|;\s*)sid=([^;]+)/.exec(req.headers.cookie || ''); if (!m) return null;
   const s = q1("SELECT * FROM sessions WHERE token=? AND expires_at > datetime('now')", m[1]); if (!s) return null;
-  return q1('SELECT * FROM users WHERE id=? AND active=1', s.user_id) || null;
+  const u = q1('SELECT * FROM users WHERE id=? AND active=1', s.user_id); if (!u) return null;
+  // not enumerable, so they never leak into API responses
+  Object.defineProperty(u, 'sid', { value: s.token }); Object.defineProperty(u, 'viewer', { value: s.viewer_id || null });
+  return u;
 }
 const isFamily = u => u.role === 'family_admin' || u.role === 'family_member';
 const need = (u, cond, msg = 'Not allowed') => { if (!u) fail(401, 'Please log in'); if (!cond) fail(403, msg); };
@@ -507,7 +517,7 @@ const route = (method, pattern, handler) => routes.push({ method, re: new RegExp
 route('POST', '/api/login', ({ body, res }) => {
   const u = q1('SELECT * FROM users WHERE lower(email)=lower(?) AND active=1', String(body.email || '').trim());
   if (!u || !checkPw(String(body.password || ''), u.password_hash)) fail(401, 'Email or password is incorrect');
-  const t = token(); run("INSERT INTO sessions VALUES (?,?,datetime('now','+30 days'))", t, u.id);
+  const t = token(); run("INSERT INTO sessions (token,user_id,expires_at) VALUES (?,?,datetime('now','+30 days'))", t, u.id);
   res.setHeader('Set-Cookie', sessionCookie(t, 2592000)); return { ok: true };
 });
 route('POST', '/api/logout', ({ req, res }) => {
@@ -521,7 +531,7 @@ route('POST', '/api/invite/:tok', ({ params, body, res }) => {
   const u = q1('SELECT * FROM users WHERE invite_token=? AND active=1', params.tok); if (!u) fail(404, 'Invitation invalid');
   if (String(body.password || '').length < 8) fail(400, 'Password must be at least 8 characters');
   run('UPDATE users SET password_hash=?, invite_token=NULL WHERE id=?', hashPw(body.password), u.id);
-  const t = token(); run("INSERT INTO sessions VALUES (?,?,datetime('now','+30 days'))", t, u.id);
+  const t = token(); run("INSERT INTO sessions (token,user_id,expires_at) VALUES (?,?,datetime('now','+30 days'))", t, u.id);
   res.setHeader('Set-Cookie', sessionCookie(t, 2592000)); return { ok: true };
 });
 
@@ -542,7 +552,11 @@ route('GET', '/api/me', ({ user }) => {
     + q1("SELECT COUNT(*) n FROM enquiries e JOIN weeks w ON w.id=e.week_id WHERE e.family_id=? AND e.status='open' AND e.claim IS NULL AND w.status='offered' AND w.enquiry_until > datetime('now')", user.family_id).n;
   const families = q('SELECT id,name,color FROM families WHERE active=1 ORDER BY name');
   const family = fam && isFamily(user) ? { ...fam, credit_available: creditAvailable(fam.id) } : fam;
-  return { user: publicUser(user), family, settings: pub, unread, years, open_years: openYears(), pendingSwaps, families };
+  const admin = realAdmin(user);
+  const view_as = admin && viewAsOn() ? q("SELECT id, name, role, family_id FROM users WHERE active=1 AND is_site_admin=0 ORDER BY family_id, CASE role WHEN 'family_admin' THEN 0 WHEN 'family_member' THEN 1 ELSE 2 END, name")
+    .map(u => ({ id: u.id, name: u.name, role: u.role, family: famName(u.family_id) })) : null;
+  return { user: publicUser(user), family, settings: pub, unread, years, open_years: openYears(), pendingSwaps, families,
+    viewing_as: user.viewer && admin ? { admin: admin.name } : null, view_as };
 });
 route('PUT', '/api/me', ({ user, body }) => {
   need(user, true);
@@ -997,6 +1011,23 @@ route('POST', '/api/swaps/:id/cancel', ({ user, params }) => {
   return { ok: true };
 });
 
+// --- "View as" (site admin only, for testing): see the portal exactly as another login sees it. Actions are real.
+const viewAsOn = () => settings().view_as_enabled !== '0';
+const realAdmin = user => !user ? null : user.is_site_admin ? user : user.viewer ? q1('SELECT * FROM users WHERE id=? AND is_site_admin=1 AND active=1', user.viewer) : null;
+route('POST', '/api/view-as', ({ user, body }) => {
+  const admin = realAdmin(user); need(user, !!admin, 'Only the site admin can view as another login');
+  if (!viewAsOn()) fail(400, 'View as is switched off in Settings');
+  const t = q1('SELECT * FROM users WHERE id=? AND active=1', body.user_id) || fail(404, 'No such login');
+  if (t.is_site_admin) fail(400, 'Choose a household login');
+  run('UPDATE sessions SET user_id=?, viewer_id=? WHERE token=?', t.id, admin.id, user.sid);
+  audit(admin.id, 'view_as.start', { as: t.name }); return { ok: true };
+});
+route('POST', '/api/view-as/stop', ({ user }) => {
+  need(user, !!(user && user.viewer), 'You are not viewing as anyone');
+  run('UPDATE sessions SET user_id=viewer_id, viewer_id=NULL WHERE token=?', user.sid);
+  return { ok: true };
+});
+
 // --- next-year allocation: change requests (decided by the site admin) and sign-off
 const weekBrief = w => w && `week ${w.week_no} (${fmtDate(w.start_date)} – ${fmtDate(w.end_date || w.start_date)})`;
 function changeView(r, user) {
@@ -1403,7 +1434,9 @@ const server = http.createServer(async (req, res) => {
     creditMemo = new Map();
     const r = routes.find(r => r.method === req.method && r.re.test(url.pathname)); if (!r) fail(404, 'Not found');
     const params = url.pathname.match(r.re).groups || {};
-    const out = await r.handler({ req, res, body, params, query: Object.fromEntries(url.searchParams), user: currentUser(req) });
+    const user = currentUser(req); actingAdmin = user && user.viewer || null;
+    const pending = r.handler({ req, res, body, params, query: Object.fromEntries(url.searchParams), user }); actingAdmin = null;
+    const out = await pending;
     res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(out ?? {}));
   } catch (e) {
     if (!e.status) console.error(e);

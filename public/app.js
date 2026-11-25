@@ -107,16 +107,38 @@ function renderShell(tab) {
   $('.sidebar').innerHTML = `<a class="wordmark" href="#/home">${site}</a><span class="place">${esc(S.me.settings.place_line || '')}</span>
     <div class="whoami" role="status" aria-label="Logged in as ${esc(u.name)}, ${role}${house ? ', ' + house : ''}"><span class="whoami-label">Logged in as</span>
       <div class="whoami-row"><span class="avatar">${initials}</span><span class="who"><b>${esc(u.name)}</b><span class="role-pill">${role}</span>${house ? `<span class="house">${house}</span>` : ''}</span></div></div>
+    ${viewAsPicker(u)}
     <nav class="side-nav">${tabs.map(([k, l, n]) => { const on = navOn(k, tab); return `<a href="#/${k}" class="${on ? 'on' : ''}" ${on ? 'aria-current="page"' : ''}>${icon(NAV_ICON[k] || 'chevron-right')}<span>${l}</span>${n ? `<span class="count">${n}</span>` : ''}</a>`; }).join('')}</nav>
     <div class="side-foot">
       <div class="side-actions"><button class="side-btn" data-notes>${icon('bell')}Notices${unread}</button><button class="side-btn" data-logout>${icon('log-out')}Sign out</button></div></div>`;
   $('.mobilebar').innerHTML = `<div class="mb-row"><button class="iconbtn" data-menu aria-label="Open menu">${icon('menu')}</button><a class="wordmark" href="#/home">${site}</a><button class="iconbtn" data-notes aria-label="Notifications">${icon('bell')}${unread}</button></div>
     <div class="mb-who">Logged in as <b>${esc(u.name)}</b> · <span>${role}</span>${house ? ` · <span>${house}</span>` : ''}</div>`;
+  viewAsBar();
   document.querySelectorAll('[data-notes]').forEach(b => b.onclick = guard(showNotifications));
   $('[data-logout]').onclick = guard(async () => { await api('/logout', { body: {} }); S.me = null; document.body.classList.remove('menu-open'); $('#app').innerHTML = ''; renderLogin(); });
   $('[data-menu]').onclick = () => document.body.classList.toggle('menu-open');
   $('.menu-scrim').onclick = () => document.body.classList.remove('menu-open');
   $('.sidebar').querySelectorAll('a').forEach(a => a.addEventListener('click', () => document.body.classList.remove('menu-open')));
+}
+// "View as" (site admin only, for testing): the dropdown in the sidebar and the banner shown while viewing as someone
+function viewAsPicker(u) {
+  if (!S.me.view_as || !S.me.view_as.length) return '';
+  const byFamily = S.me.view_as.reduce((g, x) => ((g[x.family] ||= []).push(x), g), {});
+  return `<label class="viewas"><span class="whoami-label">${icon('eye')} View as</span><select id="viewAs" aria-label="View the portal as another login">
+    <option value="">${S.me.viewing_as ? 'Switch to another login…' : 'Choose a login…'}</option>
+    ${Object.entries(byFamily).map(([f, xs]) => `<optgroup label="${esc(f)}">${xs.map(x => `<option value="${x.id}" ${x.id === u.id ? 'selected' : ''}>${esc(x.name)} · ${esc(roleName(x.role))}</option>`).join('')}</optgroup>`).join('')}</select></label>`;
+}
+function viewAsBar() {
+  let bar = $('.viewas-bar');
+  if (!bar) { bar = document.createElement('div'); bar.className = 'viewas-bar'; bar.setAttribute('role', 'status'); $('.shell').insertBefore(bar, $('main')); }
+  if (S.me.viewing_as) {
+    const me = whoAmI();
+    bar.hidden = false;
+    bar.innerHTML = `${icon('eye')}<span class="grow">Viewing as <b>${me.name}</b> · ${me.role}${me.house ? ', ' + me.house : ''}. Anything you do here really happens, as them.</span><button class="btn sm" data-viewas-stop>Back to site admin</button>`;
+    $('[data-viewas-stop]', bar).onclick = guard(async () => { await api('/view-as/stop', { body: {} }); location.hash = '#/home'; location.reload(); });
+  } else { bar.hidden = true; bar.innerHTML = ''; }
+  const sel = $('#viewAs');
+  if (sel) sel.onchange = guard(async () => { if (!sel.value) return; await api('/view-as', { body: { user_id: Number(sel.value) } }); location.hash = '#/home'; location.reload(); });
 }
 async function showNotifications() {
   document.body.classList.remove('menu-open');
@@ -900,7 +922,8 @@ async function admSettings(el) {
       <h3 style="margin-top:8px">Seasons</h3><p class="small muted" style="margin-top:0">Months (1–12) used when new years are created. You can override individual weeks under Weeks.</p>
       <div class="grid-2" style="gap:12px">${f('summer_months', 'Summer months')}${f('shoulder_months', 'Shoulder months')}</div>
       <h3 style="margin-top:8px">Booking rules</h3><div class="grid-2" style="gap:12px">${f('hold_days', 'Days to pay before a hold lapses', 'number', 'min=1')}${f('letting_cost', 'Letting cost per let, to the maintenance fund (£)', 'number', 'min=0')}</div>
-      <label class="check"><input type="checkbox" name="allow_member_account_charge" ${s.allow_member_account_charge === '1' ? 'checked' : ''}><span><b>Family members can charge weeks to their family account</b>If off, only family admins can; members pay by bank transfer.</span></label></div>
+      <label class="check"><input type="checkbox" name="allow_member_account_charge" ${s.allow_member_account_charge === '1' ? 'checked' : ''}><span><b>Family members can charge weeks to their family account</b>If off, only family admins can; members pay by bank transfer.</span></label>
+      <label class="check" style="margin-top:8px"><input type="checkbox" name="view_as_enabled" ${s.view_as_enabled !== '0' ? 'checked' : ''}><span><b>Site admin can “View as” other logins</b>For testing: see the portal exactly as a family admin, member or trusted friend sees it, from the dropdown in the menu. Anything done while viewing as someone really happens, and the Activity log notes it.</span></label></div>
     <div class="card"><h3>Syndicate bank account</h3><p class="small muted" style="margin-top:0">Shown to people when they book a week.</p>
       ${f('bank_account_name', 'Account name')}${f('bank_name', 'Bank')}<div class="grid-2" style="gap:12px">${f('bank_sort_code', 'Sort code')}${f('bank_account_no', 'Account number')}</div>${f('bank_iban', 'IBAN (optional)')}
       <h3 style="margin-top:8px">General</h3><div class="grid-2" style="gap:12px">${f('site_name', 'Site name')}${f('currency', 'Currency symbol')}${f('place_line', 'Place line (under the name)')}</div>
@@ -916,7 +939,7 @@ async function admSettings(el) {
     await api('/admin/hero', { body: { data: c.toDataURL('image/jpeg', 0.84) } }); toast('Photograph saved'); await refreshMe(); admSettings(el);
   });
   $('#heroRm', el) && ($('#heroRm', el).onclick = guard(async () => { if (!confirm('Remove the Overview photograph?')) return; await api('/admin/hero', { method: 'DELETE' }); toast('Photograph removed'); await refreshMe(); admSettings(el); }));
-  $('#sf', el).onsubmit = guard(async e => { e.preventDefault(); const d = formData(e.target); d.allow_member_account_charge = e.target.allow_member_account_charge.checked ? '1' : '0'; await api('/admin/settings', { method: 'PUT', body: d }); toast('Settings saved'); refreshMe(); });
+  $('#sf', el).onsubmit = guard(async e => { e.preventDefault(); const d = formData(e.target); d.allow_member_account_charge = e.target.allow_member_account_charge.checked ? '1' : '0'; d.view_as_enabled = e.target.view_as_enabled.checked ? '1' : '0'; await api('/admin/settings', { method: 'PUT', body: d }); toast('Settings saved'); refreshMe(); });
 }
 async function admCredits(el, year) {
   year = year || S.creditYear || S.year; S.creditYear = year;
