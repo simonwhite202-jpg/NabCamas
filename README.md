@@ -157,6 +157,13 @@ Opening a page you don't have access to takes you back to Home.
 - **Uneven swaps:** the family that gets the more valuable week has the difference taken off next year's credits, and the other family gains it.
 - **Tidying up:** requests sort themselves out when weeks change (marked using, released, booked or swapped), and everyone involved is notified.
 
+**Booking enquiries from trusted friends**
+- **Asking:** a trusted friend can enquire about any week its household hasn't decided about yet (*Undecided*). On their calendar these weeks are marked *Open to enquiries*. They give the lead guest, party size and an optional message. Friends still don't see which household holds a week.
+- **The holding family's admin** sees the enquiry on the Enquiries page and Overview, with the friend's contact details and whose friend they are. They can:
+  - **let it to them**: the week is released and reserved for the friend at the friend price, and the friend gets the bank details and a reference, as with any booking. The money goes into the let-income pot, and the release counts towards the family's share. Members who had requested the week are told it has been taken; or
+  - **decline**, and the friend is told it isn't available this time.
+- **Closing automatically:** if the family marks the week *Using it*, releases it in the usual way, swaps it, or someone else books it, the friend's enquiry closes and they're told why. Friends see their enquiries under **My bookings** and can withdraw them.
+
 **Accounts and the budget**
 - **Service charge = charge per week × the family's weeks.** The calculated rate is budget ÷ total weeks (2026: £19,332 ÷ 52 = £371.77). You can set a rounded figure, as the syndicate does (£370), and the page shows the resulting shortfall or surplus (2026: £19,240 raised, £92 short). Re-issuing a year's charges replaces only that year's service-charge lines. Payments, credits and adjustments are kept.
 - Each account is a running **ledger**: charges are positive, credits and payments negative. The site admin records payments received and can make adjustments with a note.

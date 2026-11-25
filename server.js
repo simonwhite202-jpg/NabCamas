@@ -135,6 +135,13 @@ try {
     else db.prepare("UPDATE swaps SET status='cancelled' WHERE id=?").run(sw.id);
   }
 } catch { }
+// Booking enquiries from trusted friends about weeks still Undecided. The holding family's admin lets the week to them
+// (it is released and reserved for the friend at the friend price) or declines. Separate from members' requests and first refusal.
+db.exec(`CREATE TABLE IF NOT EXISTS friend_enquiries (
+  id INTEGER PRIMARY KEY, week_id INTEGER NOT NULL REFERENCES weeks(id), user_id INTEGER NOT NULL REFERENCES users(id),
+  message TEXT, guest_name TEXT, party_size INTEGER,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','accepted','declined','closed','withdrawn')),
+  close_reason TEXT, booking_id INTEGER, answered_by INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP, closed_at TEXT);`);
 // picked = 1: the family holding the week chose this week from the requesting family's Willing to swap weeks
 try { db.exec('ALTER TABLE swaps ADD COLUMN picked INTEGER NOT NULL DEFAULT 0'); } catch { }
 // the holder's reply to an enquiry without picking a week or releasing ('unsure' = not sure yet; they stay in the queue)
@@ -148,7 +155,8 @@ db.exec(`CREATE TABLE IF NOT EXISTS credit_ledger (
 const q = (sql, ...a) => db.prepare(sql).all(...a);
 const q1 = (sql, ...a) => db.prepare(sql).get(...a);
 const run = (sql, ...a) => db.prepare(sql).run(...a);
-function tx(fn) { db.exec('BEGIN'); try { const r = fn(); db.exec('COMMIT'); return r; } catch (e) { db.exec('ROLLBACK'); throw e; } }
+let txDepth = 0;   // tx() inside tx() joins the outer transaction; a failure anywhere rolls back the whole thing
+function tx(fn) { if (txDepth) return fn(); txDepth++; db.exec('BEGIN'); try { const r = fn(); db.exec('COMMIT'); return r; } catch (e) { db.exec('ROLLBACK'); throw e; } finally { txDepth--; } }
 class HttpError extends Error { constructor(status, msg) { super(msg); this.status = status; } }
 const fail = (s, m) => { throw new HttpError(s, m); };
 const round2 = n => Math.round(n * 100) / 100;
@@ -279,7 +287,11 @@ function weekView(w, u, s) {
   v.can_manage = canManageFamily(u, w.family_id) && w.family_id != null;
   v.is_mine = mine;
   if (u.role === 'friend' && !friendVisible && w.status === 'offered') v.status = 'own_use'; // friends only see what's offered to them
-  if (u.role === 'friend') { v.offer_swap = 0; v.in_use = 0; v.plan = null; v.enquiry_until = null; }
+  if (u.role === 'friend') {
+    const fe = q1("SELECT id, created_at FROM friend_enquiries WHERE week_id=? AND user_id=? AND status='open'", w.id, u.id);
+    v.my_friend_enquiry = fe || null; v.can_friend_enquire = !fe && undecidedWeek(w);
+    v.offer_swap = 0; v.in_use = 0; v.plan = null; v.enquiry_until = null;
+  } else if (mine) v.friend_enquiries = q1("SELECT COUNT(*) n FROM friend_enquiries WHERE week_id=? AND status='open'", w.id).n;
   v.pending_swaps = isFamily(u) ? q1("SELECT COUNT(*) n FROM swaps WHERE status IN ('pending','proposed') AND target_week_id=?", w.id).n : 0;
   return v;
 }
@@ -394,6 +406,22 @@ function closeEnquiries(w, reason, winnerFamily = null) {
     if (!won) notify([e.user_id], `Your enquiry about ${weekLabel(w)} is closed: ${reason === 'using' ? `${famName(w.family_id)} are using it` : CLOSED_WHY[reason] || reason}.`, '#/enquiries');
   }
 }
+// trusted friends can enquire about a week only while its family hasn't decided (not Using it, Willing to swap or Released)
+const undecidedWeek = w => w.family_id != null && !w.in_use && !w.offer_swap && !w.offer_friends && w.status === 'own_use' && w.start_date >= today();
+const openFriendEnquiries = weekId => q("SELECT * FROM friend_enquiries WHERE week_id=? AND status='open' ORDER BY created_at, id", weekId);
+// close friends' enquiries when the week stops being theirs to ask for. Friends aren't told which household holds a week.
+function closeFriendEnquiries(w, reason, s = settings()) {
+  for (const e of openFriendEnquiries(w.id)) {
+    run("UPDATE friend_enquiries SET status='closed', close_reason=?, closed_at=datetime('now') WHERE id=?", reason, e.id);
+    const from = reason === 'released' && w.sale_to !== 'members' ? friendsFrom(w, s) : null;
+    notify([e.user_id], {
+      using: `${weekLabel(w)} isn't available: the household is using it.`,
+      taken: `${weekLabel(w)} has been booked by someone else, so your enquiry is closed.`,
+      swapped: `${weekLabel(w)} isn't available any more, so your enquiry is closed.`,
+      released: from ? `${weekLabel(w)} has been released. Syndicate members get the first chance; if it's still free you can book it from ${fmtDate(from)} on the Available weeks page.` : `${weekLabel(w)} has been released to syndicate members only, so your enquiry is closed.`,
+    }[reason] || `Your enquiry about ${weekLabel(w)} is closed.`, '#/bookings');
+  }
+}
 // a week with enquirers is released → they get first refusal for enquiry_hours, in the order they asked
 function startFirstRefusal(w, s = settings()) {
   const queue = openEnquiries(w.id); if (!queue.length) return false;
@@ -483,7 +511,8 @@ route('GET', '/api/me', ({ user }) => {
   // Enquiries badge: swaps to answer or confirm, swap requests on the family's weeks still waiting for an answer, and first refusals
   const pendingSwaps = !isFamily(user) ? 0 : (user.role === 'family_admin' ? q1("SELECT COUNT(*) n FROM swaps WHERE (status='pending' AND to_family_id=?) OR (status='proposed' AND from_family_id=?)", user.family_id, user.family_id).n
       + q1(`SELECT COUNT(*) n FROM enquiries e JOIN weeks w ON w.id=e.week_id WHERE w.family_id=? AND e.status='open' AND e.reply IS NULL AND w.status='own_use' AND w.in_use=0
-          AND NOT EXISTS (SELECT 1 FROM swaps x WHERE x.enquiry_id=e.id AND x.status IN ('pending','proposed'))`, user.family_id).n : 0)
+          AND NOT EXISTS (SELECT 1 FROM swaps x WHERE x.enquiry_id=e.id AND x.status IN ('pending','proposed'))`, user.family_id).n
+      + q1("SELECT COUNT(*) n FROM friend_enquiries f JOIN weeks w ON w.id=f.week_id WHERE w.family_id=? AND f.status='open' AND w.in_use=0 AND w.status IN ('own_use','offered')", user.family_id).n : 0)
     + q1("SELECT COUNT(*) n FROM enquiries e JOIN weeks w ON w.id=e.week_id WHERE e.family_id=? AND e.status='open' AND e.claim IS NULL AND w.status='offered' AND w.enquiry_until > datetime('now')", user.family_id).n;
   const families = q('SELECT id,name,color FROM families WHERE active=1 ORDER BY name');
   return { user: publicUser(user), family: fam, settings: pub, unread, years, pendingSwaps, families };
@@ -513,6 +542,10 @@ route('GET', '/api/home', ({ user }) => {
     const w = W(b.week_id);
     attention.push({ tone: 'urgent', title: `Pay ${money(b.amount)} for ${weekLabel(w)}`, detail: `Bank transfer to ${s.bank_account_name} by ${fmtDate(b.expires_at.slice(0, 10))}, reference ${b.reference}. If it doesn't arrive in time, the week is released again.`, link: '#/bookings', cta: 'Payment details' });
   }
+  if (user.role === 'friend') for (const f of q("SELECT * FROM friend_enquiries WHERE user_id=? AND status='open' ORDER BY created_at", user.id)) {
+    const w = W(f.week_id);
+    attention.push({ tone: 'info', title: `Waiting to hear about ${weekLabel(w)}`, detail: `You enquired on ${fmtDate(f.created_at.slice(0, 10))}. The household that holds it will let you know.`, link: '#/bookings', cta: 'View' });
+  }
   if (fam) {
     // first refusal on released weeks the family enquired about
     for (const e of q(`SELECT e.* FROM enquiries e JOIN weeks w ON w.id=e.week_id WHERE e.family_id=? AND e.status='open' AND w.status='offered' AND w.enquiry_until > ? ORDER BY w.enquiry_until`, fid, now)) {
@@ -529,6 +562,8 @@ route('GET', '/api/home', ({ user }) => {
         title: `Confirm a swap with ${famName(sw.to_family_id)}`, detail: sw.picked
           ? `They'd give you their ${weekLabel(W(sw.target_week_id))} for your ${weekLabel(W(sw.offered_week_id))}, which they picked from your weeks marked Willing to swap.`
           : `They accepted ${q1('SELECT name FROM users WHERE id=?', sw.requester_id).name}'s offer of your ${weekLabel(W(sw.offered_week_id))} for their ${weekLabel(W(sw.target_week_id))}.`, link: '#/enquiries', cta: 'Confirm or decline' });
+      for (const f of q(`SELECT f.*, u.name friend FROM friend_enquiries f JOIN weeks w ON w.id=f.week_id JOIN users u ON u.id=f.user_id WHERE w.family_id=? AND f.status='open' AND w.in_use=0 AND w.status IN ('own_use','offered') ORDER BY w.start_date`, fid)) attention.push({ tone: 'action',
+        title: `${f.friend} (trusted friend) would like to book your ${weekLabel(W(f.week_id))}`, detail: `Let it to them at ${money(priceOf(W(f.week_id), s))}, or decline.${f.party_size ? ` Party of ${f.party_size}.` : ''}`, link: '#/enquiries', cta: 'Answer' });
       // swap requests waiting for an answer: no week picked yet, not released, no "not sure yet" reply
       for (const r of q(`SELECT w.*, COUNT(e.id) n FROM enquiries e JOIN weeks w ON w.id=e.week_id WHERE w.family_id=? AND e.status='open' AND e.reply IS NULL AND w.status='own_use' AND w.in_use=0
           AND NOT EXISTS (SELECT 1 FROM swaps x WHERE x.enquiry_id=e.id AND x.status IN ('pending','proposed')) GROUP BY w.id ORDER BY w.start_date`, fid)) if (!offered.has(r.id)) attention.push({ tone: 'action',
@@ -640,7 +675,8 @@ route('PUT', '/api/weeks/:id', ({ user, params, body }) => {
       run('UPDATE weeks SET enquiry_until=NULL WHERE id=?', w.id);
       run("UPDATE enquiries SET claim=NULL, claim_method=NULL, claim_guest=NULL, claim_party=NULL, claimed_at=NULL WHERE week_id=? AND status='open'", w.id);
     }
-    if (using && !w.in_use) { releaseSwaps(now, 'in_use', user); closeEnquiries(now, 'using'); }
+    if (using && !w.in_use) { releaseSwaps(now, 'in_use', user); closeEnquiries(now, 'using'); closeFriendEnquiries(now, 'using'); }
+    if (sell && !w.offer_friends) closeFriendEnquiries(q1('SELECT * FROM weeks WHERE id=?', w.id), 'released');
     if (swap && !w.offer_swap) for (const e of openEnquiries(w.id)) notify([e.user_id],
       `${famName(w.family_id)} would swap ${weekLabel(now)}, which your family asked for. They can pick from your weeks marked Willing to swap, so check those are up to date in My weeks.`, '#/weeks');
   });
@@ -661,6 +697,7 @@ function createBooking(user, w, body, price) {
       w.id, user.id, w.family_id, isFamily(user) ? user.family_id : null, price, method, ref, body.guest_name || null, Number(body.party_size) || null, body.notes || null, `+${Number(s.hold_days) || 3} days`);
     releaseSwaps(w, 'reserved by someone buying it', user);
     closeEnquiries(w, 'taken', isFamily(user) ? user.family_id : null);
+    closeFriendEnquiries(w, 'taken');
     return Number(ins.lastInsertRowid);
   });
   const b = q1('SELECT * FROM bookings WHERE id=?', id);
@@ -737,6 +774,7 @@ function doSwap(sw, user) {
   run("UPDATE swaps SET status='accepted', responded_by=?, responded_at=datetime('now') WHERE id=?", user.id, sw.id);
   releaseSwaps(a, 'swapped', user, sw.id); releaseSwaps(b, 'swapped', user, sw.id);
   closeEnquiries({ ...b, family_id: sw.from_family_id }, 'swapped', sw.from_family_id); closeEnquiries({ ...a, family_id: sw.to_family_id }, 'swapped');
+  closeFriendEnquiries(a, 'swapped'); closeFriendEnquiries(b, 'swapped');
   notify([sw.requester_id, ...familyAdmins(sw.from_family_id), ...familyAdmins(sw.to_family_id)].filter(i => i !== user.id),
     `Swap agreed! ${famName(sw.from_family_id)} now has ${weekLabel(b)} and ${famName(sw.to_family_id)} has ${weekLabel(a)}.`, '#/enquiries');
   audit(user.id, 'swap.accept', { id: sw.id });
@@ -782,6 +820,56 @@ route('POST', '/api/enquiries/:id/reply', ({ user, params }) => {
   notify([e.user_id], `${famName(w.family_id)} aren’t sure about their ${weekLabel(w)} yet. Your family stays in the queue: if they release it you get first refusal, and they can still pick one of your weeks to swap.`, '#/enquiries');
   audit(user.id, 'enquiry.reply', { id: e.id }); return { ok: true };
 });
+// --- booking enquiries from trusted friends (weeks still Undecided)
+route('POST', '/api/friend-enquiries', ({ user, body }) => {
+  need(user, user.role === 'friend', 'Booking enquiries are for trusted friends; members request weeks from the calendar');
+  const w = q1('SELECT * FROM weeks WHERE id=?', body.week_id) || fail(404, 'Week not found');
+  if (!undecidedWeek(w)) fail(400, 'You can only enquire about a week its household hasn’t decided about yet');
+  if (q1("SELECT 1 FROM friend_enquiries WHERE week_id=? AND user_id=? AND status='open'", w.id, user.id)) fail(400, 'You’ve already enquired about this week');
+  const party = Math.max(1, Math.min(30, Number(body.party_size) || 0)) || null;
+  const id = run('INSERT INTO friend_enquiries (week_id,user_id,message,guest_name,party_size) VALUES (?,?,?,?,?)', w.id, user.id, body.message || null, body.guest_name || user.name, party).lastInsertRowid;
+  notify(familyAdmins(w.family_id), `${user.name}, a trusted friend of the ${famName(user.family_id)} family, would like to book your ${weekLabel(w)}${party ? ` (party of ${party})` : ''}. Let it to them or decline on the Enquiries page.`, '#/enquiries');
+  audit(user.id, 'friend_enquiry.create', { id, week: w.id }); return { id };
+});
+route('GET', '/api/friend-enquiries', ({ user }) => {
+  need(user, user.role === 'friend');
+  return q("SELECT * FROM friend_enquiries WHERE user_id=? AND (status='open' OR closed_at > datetime('now','-60 days')) ORDER BY status<>'open', created_at DESC", user.id).map(e => {
+    const w = q1('SELECT * FROM weeks WHERE id=?', e.week_id), b = e.booking_id && q1('SELECT reference, amount, status FROM bookings WHERE id=?', e.booking_id);
+    return { id: e.id, status: e.status, close_reason: e.close_reason, created_at: e.created_at, closed_at: e.closed_at, message: e.message, party_size: e.party_size,
+      week: { id: w.id, year: w.year, week_no: w.week_no, start_date: w.start_date, end_date: w.end_date, season: w.season, school_holiday: w.school_holiday, price: priceOf(w) }, booking: b || null };
+  });
+});
+route('POST', '/api/friend-enquiries/:id/withdraw', ({ user, params }) => {
+  const e = q1("SELECT * FROM friend_enquiries WHERE id=? AND status='open'", params.id) || fail(404, 'This enquiry is already closed');
+  need(user, e.user_id === user.id);
+  run("UPDATE friend_enquiries SET status='withdrawn', closed_at=datetime('now') WHERE id=?", e.id);
+  const w = q1('SELECT * FROM weeks WHERE id=?', e.week_id);
+  notify(familyAdmins(w.family_id), `${user.name} withdrew their booking enquiry for your ${weekLabel(w)}.`, '#/enquiries');
+  return { ok: true };
+});
+// the holding family's admin answers: accept = release the week and reserve it for the friend at the friend price
+route('POST', '/api/friend-enquiries/:id/answer', ({ user, params, body }) => {
+  const e = q1("SELECT * FROM friend_enquiries WHERE id=? AND status='open'", params.id) || fail(404, 'This enquiry is closed');
+  const w = q1('SELECT * FROM weeks WHERE id=?', e.week_id), friend = q1('SELECT * FROM users WHERE id=?', e.user_id), s = settings();
+  need(user, isAdminOf(user, w.family_id), 'Only your family admin can answer booking enquiries');
+  if (!body.accept) {
+    run("UPDATE friend_enquiries SET status='declined', answered_by=?, closed_at=datetime('now') WHERE id=?", user.id, e.id);
+    notify([e.user_id], `Sorry, ${weekLabel(w)} isn't available to book this time.`, '#/bookings');
+    audit(user.id, 'friend_enquiry.decline', { id: e.id }); return { status: 'declined' };
+  }
+  if (w.in_use || ['pending', 'booked'].includes(w.status) || w.start_date < today()) fail(400, 'This week can no longer be let');
+  if (!friend || !friend.active) fail(400, 'That trusted friend no longer has a login');
+  const price = priceOf(w, s);
+  const b = tx(() => {
+    run("UPDATE friend_enquiries SET status='accepted', answered_by=?, closed_at=datetime('now') WHERE id=?", user.id, e.id);
+    run("UPDATE weeks SET status='offered', offer_friends=1, offer_swap=0, in_use=0, enquiry_until=NULL, released_at=COALESCE(released_at, datetime('now')) WHERE id=?", w.id);
+    const bk = createBooking(friend, q1('SELECT * FROM weeks WHERE id=?', w.id), { method: 'bank', guest_name: e.guest_name, party_size: e.party_size, notes: `Let by ${user.name} after a booking enquiry` }, price);
+    run('UPDATE friend_enquiries SET booking_id=? WHERE id=?', bk.id, e.id);
+    return bk;
+  });
+  notify([e.user_id], `Good news: you can have ${weekLabel(w)}. It's reserved for you at ${s.currency}${price}. Please pay ${s.bank_account_name} by bank transfer within ${s.hold_days} days, reference ${b.reference}.`, '#/bookings');
+  audit(user.id, 'friend_enquiry.accept', { id: e.id, booking: b.id }); return { status: 'accepted', booking: b.id };
+});
 route('GET', '/api/enquiries', ({ user }) => {
   need(user, isFamily(user), 'Enquiries are for syndicate families');
   expireHolds(); resolveFirstRefusal();
@@ -808,7 +896,15 @@ route('GET', '/api/enquiries', ({ user }) => {
   const swaps = q("SELECT * FROM swaps WHERE status='accepted' AND (from_family_id=? OR to_family_id=?) ORDER BY responded_at DESC LIMIT 10", fid, fid).map(sw => ({
     id: sw.id, from_family: famName(sw.from_family_id), to_family: famName(sw.to_family_id), at: sw.responded_at,
     offered: swapWeekView(q1('SELECT * FROM weeks WHERE id=?', sw.offered_week_id)), target: swapWeekView(q1('SELECT * FROM weeks WHERE id=?', sw.target_week_id)) }));
-  return { incoming: incoming.map(view), outgoing: outgoing.map(view), swaps };
+  const admin = isAdminOf(user, fid), price = w => priceOf(w, s);
+  const friends = q(`SELECT f.* FROM friend_enquiries f JOIN weeks w ON w.id=f.week_id WHERE w.family_id=? AND (f.status='open' OR f.closed_at > datetime('now','-30 days')) ORDER BY w.start_date, f.created_at`, fid).map(f => {
+    const w = q1('SELECT * FROM weeks WHERE id=?', f.week_id), fr = q1('SELECT name, email, phone, family_id FROM users WHERE id=?', f.user_id), free = !w.in_use && !['pending', 'booked'].includes(w.status) && w.start_date >= today();
+    return { id: f.id, status: f.status, close_reason: f.close_reason, created_at: f.created_at, message: f.message, guest_name: f.guest_name, party_size: f.party_size,
+      friend: fr.name, friend_of: famName(fr.family_id), contact: admin ? { email: fr.email, phone: fr.phone } : null, price: price(w), members_asked: openEnquiries(w.id).length,
+      week: { ...swapWeekView(w), family_name: famName(w.family_id), plan: planOf(w), state: w.status, member_price: memberPriceOf(w, s), first_refusal_until: null },
+      can_answer: admin && f.status === 'open' && free };
+  });
+  return { incoming: incoming.map(view), outgoing: outgoing.map(view), swaps, friends };
 });
 route('POST', '/api/enquiries/:id/claim', ({ user, params, body }) => {
   const e = q1("SELECT * FROM enquiries WHERE id=? AND status='open'", params.id) || fail(404, 'This enquiry is closed');
@@ -854,7 +950,7 @@ route('POST', '/api/swaps/:id/respond', ({ user, params, body }) => {
     run("UPDATE swaps SET status='declined', decline_reason=?, responded_by=?, responded_at=datetime('now') WHERE id=?", reason, user.id, sw.id);
     if (reason === 'in_use' && !['pending', 'booked'].includes(target.status)) {
       run("UPDATE weeks SET in_use=1, offer_swap=0, offer_friends=0, status='own_use', released_at=NULL, enquiry_until=NULL WHERE id=?", target.id);
-      const now = q1('SELECT * FROM weeks WHERE id=?', target.id); releaseSwaps(now, 'in_use', user, sw.id); closeEnquiries(now, 'using');
+      const now = q1('SELECT * FROM weeks WHERE id=?', target.id); releaseSwaps(now, 'in_use', user, sw.id); closeEnquiries(now, 'using'); closeFriendEnquiries(now, 'using');
     }
   });
   notify([sw.requester_id, ...familyAdmins(sw.from_family_id)], reason === 'in_use'
