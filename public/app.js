@@ -42,11 +42,14 @@ async function boot() {
 }
 window.addEventListener('hashchange', () => { if (location.hash.startsWith('#/invite/')) return boot(); if (S.me) route(); });
 async function refreshMe() { S.me = await api('/me'); renderShell(currentTab()); }
-function currentTab() { return (location.hash.replace('#/', '').split('/')[0]) || 'calendar'; }
+function currentTab() { return (location.hash.replace('#/', '').split('/')[0]) || 'home'; }
 async function route() {
-  closeOverlay(); const tab = currentTab(); renderShell(tab); const main = $('main');
-  const views = { calendar: viewCalendar, weeks: viewMyWeeks, enquiries: viewEnquiries, swaps: viewEnquiries, bookings: viewBookings, account: viewAccount, people: viewPeople, admin: viewAdmin };
-  try { await (views[tab] || viewCalendar)(main); } catch (e) { main.innerHTML = `<div class="card empty">${esc(e.message)}</div>`; }
+  closeOverlay(); const tab = currentTab();
+  const allowed = new Set(navTabs().map(t => t[0])); if (allowed.has('enquiries')) allowed.add('swaps');
+  if (!allowed.has(tab)) { if (location.hash !== '#/home') location.hash = '#/home'; else renderShell('home'); return; }
+  renderShell(tab); const main = $('main');
+  const views = { home: viewHome, calendar: viewCalendar, weeks: viewMyWeeks, enquiries: viewEnquiries, swaps: viewEnquiries, bookings: viewBookings, account: viewAccount, people: viewPeople, admin: viewAdmin };
+  try { await (views[tab] || viewHome)(main); } catch (e) { main.innerHTML = `<div class="card empty">${esc(e.message)}</div>`; }
 }
 
 // ------------------------------------------------------------ login / invite
@@ -60,7 +63,7 @@ function renderLogin(msg) {
     <button class="btn primary block">Log in</button>
     <p class="muted small" style="margin:16px 0 0">New here? Your family admin will send you an invitation link. Forgotten your password? Ask your family admin to resend your invitation.</p>
   </form></div>`;
-  $('#lf').onsubmit = guard(async e => { e.preventDefault(); await api('/login', { body: formData(e.target) }); location.hash = '#/calendar'; boot(); });
+  $('#lf').onsubmit = guard(async e => { e.preventDefault(); await api('/login', { body: formData(e.target) }); location.hash = '#/home'; boot(); });
 }
 async function renderInvite(tok) {
   let inv; try { inv = await api('/invite/' + tok); } catch (e) { return renderLogin(e.message); }
@@ -68,17 +71,27 @@ async function renderInvite(tok) {
     <h1>Welcome, ${esc(inv.name.split(' ')[0])}</h1><p class="muted">Choose a password to finish setting up your login for <b>${esc(inv.email)}</b>.</p>
     <div class="field"><label>New password (8+ characters)</label><input name="password" type="password" minlength="8" autocomplete="new-password" required></div>
     <button class="btn primary block">Set password &amp; continue</button></form></div>`;
-  $('#inf').onsubmit = guard(async e => { e.preventDefault(); await api('/invite/' + tok, { body: formData(e.target) }); location.hash = '#/calendar'; boot(); });
+  $('#inf').onsubmit = guard(async e => { e.preventDefault(); await api('/invite/' + tok, { body: formData(e.target) }); location.hash = '#/home'; boot(); });
 }
 
 // ------------------------------------------------------------ shell
+// Navigation per role:
+//   trusted friend → Home, Available weeks, My bookings, My details
+//   family member  → Home, Calendar, My weeks (view), Enquiries, Bookings, Family & friends
+//   family admin   → the same plus Account (and editing on My weeks / Family & friends)
+//   site admin     → their own family's pages plus Site admin
+function navTabs() {
+  const friend = S.me.user.role === 'friend', fam = isFam(), n = S.me.pendingSwaps ? `<span class="dot-count">${S.me.pendingSwaps}</span>` : '';
+  return [['home', 'Home'], ['calendar', friend ? 'Available weeks' : 'Calendar'], fam && ['weeks', 'My weeks'], fam && ['enquiries', `Enquiries${n}`],
+    ['bookings', friend ? 'My bookings' : 'Bookings'], isFamAdmin() && ['account', 'Account'], ['people', friend ? 'My details' : 'Family & friends'], isSite() && ['admin', 'Site admin']].filter(Boolean);
+}
 function renderShell(tab) {
   const u = S.me.user; const fam = S.me.family;
-  const tabs = [['calendar', 'Calendar'], isFam() && ['weeks', 'My weeks'], isFam() && ['enquiries', `Enquiries${S.me.pendingSwaps ? `<span class="dot-count">${S.me.pendingSwaps}</span>` : ''}`], ['bookings', 'Bookings'],
-    isFam() && ['account', 'Account'], ['people', u.role === 'friend' ? 'My details' : 'People'], isSite() && ['admin', 'Site admin']].filter(Boolean);
+  const tabs = navTabs();
   if (!$('main')) $('#app').innerHTML = '<header class="topbar"><div class="topbar-inner"></div></header><main></main>';
+  $('.topbar').classList.toggle('many', tabs.length > 6);
   $('.topbar-inner').innerHTML = `
-    <a class="brand" href="#/calendar"><span class="brand-mark">${icon.mark}</span>${esc(S.me.settings.site_name)}</a>
+    <a class="brand" href="#/home"><span class="brand-mark">${icon.mark}</span>${esc(S.me.settings.site_name)}</a>
     <nav class="tabs">${tabs.map(([k, l]) => `<a href="#/${k}" class="${tab === k ? 'on' : ''}">${l}</a>`).join('')}</nav>
     <button class="iconbtn" id="bell" title="Notifications">${icon.bell}${S.me.unread ? `<span class="dot-count">${S.me.unread}</span>` : ''}</button>
     <div class="user-chip"><span class="avatar">${esc((u.name.match(/\b[A-Za-z]/g) || ['?']).join('').slice(0, 2).toUpperCase())}</span>
@@ -105,6 +118,43 @@ function openDrawer(title, sub, bodyHtml) {
 function openModal(html, wide) {
   $('#drawer-root').innerHTML = `<div class="scrim"></div><div class="modal ${wide ? 'wide' : ''}" role="dialog">${html}</div>`;
   $('.scrim').onclick = closeOverlay; $('#drawer-root').querySelectorAll('[data-close]').forEach(b => b.onclick = closeOverlay); return $('.modal');
+}
+
+// ------------------------------------------------------------ home
+async function viewHome(main) {
+  const h = await api('/home'), u = S.me.user, friend = u.role === 'friend', hr = new Date().getHours();
+  const greet = hr < 12 ? 'Good morning' : hr < 18 ? 'Good afternoon' : 'Good evening';
+  const todo = a => `<div class="todo ${a.tone}"><div class="grow" style="min-width:0"><div class="todo-title">${esc(a.title)}</div><div class="small muted">${esc(a.detail)}</div></div>${a.cta ? `<a class="btn sm ${a.tone === 'urgent' ? 'primary' : ''}" href="${a.link}">${esc(a.cta)}</a>` : ''}</div>`;
+  const weekRow = (x, right) => `<button class="list-row" data-open-week="${x.week_id}" data-year="${x.year}"><span class="grow" style="min-width:0"><b>${esc(x.title)}</b><div class="tiny muted">${esc(x.detail || '')}</div></span>${right || ''}</button>`;
+  const panel = (title, body, foot) => `<div class="card panel"><h3>${title}</h3>${body}${foot ? `<div class="panel-foot">${foot}</div>` : ''}</div>`;
+  const empty = t => `<p class="small muted" style="margin:0">${t}</p>`;
+  const links = friend ? [['#/calendar', 'Browse available weeks'], ['#/bookings', 'My bookings'], ['#/people', 'Update my details']]
+    : [['#/calendar', 'Browse the calendar'], ['#/weeks', isFamAdmin() ? 'Set my family’s weeks' : 'See my family’s weeks'], ['#/enquiries', 'Enquiries'], ['#/people', isFamAdmin() ? 'Add family or friends' : 'Add a trusted friend'],
+      ...(isFamAdmin() ? [['#/account', 'Family account']] : []), ...(isSite() ? [['#/admin/overview', 'Payments & balances'], ['#/admin/budget', 'Budget & charges'], ['#/admin/credits', 'Credits & pot']] : [])];
+  const f = h.family, c = f && f.credits;
+  main.innerHTML = `<h1 style="margin-bottom:2px">${greet}, ${esc(u.name.split(' ')[0])}</h1>
+    <p class="muted" style="margin-top:0">${roleName(u.role)}${S.me.family ? ' · ' + esc(S.me.family.name) : ''}${u.is_site_admin ? ' · Site admin' : ''}</p>
+    <section class="stack" style="margin-bottom:28px"><h2 style="margin-bottom:0">Needs your attention</h2>
+      ${h.attention.length ? h.attention.map(todo).join('') : `<div class="todo info"><div class="grow"><div class="todo-title">All clear</div><div class="small muted">Nothing needs your attention right now.</div></div></div>`}</section>
+    <div class="home-grid">
+      ${panel('Coming up', h.upcoming.length ? h.upcoming.map(x => weekRow(x, x.plan === 'using' || x.plan === 'booked' ? '<span class="badge green">Going</span>' : x.plan === 'reserved' ? '<span class="badge amber">Awaiting payment</span>' : x.plan === 'let' ? '<span class="badge blue">Let</span>' : x.plan === 'released' ? '<span class="badge">Released</span>' : x.plan === 'swap' ? '<span class="badge blue">Swap</span>' : '<span class="badge">Undecided</span>')).join('')
+        : empty(friend ? 'You have no upcoming stays. Book a week below.' : 'Nothing coming up.'), friend ? '' : '<a href="#/weeks">All my family’s weeks →</a>')}
+      ${panel(friend ? 'Weeks you can book' : 'Released weeks you can book', h.available.length ? h.available.map(x => weekRow({ ...x, detail: x.family ? `From ${x.family}` : '' }, `<span class="badge green">${money(x.price)}</span>`)).join('')
+        : empty('Nothing is available right now. You’ll get a notification when a week is released.'), `<a href="#/calendar">${friend ? 'All available weeks' : 'Open the calendar'} →</a>`)}
+      ${friend ? '' : panel('Your enquiries', h.enquiries.length ? h.enquiries.map(x => weekRow({ ...x, detail: `${x.holder} · ${PLAN[x.plan] ? PLAN[x.plan].label : ''}` }, `<span class="badge blue">${ordinal(x.position)} of ${x.queue}</span>`)).join('')
+        : empty('Click any other family’s week on the calendar to enquire about it. If they release it, you get first refusal.'), '<a href="#/enquiries">All enquiries →</a>')}
+      ${f ? panel(`${esc(f.name)} at a glance · ${f.year}`, `<dl class="kv" style="grid-template-columns:1fr auto">
+          ${c ? `<dt>Credit value of your weeks</dt><dd class="num">${c.value.toLocaleString('en-GB')} of ${c.entitlement.toLocaleString('en-GB')} <span class="muted small">(${c.diff > 0 ? '+' : ''}${c.diff})</span></dd>
+          <dt>Weeks released</dt><dd class="num">${c.released} <span class="muted small">(${c.points} points)</span></dd>
+          <dt>Your share of the let-income pot</dt><dd class="num">${money(c.pot_share, 2)}</dd>` : ''}
+          ${f.balance != null ? `<dt>Account balance</dt><dd class="num">${f.balance > 0.005 ? money(f.balance, 2) + ' to pay' : f.balance < -0.005 ? money(-f.balance, 2) + ' in credit' : 'Settled'}</dd>` : ''}</dl>`, '<a href="#/weeks">Credits for all families →</a>') : ''}
+      ${panel('What’s new', h.notifications.length ? h.notifications.map(n => `<a class="list-row ${n.read ? '' : 'unread'}" href="${esc(n.link || '#/home')}"><span class="grow small">${esc(n.text)}<div class="tiny muted">${new Date(n.created_at + 'Z').toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}</div></span></a>`).join('') : empty('No news yet.'))}
+      ${panel('Quick links', `<div class="quick">${links.map(([href, l]) => `<a class="btn sm" href="${href}">${l}</a>`).join('')}</div>`)}
+    </div>
+    ${h.syndicate && u.is_site_admin ? `<section class="stack" style="margin-top:32px"><h2 style="margin-bottom:0">Syndicate admin</h2>
+      ${h.syndicate.length ? h.syndicate.map(todo).join('') : '<div class="todo info"><div class="grow"><div class="todo-title">All clear</div><div class="small muted">No syndicate jobs waiting.</div></div></div>'}
+      <p class="tiny muted">Database: ${esc(h.system.database)}${h.system.volume ? ` · storage volume: ${esc(h.system.volume)}` : h.system.on_railway ? ' · no storage volume' : ''} · data since ${h.system.data_since ? dfmt(h.system.data_since.slice(0, 10), { day: 'numeric', month: 'short', year: 'numeric' }) : '—'} · email ${h.system.email ? 'on' : 'off'}</p></section>` : ''}`;
+  main.querySelectorAll('[data-open-week]').forEach(b => b.onclick = () => { S.year = Number(b.dataset.year); S.openWeek = Number(b.dataset.openWeek); location.hash = '#/calendar'; });
 }
 
 // ------------------------------------------------------------ calendar
@@ -166,6 +216,7 @@ async function viewCalendar(main) {
   main.querySelectorAll('[data-year]').forEach(b => b.onclick = () => { S.year = Number(b.dataset.year); viewCalendar(main); });
   main.querySelectorAll('[data-filter]').forEach(b => b.onclick = () => { S.filter = b.dataset.filter; viewCalendar(main); });
   main.querySelectorAll('[data-week]').forEach(b => b.onclick = () => openWeek(S.weeks.find(w => w.id == b.dataset.week)));
+  if (S.openWeek) { const w = S.weeks.find(x => x.id == S.openWeek); S.openWeek = null; if (w) openWeek(w); }
 }
 
 async function openWeek(w) {

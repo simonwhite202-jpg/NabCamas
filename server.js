@@ -9,7 +9,11 @@ const crypto = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
 
 const PORT = process.env.PORT || 3000;
-const DB_FILE = process.env.DB_FILE || path.join(__dirname, 'data', 'camas.db');
+// The database must live on persistent storage. On Railway, a service's attached volume is announced in
+// RAILWAY_VOLUME_MOUNT_PATH, so use it when DB_FILE isn't set; otherwise fall back to ./data (fine locally).
+const VOLUME = process.env.RAILWAY_VOLUME_MOUNT_PATH || '';
+const ON_RAILWAY = !!(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_ENVIRONMENT_NAME || process.env.RAILWAY_PROJECT_ID || process.env.RAILWAY_SERVICE_ID);
+const DB_FILE = process.env.DB_FILE || (VOLUME ? path.join(VOLUME, 'camas.db') : path.join(__dirname, 'data', 'camas.db'));
 const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
 fs.mkdirSync(path.dirname(DB_FILE), { recursive: true });
 const db = new DatabaseSync(DB_FILE);
@@ -469,6 +473,90 @@ route('PUT', '/api/me', ({ user, body }) => {
 });
 
 // --- calendar
+// --- home: what needs this person's attention, plus useful information, worked out per role
+route('GET', '/api/home', ({ user }) => {
+  need(user, true); expireHolds(); resolveFirstRefusal();
+  const s = settings(), fid = user.family_id, fam = isFamily(user), admin = user.role === 'family_admin', now = nowSql(), t = today();
+  const money = n => `${s.currency}${Number(n).toLocaleString('en-GB', { minimumFractionDigits: n % 1 ? 2 : 0, maximumFractionDigits: 2 })}`;
+  const W = id => q1('SELECT * FROM weeks WHERE id=?', id);
+  const when = d => new Date(d.replace(' ', 'T') + 'Z').toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/London' });
+  const attention = [];   // { tone: urgent | action | info, title, detail, link, cta }
+  // bookings this person still has to pay for
+  for (const b of q("SELECT * FROM bookings WHERE user_id=? AND status='pending' AND method='bank' ORDER BY expires_at", user.id)) {
+    const w = W(b.week_id);
+    attention.push({ tone: 'urgent', title: `Pay ${money(b.amount)} for ${weekLabel(w)}`, detail: `Bank transfer to ${s.bank_account_name} by ${fmtDate(b.expires_at.slice(0, 10))}, reference ${b.reference}. If it doesn't arrive in time, the week is released again.`, link: '#/bookings', cta: 'Payment details' });
+  }
+  if (fam) {
+    // first refusal on released weeks the family enquired about
+    for (const e of q(`SELECT e.* FROM enquiries e JOIN weeks w ON w.id=e.week_id WHERE e.family_id=? AND e.status='open' AND w.status='offered' AND w.enquiry_until > ? ORDER BY w.enquiry_until`, fid, now)) {
+      const w = W(e.week_id), pos = openEnquiries(w.id).findIndex(x => x.id === e.id) + 1;
+      attention.push(e.claim === 'yes'
+        ? { tone: 'info', title: `You've said yes to ${weekLabel(w)}`, detail: `Families who enquired before you have until ${when(w.enquiry_until)} to answer. If none of them take it, it's yours.`, link: '#/enquiries', cta: 'View' }
+        : { tone: 'urgent', title: `You have first refusal on ${weekLabel(w)}`, detail: `${famName(w.family_id)} have released it. You're ${ordinal(pos)} in the queue. Take it at ${money(memberPriceOf(w, s))} or pass before ${when(w.enquiry_until)}.`, link: '#/enquiries', cta: 'Take it or pass' });
+    }
+    if (admin) {
+      const offered = new Set();   // weeks with a swap offer are listed once, as the offer
+      for (const sw of q("SELECT * FROM swaps WHERE status='pending' AND to_family_id=? ORDER BY created_at", fid)) offered.add(sw.target_week_id) && attention.push({ tone: 'action',
+        title: `${famName(sw.from_family_id)} offer a swap for your ${weekLabel(W(sw.target_week_id))}`, detail: `They'd give you their ${weekLabel(W(sw.offered_week_id))} in exchange.`, link: '#/enquiries', cta: 'Review offer' });
+      for (const sw of q("SELECT * FROM swaps WHERE status='proposed' AND from_family_id=? ORDER BY proposed_at", fid)) attention.push({ tone: 'action',
+        title: `Confirm a swap with ${famName(sw.to_family_id)}`, detail: `They accepted ${q1('SELECT name FROM users WHERE id=?', sw.requester_id).name}'s offer of your ${weekLabel(W(sw.offered_week_id))} for their ${weekLabel(W(sw.target_week_id))}.`, link: '#/enquiries', cta: 'Confirm or withdraw' });
+      for (const r of q(`SELECT w.*, COUNT(e.id) n FROM enquiries e JOIN weeks w ON w.id=e.week_id WHERE w.family_id=? AND e.status='open' AND w.status='own_use' AND w.in_use=0 GROUP BY w.id ORDER BY w.start_date`, fid)) if (!offered.has(r.id)) attention.push({ tone: 'action',
+        title: `${r.n} famil${r.n > 1 ? 'ies have' : 'y has'} enquired about your ${weekLabel(r)}`, detail: 'Release it, mark it Willing to swap, or say you are using it.', link: '#/enquiries', cta: 'Decide' });
+      const horizon = Math.max(...String(s.reminder_weeks || '16').split(',').map(Number).filter(n => n > 0), 0) * 7;
+      const undecided = q("SELECT * FROM weeks WHERE family_id=? AND in_use=0 AND offer_friends=0 AND offer_swap=0 AND status='own_use' AND start_date >= ? AND start_date <= date(?, ?) ORDER BY start_date", fid, t, t, `+${horizon} days`);
+      if (undecided.length) attention.push({ tone: 'action', title: `${undecided.length} of your weeks in the next ${horizon / 7} weeks ${undecided.length > 1 ? 'are' : 'is'} still undecided`,
+        detail: `${undecided.slice(0, 5).map(w => `week ${w.week_no} (${fmtDate(w.start_date)})`).join(', ')}${undecided.length > 5 ? '…' : ''}. Releasing ${s.early_release_weeks}+ weeks ahead earns a full share of the let-income pot.`, link: '#/weeks', cta: 'Set in My weeks' });
+      const bal = round2(q1('SELECT COALESCE(SUM(amount),0) n FROM ledger WHERE family_id=?', fid).n);
+      if (bal > 0.005) attention.push({ tone: 'action', title: `Balance to pay: ${money(bal)}`, detail: `Pay ${s.bank_account_name} using reference ${famName(fid).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10)}-SC.`, link: '#/account', cta: 'View account' });
+      const invited = q("SELECT name FROM users WHERE family_id=? AND active=1 AND email IS NOT NULL AND password_hash IS NULL", fid).map(r => r.name);
+      if (invited.length) attention.push({ tone: 'info', title: `${invited.length} ${invited.length > 1 ? 'people haven’t' : 'person hasn’t'} set up their login yet`, detail: `${invited.join(', ')}. You can send a fresh invitation link from Family & friends.`, link: '#/people', cta: 'Family & friends' });
+    }
+  }
+  // what's coming up for this person or family
+  const upcoming = [];
+  if (fam) for (const w of q("SELECT * FROM weeks WHERE family_id=? AND start_date >= ? ORDER BY start_date LIMIT 5", fid, t)) {
+    const b = q1("SELECT * FROM bookings WHERE week_id=? AND status IN ('pending','confirmed')", w.id);
+    upcoming.push({ start: w.start_date, title: weekLabel(w), detail: b ? `Let to ${b.guest_name || q1('SELECT name FROM users WHERE id=?', b.user_id).name}` : planOf(w) === 'using' ? 'Your family is using it' : planOf(w) === 'released' ? 'Released' : planOf(w) === 'swap' ? 'Willing to swap' : 'Undecided', week_id: w.id, year: w.year, plan: b ? 'let' : planOf(w) });
+  }
+  const trips = q(`SELECT b.*, w.start_date, w.week_no, w.year, w.end_date FROM bookings b JOIN weeks w ON w.id=b.week_id
+    WHERE (b.user_id=? OR (? AND b.buyer_family_id=?)) AND b.status IN ('pending','confirmed') AND w.start_date >= ? ORDER BY w.start_date LIMIT 5`,
+    user.id, fam ? 1 : 0, fid ?? 0, t).map(b => ({ start: b.start_date, title: weekLabel(b), detail: `${b.status === 'confirmed' ? 'Booked' : 'Reserved, awaiting payment'} · ${b.guest_name || ''} · from ${famName(b.seller_family_id)}`, week_id: b.week_id, year: b.year, plan: b.status === 'confirmed' ? 'booked' : 'reserved' }));
+  // weeks this person can book now
+  const available = q("SELECT * FROM weeks WHERE status='offered' AND offer_friends=1 AND start_date >= ? ORDER BY start_date LIMIT 40", t).map(w => weekView(w, user, s)).filter(v => v.can_book).slice(0, 6)
+    .map(v => ({ week_id: v.id, year: v.year, title: weekLabel(v), price: v.price, band: bandOf(v), family: user.role === 'friend' ? null : v.family_name }));
+  const myEnquiries = fam ? q("SELECT * FROM enquiries WHERE family_id=? AND status='open' ORDER BY created_at", fid).map(e => { const w = W(e.week_id), qn = openEnquiries(w.id);
+    return { title: weekLabel(w), holder: famName(w.family_id), position: qn.findIndex(x => x.id === e.id) + 1, queue: qn.length, plan: planOf(w), week_id: w.id, year: w.year }; }) : [];
+  // family snapshot: credits and the let-income pot for the current year
+  let family = null;
+  if (fam) {
+    const year = q1('SELECT 1 FROM weeks WHERE year=?', new Date().getFullYear() + (new Date().getMonth() >= 9 ? 1 : 0)) ? new Date().getFullYear() + (new Date().getMonth() >= 9 ? 1 : 0) : new Date().getFullYear();
+    const c = creditSummary(year, s), r = c.rows.find(x => x.id === fid);
+    family = { name: famName(fid), year, credits: r && { value: r.value, entitlement: r.entitlement, diff: r.diff, released: r.released_weeks, points: r.release_points, pot_share: r.pot_share }, pot: c.pot.net,
+      balance: admin ? round2(q1('SELECT COALESCE(SUM(amount),0) n FROM ledger WHERE family_id=?', fid).n) : null };
+  }
+  // site admin: syndicate-wide jobs and system health
+  const syndicate = [];
+  if (user.is_site_admin) {
+    const pend = q("SELECT * FROM bookings WHERE status='pending' AND method='bank'");
+    if (pend.length) syndicate.push({ tone: 'action', title: `${pend.length} payment${pend.length > 1 ? 's' : ''} to confirm (${money(pend.reduce((a, b) => a + b.amount, 0))})`, detail: 'Check the bank statement for each reference, then mark it paid.', link: '#/admin/overview', cta: 'Payments' });
+    const owing = balances().filter(b => b.balance > 0.005);
+    if (owing.length) syndicate.push({ tone: 'info', title: `${owing.length} famil${owing.length > 1 ? 'ies owe' : 'y owes'} ${money(owing.reduce((a, b) => a + b.balance, 0))} in total`, detail: owing.map(b => `${b.name} ${money(b.balance)}`).join(' · '), link: '#/admin/overview', cta: 'Balances' });
+    const noAdmin = q("SELECT name FROM families f WHERE active=1 AND NOT EXISTS (SELECT 1 FROM users u WHERE u.family_id=f.id AND u.role='family_admin' AND u.active=1)").map(r => r.name);
+    if (noAdmin.length) syndicate.push({ tone: 'urgent', title: `${noAdmin.join(', ')} ${noAdmin.length > 1 ? 'have' : 'has'} no family admin`, detail: 'Nobody can manage their weeks or answer enquiries.', link: '#/admin/users', cta: 'All users' });
+    for (const { year } of q('SELECT DISTINCT year FROM budget_items ORDER BY year')) { const b = budgetSummary(year); if (b.total && !b.generated) syndicate.push({ tone: 'action', title: `${b.label || year} service charges not issued yet`, detail: `Budget ${money(b.total)} at ${money(b.rate)} a share.`, link: '#/admin/budget', cta: 'Budget & charges' }); }
+    for (const { year } of q('SELECT DISTINCT year FROM weeks WHERE year < ? ORDER BY year', new Date().getFullYear())) { const c = creditSummary(year, s); if (c.pot.net > 0 && !c.pot.distributed) syndicate.push({ tone: 'action', title: `The ${year} let-income pot (${money(c.pot.net)}) hasn't been shared out`, detail: 'Distribute it to credit each family against next year’s service charge.', link: '#/admin/credits', cta: 'Credits & pot' }); }
+    const ny = new Date().getFullYear() + 1; if (!q1('SELECT 1 FROM weeks WHERE year=?', ny)) syndicate.push({ tone: 'action', title: `No weeks set up for ${ny} yet`, detail: 'Create the year and import its allocation.', link: '#/admin/weeks', cta: 'Weeks & allocation' });
+    const demo = q1("SELECT COUNT(*) n FROM users WHERE active=1 AND email LIKE '%@example.com'").n;
+    if (demo) syndicate.push({ tone: 'urgent', title: `${demo} demo logins are still active`, detail: 'Anyone who knows the demo password can log in. Add the real family admins, then remove the demo users, before families start using the site.', link: '#/admin/users', cta: 'All users' });
+    if (ON_RAILWAY && !VOLUME) syndicate.push({ tone: 'urgent', title: 'No storage volume attached: data is lost on every update', detail: 'In Railway, add a volume to this service (mount path /data). The site will then keep its database there automatically.', link: '#/home', cta: '' });
+    else if (VOLUME && !DB_FILE.startsWith(VOLUME)) syndicate.push({ tone: 'urgent', title: 'The database isn’t on the storage volume: data is lost on every update', detail: `It’s at ${DB_FILE}, but the volume is mounted at ${VOLUME}. In Railway, change the DB_FILE variable to ${path.join(VOLUME, 'camas.db')} (or delete it).`, link: '#/home', cta: '' });
+    if (!process.env.RESEND_API_KEY || !process.env.EMAIL_FROM) syndicate.push({ tone: 'info', title: 'Emails aren’t being sent', detail: 'Reminders, invitations and notifications only appear in the bell. Set RESEND_API_KEY and EMAIL_FROM on the server to send them by email.', link: '#/home', cta: '' });
+  }
+  const notes = q('SELECT * FROM notifications WHERE user_id=? ORDER BY id DESC LIMIT 6', user.id);
+  const since = q1('SELECT MIN(created_at) d FROM users').d;
+  return { attention, upcoming: [...trips, ...upcoming].sort((a, b) => a.start.localeCompare(b.start)).slice(0, 6), available, enquiries: myEnquiries, family, syndicate, notifications: notes,
+    system: user.is_site_admin ? { database: DB_FILE, volume: VOLUME || null, on_railway: ON_RAILWAY, data_since: since, email: !!(process.env.RESEND_API_KEY && process.env.EMAIL_FROM) } : null };
+});
 route('GET', '/api/weeks', ({ user, query }) => {
   need(user, true); expireHolds(); const s = settings();
   const year = Number(query.year) || new Date().getFullYear(); resolveFirstRefusal();
@@ -1056,6 +1144,6 @@ if (!q1('SELECT 1 FROM families')) {
 // Until the site admin has set a password, print their set-up link on every start (visible in the host's logs).
 for (const u of q("SELECT name, invite_token FROM users WHERE is_site_admin=1 AND invite_token IS NOT NULL AND password_hash IS NULL")) console.log(`Site admin set-up link for ${u.name}: ${BASE_URL}/#/invite/${u.invite_token}`);
 
-server.listen(PORT, () => console.log(`Nab Camas portal running at ${BASE_URL}`));
+server.listen(PORT, () => console.log(`Nab Camas portal running at ${BASE_URL} (database: ${DB_FILE}${VOLUME ? `, volume: ${VOLUME}` : ''})`));
 setTimeout(() => { try { runReminders(); } catch (e) { console.error('reminders', e); } }, 5000);
 setInterval(() => { try { runReminders(); } catch (e) { console.error('reminders', e); } }, 6 * 3600 * 1000).unref();

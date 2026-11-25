@@ -35,6 +35,29 @@ To go live: log in as admin@example.com and go to **Site admin**:
 
 To start completely clean, delete the `data` folder before starting the server.
 
+## Home page and navigation
+
+Everyone lands on **Home**. At the top, **Needs your attention** lists what needs doing; below it are panels with useful information and quick links. The calendar is its own tab.
+
+| Who | Navigation | Needs your attention shows |
+|---|---|---|
+| Trusted friend | Home, Available weeks, My bookings, My details | Bookings to pay for |
+| Family member | Home, Calendar, My weeks (view only), Enquiries, Bookings, Family & friends | Bookings to pay for, and first refusals to take or pass |
+| Family admin | The same, plus Account | Also: swap offers to answer or confirm, enquiries about the family's weeks, undecided weeks in the next 16 weeks, the balance to pay, and people who haven't set up their login |
+| Site admin | Their family's pages, plus Site admin | Also a **Syndicate admin** section: payments to confirm, families owing money, families with no admin, service charges not issued, let-income pots not shared out, next year's weeks not set up, demo logins still active, email not switched on, and storage problems |
+
+The panels are:
+- **Coming up:** the family's next weeks, or a friend's bookings.
+- **Weeks you can book**
+- **Your enquiries**
+- **Family at a glance:** credits, releases, pot share and balance.
+- **What's new:** the latest notifications.
+- **Quick links**
+
+Opening a page you don't have access to takes you back to Home.
+
+**Storage check.** On Railway, if `DB_FILE` isn't set, the site now keeps its database on the attached volume automatically. The site admin's Home page warns if there's no volume, or if the database is somewhere else, and shows where the database is and since when its data dates.
+
 ## Who can do what
 
 | | Trusted friend | Family member | Family admin | Site admin |
