@@ -76,7 +76,7 @@ Everyone lands on the **Overview** (Home), headed *Welcome to Camas*, with who's
 |---|---|---|
 | Trusted friend | Home, Available weeks, My bookings, My details | Bookings to pay for |
 | Family member | Home, Calendar, My weeks (view only), Enquiries, Bookings, Family & friends | Bookings to pay for, and first refusals to take or pass |
-| Family admin | The same, plus Account | Also: swap offers to answer or confirm, enquiries about the family's weeks, undecided weeks in the next 16 weeks, the balance to pay, and people who haven't set up their login |
+| Family admin | The same, plus Account | Also: swap requests to answer (pick a week, release or say using it), swaps to confirm, undecided weeks in the next 16 weeks, the balance to pay, and people who haven't set up their login |
 | Site admin | A separate login with no family: Home, Calendar, Payments, Budget, Weeks, Credits & pot, Families, Users, Settings, Activity | Syndicate jobs: payments to confirm, families owing money, families with no admin, service charges not issued, let-income pots not shared out, next year's weeks not set up, demo logins still active, email not switched on, and storage problems. Home also shows balances, credits, the pot and recent activity. |
 
 The panels are:
@@ -147,12 +147,13 @@ Opening a page you don't have access to takes you back to Home.
 - **Paying out:** the site admin presses **Distribute pot** (Site admin → Credits & pot). Each family's share is credited against the following year's service charge. Re-distributing replaces the earlier figures.
 
 **Swaps**
-- **Asking:** any family member can ask for any other family's week that isn't *Using it*. They only name the week they want, and the request can only be sent if their family has at least one week that is *Willing to swap* or *Released*.
-- **The owning family's admin** either:
-  - **chooses one** of those weeks in exchange; or
-  - **declines: we're using it**, and the week is marked *Using it*; or
-  - **declines: not sure yet**.
-- **The requesting family's admin** then **confirms**, or chooses **not that week**, in which case the other family can pick a different one.
+- **Asking:** any family member can request any other family's week that isn't *Using it*, from the week's panel on the calendar. They only name the week they want. The panel shows which of their own weeks are marked *Willing to swap*, and warns them before sending if there are none.
+- **The owning family's admin** sees the requesting family's *Willing to swap* weeks on the Enquiries page, with how many credits each is worth compared with their own week. They can:
+  - **pick one** of those weeks in exchange ("Swap for this"); or
+  - **release** the week, and everyone who asked gets first refusal, first come first served; or
+  - say **we're using it**, which marks the week *Using it* and closes the requests; or
+  - reply **not sure yet**, and the requesting family keeps its place in the queue.
+- **The requesting family's admin** then **confirms**, and the weeks change hands, or **declines**, and the owning family can pick a different week.
 - **Uneven swaps:** the family that gets the more valuable week has the difference taken off next year's credits, and the other family gains it.
 - **Tidying up:** requests sort themselves out when weeks change (marked using, released, booked or swapped), and everyone involved is notified.
 
