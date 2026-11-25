@@ -19,7 +19,7 @@ const endOf = w => w.end_date || addDays(w.start_date, 7);
 const nights = w => Math.round((new Date(endOf(w)) - new Date(w.start_date)) / 864e5);
 const range = w => `${dfmt(w.start_date)} – ${dfmt(endOf(w))}`;
 const todayStr = () => new Date().toISOString().slice(0, 10);
-const roleName = r => ({ family_admin: 'Family admin', family_member: 'Family member', friend: 'Trusted friend' }[r] || r);
+const roleName = r => ({ site_admin: 'Site admin', family_admin: 'Family admin', family_member: 'Family member', friend: 'Trusted friend' }[r] || r);
 const isFam = () => ['family_admin', 'family_member'].includes(S.me.user.role);
 const isFamAdmin = () => S.me.user.role === 'family_admin';
 const isSite = () => !!S.me.user.is_site_admin;
@@ -45,7 +45,7 @@ async function refreshMe() { S.me = await api('/me'); renderShell(currentTab());
 function currentTab() { return (location.hash.replace('#/', '').split('/')[0]) || 'home'; }
 async function route() {
   closeOverlay(); const tab = currentTab();
-  const allowed = new Set(navTabs().map(t => t[0])); if (allowed.has('enquiries')) allowed.add('swaps');
+  const allowed = new Set(navTabs().map(t => t[0].split('/')[0])); if (allowed.has('enquiries')) allowed.add('swaps');
   if (!allowed.has(tab)) { if (location.hash !== '#/home') location.hash = '#/home'; else renderShell('home'); return; }
   renderShell(tab); const main = $('main');
   const views = { home: viewHome, calendar: viewCalendar, weeks: viewMyWeeks, enquiries: viewEnquiries, swaps: viewEnquiries, bookings: viewBookings, account: viewAccount, people: viewPeople, admin: viewAdmin };
@@ -75,12 +75,21 @@ async function renderInvite(tok) {
 }
 
 // ------------------------------------------------------------ shell
+// which nav item is lit: admin pages match on their sub-page (a family's account opened from Payments lights Payments)
+function navOn(k, tab) {
+  if (!k.includes('/')) return tab === k;
+  const here = location.hash.replace('#/', '') || 'home';
+  return here.startsWith(k) || (k === 'admin/overview' && (here === 'admin' || here.startsWith('admin/account')));
+}
 // Navigation per role:
 //   trusted friend → Home, Available weeks, My bookings, My details
 //   family member  → Home, Calendar, My weeks (view), Enquiries, Bookings, Family & friends
 //   family admin   → the same plus Account (and editing on My weeks / Family & friends)
-//   site admin     → their own family's pages plus Site admin
+//   site admin     → a separate login with no family: Home, Calendar and the admin pages
+const ADMIN_PAGES = [['admin/overview', 'Payments'], ['admin/budget', 'Budget'], ['admin/weeks', 'Weeks'], ['admin/credits', 'Credits & pot'], ['admin/families', 'Families'], ['admin/users', 'Users'], ['admin/settings', 'Settings'], ['admin/audit', 'Activity']];
+const isSiteRole = () => S.me.user.role === 'site_admin';
 function navTabs() {
+  if (isSiteRole()) return [['home', 'Home'], ['calendar', 'Calendar'], ...ADMIN_PAGES];
   const friend = S.me.user.role === 'friend', fam = isFam(), n = S.me.pendingSwaps ? `<span class="dot-count">${S.me.pendingSwaps}</span>` : '';
   return [['home', 'Home'], ['calendar', friend ? 'Available weeks' : 'Calendar'], fam && ['weeks', 'My weeks'], fam && ['enquiries', `Enquiries${n}`],
     ['bookings', friend ? 'My bookings' : 'Bookings'], isFamAdmin() && ['account', 'Account'], ['people', friend ? 'My details' : 'Family & friends'], isSite() && ['admin', 'Site admin']].filter(Boolean);
@@ -92,10 +101,10 @@ function renderShell(tab) {
   $('.topbar').classList.toggle('many', tabs.length > 6);
   $('.topbar-inner').innerHTML = `
     <a class="brand" href="#/home"><span class="brand-mark">${icon.mark}</span>${esc(S.me.settings.site_name)}</a>
-    <nav class="tabs">${tabs.map(([k, l]) => `<a href="#/${k}" class="${tab === k ? 'on' : ''}">${l}</a>`).join('')}</nav>
+    <nav class="tabs">${tabs.map(([k, l]) => `<a href="#/${k}" class="${navOn(k, tab) ? 'on' : ''}">${l}</a>`).join('')}</nav>
     <button class="iconbtn" id="bell" title="Notifications">${icon.bell}${S.me.unread ? `<span class="dot-count">${S.me.unread}</span>` : ''}</button>
     <div class="user-chip"><span class="avatar">${esc((u.name.match(/\b[A-Za-z]/g) || ['?']).join('').slice(0, 2).toUpperCase())}</span>
-      <span class="uname"><b style="color:var(--ink)">${esc(u.name)}</b><br>${roleName(u.role)}${fam ? ' · ' + esc(fam.name) : ''}${u.is_site_admin ? ' · Site admin' : ''}</span></div>
+      <span class="uname"><b style="color:var(--ink)">${esc(u.name)}</b><br>${roleName(u.role)}${fam ? ' · ' + esc(fam.name) : ''}</span></div>
     <button class="iconbtn" id="logout" title="Log out">${icon.out}</button>`;
   $('#logout').onclick = guard(async () => { await api('/logout', { body: {} }); S.me = null; $('#app').innerHTML = ''; renderLogin(); });
   $('#bell').onclick = guard(showNotifications);
@@ -124,6 +133,7 @@ function openModal(html, wide) {
 async function viewHome(main) {
   const h = await api('/home'), u = S.me.user, friend = u.role === 'friend', hr = new Date().getHours();
   const greet = hr < 12 ? 'Good morning' : hr < 18 ? 'Good afternoon' : 'Good evening';
+  if (h.admin_home) return adminHome(main, h, greet);
   const todo = a => `<div class="todo ${a.tone}"><div class="grow" style="min-width:0"><div class="todo-title">${esc(a.title)}</div><div class="small muted">${esc(a.detail)}</div></div>${a.cta ? `<a class="btn sm ${a.tone === 'urgent' ? 'primary' : ''}" href="${a.link}">${esc(a.cta)}</a>` : ''}</div>`;
   const weekRow = (x, right) => `<button class="list-row" data-open-week="${x.week_id}" data-year="${x.year}"><span class="grow" style="min-width:0"><b>${esc(x.title)}</b><div class="tiny muted">${esc(x.detail || '')}</div></span>${right || ''}</button>`;
   const panel = (title, body, foot) => `<div class="card panel"><h3>${title}</h3>${body}${foot ? `<div class="panel-foot">${foot}</div>` : ''}</div>`;
@@ -155,6 +165,28 @@ async function viewHome(main) {
       ${h.syndicate.length ? h.syndicate.map(todo).join('') : '<div class="todo info"><div class="grow"><div class="todo-title">All clear</div><div class="small muted">No syndicate jobs waiting.</div></div></div>'}
       <p class="tiny muted">Database: ${esc(h.system.database)}${h.system.volume ? ` · storage volume: ${esc(h.system.volume)}` : h.system.on_railway ? ' · no storage volume' : ''} · data since ${h.system.data_since ? dfmt(h.system.data_since.slice(0, 10), { day: 'numeric', month: 'short', year: 'numeric' }) : '—'} · email ${h.system.email ? 'on' : 'off'}</p></section>` : ''}`;
   main.querySelectorAll('[data-open-week]').forEach(b => b.onclick = () => { S.year = Number(b.dataset.year); S.openWeek = Number(b.dataset.openWeek); location.hash = '#/calendar'; });
+}
+
+function adminHome(main, h, greet) {
+  const u = S.me.user;
+  const todo = a => `<div class="todo ${a.tone}"><div class="grow" style="min-width:0"><div class="todo-title">${esc(a.title)}</div><div class="small muted">${esc(a.detail)}</div></div>${a.cta ? `<a class="btn sm ${a.tone === 'urgent' ? 'primary' : ''}" href="${a.link}">${esc(a.cta)}</a>` : ''}</div>`;
+  const panel = (title, body, foot) => `<div class="card panel"><h3>${title}</h3>${body}${foot ? `<div class="panel-foot">${foot}</div>` : ''}</div>`;
+  const owing = h.balances.filter(b => Math.abs(b.balance) > 0.005);
+  main.innerHTML = `<h1 style="margin-bottom:2px">${greet}, ${esc(u.name.split(' ')[0])}</h1><p class="muted" style="margin-top:0">Site admin</p>
+    <div class="grid-3" style="margin-bottom:24px">
+      <div class="card"><div class="muted small">Families · logins</div><div class="stat num">${h.counts.families} <span class="small muted" style="font-family:Inter">· ${h.counts.logins}</span></div></div>
+      <div class="card"><div class="muted small">Weeks released in ${h.credits.year}</div><div class="stat num">${h.counts.released}</div><div class="small muted" style="margin-top:4px">${h.counts.enquiries} open enquir${h.counts.enquiries === 1 ? 'y' : 'ies'}</div></div>
+      <div class="card"><div class="muted small">${h.credits.year} let-income pot</div><div class="stat num credit">${money(h.credits.pot.net, 2)}</div><div class="small muted" style="margin-top:4px">${h.credits.pot.lets} let${h.credits.pot.lets === 1 ? '' : 's'}${h.credits.pot.distributed ? ' · distributed' : ''}</div></div></div>
+    <section class="stack" style="margin-bottom:28px"><h2 style="margin-bottom:0">Needs your attention</h2>
+      ${h.attention.length ? h.attention.map(todo).join('') : '<div class="todo info"><div class="grow"><div class="todo-title">All clear</div><div class="small muted">No syndicate jobs waiting.</div></div></div>'}</section>
+    <div class="home-grid">
+      ${panel('Family balances', owing.length ? `<table><tbody>${owing.map(b => `<tr><td><i class="swatch" style="background:${b.color}"></i> <a href="#/admin/account-${b.id}">${esc(b.name)}</a></td><td class="r num">${b.balance > 0 ? money(b.balance, 2) + ' owed' : money(-b.balance, 2) + ' credit'}</td></tr>`).join('')}</tbody></table>` : '<p class="small muted" style="margin:0">Every family is settled.</p>', '<a href="#/admin/overview">Payments &amp; balances →</a>')}
+      ${panel(`Credits ${h.credits.year}`, `<table><tbody>${h.credits.rows.map(r => `<tr><td><i class="swatch" style="background:${r.color}"></i> ${esc(r.name)}</td><td class="r num">${r.value.toLocaleString('en-GB')} / ${r.entitlement.toLocaleString('en-GB')}</td><td class="r num" style="color:${Math.abs(r.diff) < 50 ? 'inherit' : r.diff > 0 ? 'var(--amber)' : 'var(--blue)'}">${r.diff > 0 ? '+' : ''}${r.diff}</td></tr>`).join('')}</tbody></table>`, '<a href="#/admin/credits">Credits &amp; pot →</a>')}
+      ${panel('Recent activity', h.activity.length ? h.activity.map(a => `<div class="list-row" style="cursor:default"><span class="grow small"><b>${esc(a.name || 'System')}</b> ${esc(a.action.replace('.', ' '))}<div class="tiny muted">${new Date(a.created_at + 'Z').toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}</div></span></div>`).join('') : '<p class="small muted" style="margin:0">Nothing yet.</p>', '<a href="#/admin/audit">Activity log →</a>')}
+      ${panel('What’s new', h.notifications.length ? h.notifications.map(n => `<a class="list-row ${n.read ? '' : 'unread'}" href="${esc(n.link || '#/home')}"><span class="grow small">${esc(n.text)}<div class="tiny muted">${new Date(n.created_at + 'Z').toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}</div></span></a>`).join('') : '<p class="small muted" style="margin:0">No news yet.</p>')}
+      ${panel('Quick links', `<div class="quick">${ADMIN_PAGES.map(([k, l]) => `<a class="btn sm" href="#/${k}">${l}</a>`).join('')}<a class="btn sm" href="#/calendar">Calendar</a></div>`)}
+    </div>
+    <p class="tiny muted" style="margin-top:24px">Database: ${esc(h.system.database)}${h.system.volume ? ` · storage volume: ${esc(h.system.volume)}` : h.system.on_railway ? ' · no storage volume' : ''} · data since ${h.system.data_since ? dfmt(h.system.data_since.slice(0, 10), { day: 'numeric', month: 'short', year: 'numeric' }) : '—'} · email ${h.system.email ? 'on' : 'off'}</p>`;
 }
 
 // ------------------------------------------------------------ calendar
@@ -193,7 +225,7 @@ async function viewCalendar(main) {
   S.weeks = await api('/weeks?year=' + S.year);
   const role = S.me.user.role;
   const filters = [['all', 'All weeks'], ['book', role === 'friend' ? 'Available to book' : 'Available to buy'], isFam() && ['swap', 'Open to enquiries'], isFam() && ['mine', 'My family’s weeks'], role === 'friend' && ['mine', 'My bookings']].filter(Boolean);
-  const intro = role === 'friend' ? 'Weeks that syndicate families have made available to trusted friends are shown in green. Pick one to book.'
+  const intro = isSiteRole() ? 'Every family’s weeks. Click a week to see it, or to change its settings on the family’s behalf.' : role === 'friend' ? 'Weeks that syndicate families have made available to trusted friends are shown in green. Pick one to book.'
     : 'Click any other family’s week to enquire about it (unless it’s <b>In use</b>), or to book it if it has a price. <b>Swap</b> marks weeks their family would swap. Set your own family’s weeks under <a href="#/weeks">My weeks</a>.';
   const byMonth = {};
   for (const w of S.weeks) (byMonth[w.start_date.slice(0, 7)] ||= []).push(w);
@@ -238,7 +270,7 @@ async function openWeek(w) {
 
   html += relNote;
   if (w.can_manage && !['pending', 'booked'].includes(w.status) && !past) {
-    html += `<form class="section" id="offerForm"><div class="row between"><h3 style="margin:0">Your family’s plans for this week</h3><a class="small" href="#/weeks">All my weeks →</a></div>
+    html += `<form class="section" id="offerForm"><div class="row between"><h3 style="margin:0">${w.is_mine ? 'Your family’s plans for this week' : `${esc(w.family_name)}’s plans for this week (as site admin)`}</h3>${w.is_mine ? '<a class="small" href="#/weeks">All my weeks →</a>' : ''}</div>
       <div style="margin-top:10px">${planFields(w, s)}</div>
       <div class="field" style="margin-top:12px"><label>Note for other families (optional)</label><input name="note" value="${esc(w.note || '')}" placeholder="e.g. Happy to swap for any October week"></div>
       <button class="btn primary">Save</button></form>`;
@@ -538,23 +570,32 @@ function personForm(p, opts = {}) {
     <div class="field"><label>${p.role === 'friend' ? 'How do you know them?' : 'Relationship'}</label><input name="relationship" value="${esc(p.relationship || '')}" placeholder="${p.role === 'friend' ? 'e.g. Neighbour, work friend' : 'e.g. Daughter'}"></div>
     <div class="field"><label>Email ${isNew ? '(needed for a login)' : ''}</label><input name="email" type="email" value="${esc(p.email || '')}"></div>
     <div class="field"><label>Phone</label><input name="phone" type="tel" value="${esc(p.phone || '')}"></div></div>
-    ${manage && p.role !== 'friend' && p.id !== u.id ? `<div class="field"><label>Access level</label><select name="role"><option value="family_member" ${p.role === 'family_member' ? 'selected' : ''}>Family member — view, request swaps, buy weeks</option><option value="family_admin" ${p.role === 'family_admin' ? 'selected' : ''}>Family admin — also offers weeks, accepts swaps, manages people</option></select></div>` : `<input type="hidden" name="role" value="${p.role}">`}
-    ${opts.admin ? `<div class="grid-2" style="gap:12px"><div class="field"><label>Family</label><select name="family_id">${S.me.families.map(f => `<option value="${f.id}" ${f.id === p.family_id ? 'selected' : ''}>${esc(f.name)}</option>`).join('')}</select></div>
-      <div class="field"><label>&nbsp;</label><label class="check" style="padding:8px"><input type="checkbox" name="is_site_admin" ${p.is_site_admin ? 'checked' : ''}> Site admin</label></div></div>` : ''}
+    ${opts.admin && p.id !== u.id ? roleFields(p.role, p.family_id)
+      : manage && p.role !== 'friend' && p.role !== 'site_admin' && p.id !== u.id ? `<div class="field"><label>Access level</label><select name="role"><option value="family_member" ${p.role === 'family_member' ? 'selected' : ''}>Family member — view, enquire, book weeks</option><option value="family_admin" ${p.role === 'family_admin' ? 'selected' : ''}>Family admin — also sets the family’s weeks, answers enquiries, manages people</option></select></div>` : `<input type="hidden" name="role" value="${p.role}">`}
     <div class="field"><label>Notes (only your family sees these)</label><textarea name="notes" rows="2">${esc(p.notes || '')}</textarea></div>
     ${isNew ? '<p class="tiny muted">By adding someone you confirm they’re happy for their contact details to be held by the syndicate.</p>' : ''}
     ${p.invite_link ? `<div class="notice small" style="margin-bottom:12px">Invitation link (not yet used):<br><input readonly value="${esc(p.invite_link)}" onclick="this.select()" style="margin-top:6px"></div>` : ''}
     <div class="row between"><div class="row">${!isNew && p.id !== u.id ? '<button type="button" class="btn danger" id="rm">Remove</button>' : ''}${!isNew && manage && p.email && p.id !== u.id ? `<button type="button" class="btn" id="reinv">${p.has_password ? 'Reset password link' : 'New invite link'}</button>` : ''}</div>
     <div class="row"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">${isNew ? 'Add' : 'Save'}</button></div></div></form>`);
   const done = () => { closeOverlay(); route(); };
+  bindRoleFields(m);
   $('#pf', m).onsubmit = guard(async e => {
-    e.preventDefault(); const d = formData(e.target); if (opts.admin) d.is_site_admin = e.target.is_site_admin.checked;
+    e.preventDefault(); const d = formData(e.target);
     if (isNew) { const r = await api('/people', { body: d }); if (r.invite_link) return showInvite(d.name, r.invite_link); toast('Added (no email, so no login)'); }
     else { await api('/people/' + p.id, { method: 'PUT', body: d }); toast('Saved'); }
     done();
   });
   $('#rm', m) && ($('#rm', m).onclick = guard(async () => { if (!confirm(`Remove ${p.name}? They will no longer be able to log in.`)) return; await api('/people/' + p.id, { method: 'DELETE' }); toast('Removed'); done(); }));
   $('#reinv', m) && ($('#reinv', m).onclick = guard(async () => { const r = await api(`/people/${p.id}/reinvite`, { body: {} }); showInvite(p.name, r.invite_link); }));
+}
+// role + family pickers for the site admin (a site admin has no family)
+function roleFields(role, familyId) {
+  return `<div class="grid-2" style="gap:12px"><div class="field"><label>Role</label><select name="role">${['family_admin', 'family_member', 'friend', 'site_admin'].map(r => `<option value="${r}" ${r === role ? 'selected' : ''}>${roleName(r)}${r === 'site_admin' ? ' (no family)' : ''}</option>`).join('')}</select></div>
+    <div class="field fam-field"><label>Family</label><select name="family_id">${S.me.families.map(f => `<option value="${f.id}" ${f.id === familyId ? 'selected' : ''}>${esc(f.name)}</option>`).join('')}</select></div></div>`;
+}
+function bindRoleFields(root) {
+  const sel = $('select[name=role]', root), fam = $('.fam-field', root); if (!sel || !fam) return;
+  const sync = () => { fam.style.visibility = sel.value === 'site_admin' ? 'hidden' : ''; }; sel.addEventListener('change', sync); sync();
 }
 function showInvite(name, link) {
   openModal(`<h2>Invitation ready</h2><p>Send this link to <b>${esc(name)}</b> so they can choose a password. ${'Once email sending is configured it will be sent automatically.'}</p>
@@ -578,7 +619,8 @@ function bindProfile(main) {
 async function viewAdmin(main) {
   const sub = location.hash.split('/')[2] || 'overview';
   const tabs = [['overview', 'Payments & balances'], ['budget', 'Budget & charges'], ['weeks', 'Weeks & allocation'], ['credits', 'Credits & pot'], ['families', 'Families'], ['users', 'All users'], ['settings', 'Settings & rates'], ['audit', 'Activity log']];
-  main.innerHTML = `<h1>Site admin</h1><div class="subtabs">${tabs.map(([k, l]) => `<a href="#/admin/${k}" class="${k === sub ? 'on' : ''}">${l}</a>`).join('')}</div><div id="adm"></div>`;
+  main.innerHTML = isSiteRole() ? `<h1>${(tabs.find(t => t[0] === sub) || tabs[0])[1]}</h1><div id="adm"></div>`
+    : `<h1>Site admin</h1><div class="subtabs">${tabs.map(([k, l]) => `<a href="#/admin/${k}" class="${k === sub ? 'on' : ''}">${l}</a>`).join('')}</div><div id="adm"></div>`;
   const el = $('#adm', main);
   if (sub.startsWith('account-')) return viewAccount(main, sub.split('-')[1]);
   await ({ overview: admOverview, budget: admBudget, weeks: admWeeks, credits: admCredits, families: admFamilies, users: admUsers, settings: admSettings, audit: admAudit }[sub] || admOverview)(el);
@@ -683,14 +725,15 @@ async function admUsers(el) {
   const people = await api('/people?all=1');
   el.innerHTML = `<div class="row between" style="margin-bottom:14px"><span class="muted small">${people.filter(p => p.active).length} active logins</span><button class="btn primary" id="addu">Add person</button></div>
     <div class="table-wrap"><table><thead><tr><th>Name</th><th>Family</th><th>Role</th><th>Email</th><th>Phone</th><th></th></tr></thead><tbody>
-    ${people.filter(p => p.active).map(p => `<tr><td><b>${esc(p.name)}</b> ${p.is_site_admin ? '<span class="badge accent">Site admin</span>' : ''}</td><td>${esc(p.family_name)}</td><td>${roleName(p.role)} ${p.has_password ? '' : '<span class="badge amber">Invited</span>'}</td><td class="small">${esc(p.email || '')}</td><td class="small">${esc(p.phone || '')}</td><td class="r"><button class="btn sm" data-e="${p.id}">Edit</button></td></tr>`).join('')}</tbody></table></div>`;
+    ${people.filter(p => p.active).sort((a, b) => (b.role === 'site_admin') - (a.role === 'site_admin') || String(a.family_name).localeCompare(b.family_name)).map(p => `<tr><td><b>${esc(p.name)}</b> ${p.role === 'site_admin' ? '<span class="badge accent">Site admin</span>' : ''}</td><td>${p.role === 'site_admin' ? '<span class="muted">—</span>' : esc(p.family_name)}</td><td>${roleName(p.role)} ${p.has_password ? '' : '<span class="badge amber">Invited</span>'}</td><td class="small">${esc(p.email || '')}</td><td class="small">${esc(p.phone || '')}</td><td class="r"><button class="btn sm" data-e="${p.id}">Edit</button></td></tr>`).join('')}</tbody></table></div>`;
   el.querySelectorAll('[data-e]').forEach(b => b.onclick = () => personForm(people.find(p => p.id == b.dataset.e), { admin: true }));
   $('#addu', el).onclick = () => {
     const m = openModal(`<form id="nu"><h2>Add person</h2><div class="grid-2" style="gap:12px"><div class="field"><label>Name</label><input name="name" required></div><div class="field"><label>Email</label><input name="email" type="email"></div>
-      <div class="field"><label>Phone</label><input name="phone"></div><div class="field"><label>Family</label><select name="family_id">${S.me.families.map(f => `<option value="${f.id}">${esc(f.name)}</option>`).join('')}</select></div></div>
-      <div class="field"><label>Role</label><select name="role"><option value="family_admin">Family admin</option><option value="family_member">Family member</option><option value="friend">Trusted friend</option></select></div>
+      <div class="field"><label>Phone</label><input name="phone"></div><div></div></div>
+      ${roleFields('family_admin', null)}
       <div class="row" style="justify-content:flex-end"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Add</button></div></form>`);
-    $('#nu', m).onsubmit = guard(async e => { e.preventDefault(); const d = formData(e.target); const r = await api('/people', { body: d }); if (r.invite_link) showInvite(d.name, r.invite_link); else { closeOverlay(); admUsers(el); } });
+    bindRoleFields(m);
+    $('#nu', m).onsubmit = guard(async e => { e.preventDefault(); const d = formData(e.target); if (d.role === 'site_admin') delete d.family_id; const r = await api('/people', { body: d }); if (r.invite_link) showInvite(d.name, r.invite_link); else { closeOverlay(); admUsers(el); } });
   };
 }
 async function admSettings(el) {

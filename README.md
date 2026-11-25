@@ -22,16 +22,17 @@ It also adds **demo logins** (password `demo1234`) and a few demo week offers in
 
 | Login | Role |
 |---|---|
-| admin@example.com | Site admin, and family admin of White |
+| admin@example.com | Site admin (no family) |
+| white@example.com | Family admin of White |
 | member@example.com | Family member, White |
 | friend@example.com | Trusted friend of White |
-| bonar@, ekserdjian@, howarth@, lunthall@, mackay@example.com | Each family's admin |
+| bonar@, ekserdjian@, howarth@, lunthall@, mackay@example.com | Each other family's admin |
 
 To go live: log in as admin@example.com and go to **Site admin**:
 1. **Budget & charges**: check 2026, **Issue** the charges, and record payments already made. For next year, use *Copy from 2026* (with an uplift) or *Import from spreadsheet*.
 2. **Weeks & allocation**: add future years with **+ Year** and import their allocation (Word, Excel or CSV).
 3. **Settings & rates**: add the bank details and the summer, shoulder and winter rates.
-4. **All users**: add each family's real admin, change your own email and password, and remove the demo users. In the calendar, untick the demo offers.
+4. **Users**: add each family's real admin, change your own email and password, and remove the demo users. The site admin login has no family, so if you also run a family, give yourself a second login as that family's admin, with a different email address (for example a `+family` alias of your usual address). In the calendar, untick the demo offers.
 
 To start completely clean, delete the `data` folder before starting the server.
 
@@ -44,7 +45,7 @@ Everyone lands on **Home**. At the top, **Needs your attention** lists what need
 | Trusted friend | Home, Available weeks, My bookings, My details | Bookings to pay for |
 | Family member | Home, Calendar, My weeks (view only), Enquiries, Bookings, Family & friends | Bookings to pay for, and first refusals to take or pass |
 | Family admin | The same, plus Account | Also: swap offers to answer or confirm, enquiries about the family's weeks, undecided weeks in the next 16 weeks, the balance to pay, and people who haven't set up their login |
-| Site admin | Their family's pages, plus Site admin | Also a **Syndicate admin** section: payments to confirm, families owing money, families with no admin, service charges not issued, let-income pots not shared out, next year's weeks not set up, demo logins still active, email not switched on, and storage problems |
+| Site admin | A separate login with no family: Home, Calendar, Payments, Budget, Weeks, Credits & pot, Families, Users, Settings, Activity | Syndicate jobs: payments to confirm, families owing money, families with no admin, service charges not issued, let-income pots not shared out, next year's weeks not set up, demo logins still active, email not switched on, and storage problems. Home also shows balances, credits, the pot and recent activity. |
 
 The panels are:
 - **Coming up:** the family's next weeks, or a friend's bookings.
@@ -142,7 +143,7 @@ Opening a page you don't have access to takes you back to Home.
 3. **Storage:** in the service, use **Add Volume** with mount path `/data`. Without a volume, the database is wiped on every redeploy.
 4. **Variables:** on the service's Variables tab, add:
    - `DB_FILE` = `/data/camas.db`
-   - `ADMIN_EMAIL` = your email (this becomes your login)
+   - `ADMIN_EMAIL` = your email (this becomes the site admin login, which belongs to no family)
    - `ADMIN_NAME` = your name
    - `BASE_URL` = the site's address, e.g. `https://nab-camas.up.railway.app` (use the domain from step 5)
 5. **Domain:** under Settings → Networking, choose **Generate Domain** for a free `….up.railway.app` address. Or add a custom domain (for example one bought for about £10 a year from a domain registrar) and create the DNS record Railway shows you. HTTPS is automatic. Update `BASE_URL` to match.

@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS families (
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY, family_id INTEGER REFERENCES families(id), name TEXT NOT NULL,
   email TEXT UNIQUE, phone TEXT, relationship TEXT, notes TEXT,
-  role TEXT NOT NULL CHECK (role IN ('family_admin','family_member','friend')),
+  role TEXT NOT NULL CHECK (role IN ('site_admin','family_admin','family_member','friend')),
   is_site_admin INTEGER NOT NULL DEFAULT 0, password_hash TEXT, invite_token TEXT,
   active INTEGER NOT NULL DEFAULT 1, created_by INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id INTEGER NOT NULL, expires_at TEXT NOT NULL);
@@ -88,6 +88,25 @@ if (db.prepare("SELECT \"notnull\" nn FROM pragma_table_info('swaps') WHERE name
       SELECT id,requester_id,from_family_id,CASE WHEN status='pending' THEN NULL ELSE offered_week_id END,to_family_id,target_week_id,message,status,responded_by,created_at,responded_at,decline_reason FROM swaps;
     DROP TABLE swaps; ALTER TABLE swaps_v3 RENAME TO swaps; COMMIT;`);
 }
+
+// Site admins are a separate kind of user with no family. Older databases only allowed family roles, so rebuild users.
+if (!db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'").get().sql.includes("'site_admin'")) {
+  const cols = 'id,family_id,name,email,phone,relationship,notes,role,is_site_admin,password_hash,invite_token,active,created_by,created_at';
+  db.exec('PRAGMA foreign_keys = OFF');
+  db.exec(`BEGIN;
+    CREATE TABLE users_v2 (
+      id INTEGER PRIMARY KEY, family_id INTEGER REFERENCES families(id), name TEXT NOT NULL,
+      email TEXT UNIQUE, phone TEXT, relationship TEXT, notes TEXT,
+      role TEXT NOT NULL CHECK (role IN ('site_admin','family_admin','family_member','friend')),
+      is_site_admin INTEGER NOT NULL DEFAULT 0, password_hash TEXT, invite_token TEXT,
+      active INTEGER NOT NULL DEFAULT 1, created_by INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+    INSERT INTO users_v2 (${cols}) SELECT ${cols} FROM users;
+    DROP TABLE users; ALTER TABLE users_v2 RENAME TO users;
+    UPDATE users SET role='site_admin', family_id=NULL WHERE is_site_admin=1;
+    COMMIT;`);
+  db.exec('PRAGMA foreign_keys = ON');
+}
+db.exec("UPDATE users SET is_site_admin = CASE WHEN role='site_admin' THEN 1 ELSE 0 END WHERE is_site_admin <> (role='site_admin')");
 
 // Phase 1 (credits): school-holiday weeks, when a week was released, reminder bookkeeping, pot distributions, carried credits.
 // Assumed English school holidays — the site admin should check and adjust these under Site admin → Weeks.
@@ -554,6 +573,15 @@ route('GET', '/api/home', ({ user }) => {
   }
   const notes = q('SELECT * FROM notifications WHERE user_id=? ORDER BY id DESC LIMIT 6', user.id);
   const since = q1('SELECT MIN(created_at) d FROM users').d;
+  if (user.role === 'site_admin') {
+    const year = q1('SELECT 1 FROM weeks WHERE year=?', new Date().getFullYear() + (new Date().getMonth() >= 9 ? 1 : 0)) ? new Date().getFullYear() + (new Date().getMonth() >= 9 ? 1 : 0) : new Date().getFullYear();
+    const c = creditSummary(year, s);
+    const activity = q('SELECT a.*, u.name FROM audit a LEFT JOIN users u ON u.id=a.user_id ORDER BY a.id DESC LIMIT 8');
+    const counts = { families: q1('SELECT COUNT(*) n FROM families WHERE active=1').n, logins: q1('SELECT COUNT(*) n FROM users WHERE active=1').n,
+      released: q1("SELECT COUNT(*) n FROM weeks WHERE year=? AND offer_friends=1", year).n, enquiries: q1("SELECT COUNT(*) n FROM enquiries WHERE status='open'").n };
+    return { admin_home: true, attention: syndicate, balances: balances(), credits: { year, rows: c.rows, pot: c.pot }, activity, counts, notifications: notes,
+      system: { database: DB_FILE, volume: VOLUME || null, on_railway: ON_RAILWAY, data_since: since, email: !!(process.env.RESEND_API_KEY && process.env.EMAIL_FROM) } };
+  }
   return { attention, upcoming: [...trips, ...upcoming].sort((a, b) => a.start.localeCompare(b.start)).slice(0, 6), available, enquiries: myEnquiries, family, syndicate, notifications: notes,
     system: user.is_site_admin ? { database: DB_FILE, volume: VOLUME || null, on_railway: ON_RAILWAY, data_since: since, email: !!(process.env.RESEND_API_KEY && process.env.EMAIL_FROM) } : null };
 });
@@ -825,15 +853,17 @@ route('GET', '/api/people', ({ user, query }) => {
 });
 route('POST', '/api/people', ({ user, body }) => {
   need(user, true);
-  const fid = user.is_site_admin && body.family_id ? Number(body.family_id) : user.family_id;
-  const role = ['family_admin', 'family_member', 'friend'].includes(body.role) ? body.role : 'friend';
+  const role = ['site_admin', 'family_admin', 'family_member', 'friend'].includes(body.role) ? body.role : 'friend';
+  if (role === 'site_admin') need(user, user.is_site_admin, 'Only a site admin can add another site admin');
+  const fid = role === 'site_admin' ? null : user.is_site_admin && body.family_id ? Number(body.family_id) : user.family_id;
+  if (role !== 'site_admin' && !fid) fail(400, 'Choose which family this person belongs to');
   if (!canManageFamily(user, fid)) need(user, isFamily(user) && fid === user.family_id && role === 'friend', 'Family members can add trusted friends; only a family admin can add family members');
   if (!body.name) fail(400, 'Name is required');
   const email = (body.email || '').trim() || null;
   if (email && q1('SELECT 1 FROM users WHERE lower(email)=lower(?)', email)) fail(400, 'Someone with that email already has a login');
   const inv = email ? token(18) : null;
-  const id = Number(run('INSERT INTO users (family_id,name,email,phone,relationship,notes,role,invite_token,created_by) VALUES (?,?,?,?,?,?,?,?,?)',
-    fid, body.name, email, body.phone || null, body.relationship || null, body.notes || null, role, inv, user.id).lastInsertRowid);
+  const id = Number(run('INSERT INTO users (family_id,name,email,phone,relationship,notes,role,is_site_admin,invite_token,created_by) VALUES (?,?,?,?,?,?,?,?,?,?)',
+    fid, body.name, email, body.phone || null, body.relationship || null, body.notes || null, role, role === 'site_admin' ? 1 : 0, inv, user.id).lastInsertRowid);
   if (email) deliver(email, `You're invited to ${settings().site_name}`, `${user.name} has added you to the ${settings().site_name} owners' portal.\n\nChoose a password to get started: ${BASE_URL}/#/invite/${inv}`);
   if (role === 'friend' && user.role !== 'family_admin') notify(familyAdmins(fid), `${user.name} added ${body.name} as a trusted friend.`, '#/people');
   audit(user.id, 'person.add', { id, role });
@@ -844,15 +874,21 @@ route('PUT', '/api/people/:id', ({ user, params, body }) => {
   const self = p.id === user.id;
   need(user, self || canManageFamily(user, p.family_id) || (p.role === 'friend' && p.created_by === user.id));
   const manage = canManageFamily(user, p.family_id);
-  let role = p.role;
+  let role = p.role, familyId = p.family_id;
   if (manage && body.role && ['family_admin', 'family_member', 'friend'].includes(body.role)) role = body.role;
-  if (p.role === 'family_admin' && role !== 'family_admin' && q1("SELECT COUNT(*) n FROM users WHERE family_id=? AND role='family_admin' AND active=1", p.family_id).n < 2) fail(400, 'Each family needs at least one family admin');
+  if (user.is_site_admin && body.role === 'site_admin') role = 'site_admin';
+  if (role === 'site_admin') familyId = null;
+  else if (user.is_site_admin && body.family_id) familyId = Number(body.family_id);
+  if (role !== 'site_admin' && !familyId) fail(400, 'Choose which family this person belongs to');
+  if (p.role === 'site_admin' && role !== 'site_admin') {
+    if (self) fail(400, 'You can’t remove your own site admin access. Ask another site admin.');
+    if (q1("SELECT COUNT(*) n FROM users WHERE role='site_admin' AND active=1").n < 2) fail(400, 'There must always be at least one site admin');
+  }
+  if (p.role === 'family_admin' && (role !== 'family_admin' || familyId !== p.family_id) && q1("SELECT COUNT(*) n FROM users WHERE family_id=? AND role='family_admin' AND active=1", p.family_id).n < 2) fail(400, 'Each family needs at least one family admin');
   const email = body.email !== undefined ? (body.email || '').trim() || null : p.email;
   if (email && q1('SELECT 1 FROM users WHERE lower(email)=lower(?) AND id<>?', email, p.id)) fail(400, 'That email is already used');
   run('UPDATE users SET name=?, email=?, phone=?, relationship=?, notes=?, role=?, is_site_admin=?, family_id=? WHERE id=?',
-    body.name ?? p.name, email, body.phone ?? p.phone, body.relationship ?? p.relationship, body.notes ?? p.notes, role,
-    user.is_site_admin && body.is_site_admin !== undefined ? (body.is_site_admin ? 1 : 0) : p.is_site_admin,
-    user.is_site_admin && body.family_id ? Number(body.family_id) : p.family_id, p.id);
+    body.name ?? p.name, email, body.phone ?? p.phone, body.relationship ?? p.relationship, body.notes ?? p.notes, role, role === 'site_admin' ? 1 : 0, familyId, p.id);
   if (email && !p.password_hash && !p.invite_token) run('UPDATE users SET invite_token=? WHERE id=?', token(18), p.id);
   return { ok: true };
 });
@@ -866,6 +902,7 @@ route('DELETE', '/api/people/:id', ({ user, params }) => {
   const p = q1('SELECT * FROM users WHERE id=?', params.id) || fail(404, 'Not found');
   need(user, canManageFamily(user, p.family_id) || (p.role === 'friend' && p.created_by === user.id));
   if (p.id === user.id) fail(400, 'You cannot remove yourself');
+  if (p.role === 'site_admin' && q1("SELECT COUNT(*) n FROM users WHERE role='site_admin' AND active=1").n < 2) fail(400, 'There must always be at least one site admin');
   if (p.role === 'family_admin' && q1("SELECT COUNT(*) n FROM users WHERE family_id=? AND role='family_admin' AND active=1", p.family_id).n < 2) fail(400, 'Each family needs at least one family admin');
   run('UPDATE users SET active=0, invite_token=NULL WHERE id=?', p.id); run('DELETE FROM sessions WHERE user_id=?', p.id);
   audit(user.id, 'person.remove', { id: p.id }); return { ok: true };
@@ -1111,11 +1148,12 @@ if (!q1('SELECT 1 FROM families')) {
   // LIVE mode (ADMIN_EMAIL set): create only the real site admin, who sets a password via the invite link printed in the log.
   // Otherwise create demo logins for trying the site out.
   if (process.env.ADMIN_EMAIL) {
-    run("INSERT INTO users (family_id,name,email,role,is_site_admin,invite_token) VALUES (?,?,?,'family_admin',1,?)", fid(process.env.ADMIN_FAMILY || 'White'), process.env.ADMIN_NAME || 'Site admin', process.env.ADMIN_EMAIL.trim(), token(18));
+    run("INSERT INTO users (family_id,name,email,role,is_site_admin,invite_token) VALUES (NULL,?,?,'site_admin',1,?)", process.env.ADMIN_NAME || 'Site admin', process.env.ADMIN_EMAIL.trim(), token(18));
   } else {
   const pw = hashPw('demo1234');
-  const add = (f, name, email, role, admin = 0, rel = null) => run('INSERT INTO users (family_id,name,email,role,is_site_admin,password_hash,relationship) VALUES (?,?,?,?,?,?,?)', fid(f), name, email, role, admin, pw, rel);
-  add('White', 'Site Admin (White)', 'admin@example.com', 'family_admin', 1);
+  const add = (f, name, email, role, admin = 0, rel = null) => run('INSERT INTO users (family_id,name,email,role,is_site_admin,password_hash,relationship) VALUES (?,?,?,?,?,?,?)', f ? fid(f) : null, name, email, role, admin, pw, rel);
+  add(null, 'Site admin (demo)', 'admin@example.com', 'site_admin', 1);
+  add('White', 'White admin (demo)', 'white@example.com', 'family_admin');
   add('White', 'Demo family member', 'member@example.com', 'family_member', 0, 'Family');
   add('White', 'Demo trusted friend', 'friend@example.com', 'friend', 0, 'Friend');
   for (const n of names.filter(n => n !== 'White')) add(n, `${n} admin (demo)`, `${n.toLowerCase().replace(/[^a-z]/g, '')}@example.com`, 'family_admin');
