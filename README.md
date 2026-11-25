@@ -185,6 +185,11 @@ Opening a page you don't have access to takes you back to Home.
 - **Bank balance:** add the syndicate account's balance by date (with a note) as you read it from the bank. The latest is shown at the top, with a history and the change between readings.
 - **Payments to confirm** and **Top-ups expected** work as before.
 
+**Start afresh (Settings, site admin)**
+- **Check what would be removed** lists, from the live data, everything that will go: the demo logins (@example.com), bookings and lets, enquiries, swaps, top-ups, bank balances, notices and account lines, plus the weeks whose plans reset to Undecided.
+- **Download a backup first** saves a copy of the whole database.
+- **Remove it all** (type RESET) does it. Families, who holds each week, budgets and settings are kept. Service charges are reissued from the budgets: **2026 marked paid in full**, **2027 left unpaid** (if there's no 2027 budget yet, add it and press *Issue charges*). The 2027 allocation goes back to draft. If the demo site admin is the only site admin, it's kept so you're never locked out.
+
 **People and security**
 - Logins are by **invitation link**. The admin adds a person with an email and sends them the link to set their password. The same button produces a password-reset link. People added without an email are contact records only, with no login.
 - Every family must keep at least one family admin.
