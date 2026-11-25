@@ -194,7 +194,7 @@ const DEFAULT_SETTINGS = {
   commission_pct: '0', letting_cost: '100', view_as_enabled: '1', hold_days: '3', winter_changeover_day: '5', summer_changeover_day: '6', summer_changeover_from: '12', summer_changeover_to: '43',
   bank_name: 'Syndicate bank account', bank_account_name: 'Nab Camas Syndicate', bank_sort_code: '00-00-00', bank_account_no: '00000000', bank_iban: '',
   summer_months: '6,7,8', shoulder_months: '4,5,9,10', allow_member_account_charge: '1',
-  // prices: rate_* are trusted-friend prices per week; members pay member_rate_pct of that
+  // prices: rate_* are the price per week by band, the same for members and trusted friends (member_rate_pct is no longer used)
   rate_school: '1400', member_rate_pct: '75', members_first_days: '7',
   // credits: each share = credits_per_share a year; week values are scaled from these weights so a year adds up exactly
   // Credits are switched off for now: every season counts the same (the screens no longer show credits). Trusted-friend
@@ -207,7 +207,8 @@ function settings() { const s = { ...DEFAULT_SETTINGS }; for (const r of q('SELE
 const bandOf = w => w.school_holiday ? 'school' : w.season;            // school | summer | shoulder | winter
 const rateFor = (band, s = settings()) => Number(s['rate_' + band]) || 0;
 const priceOf = (w, s = settings()) => w.price_override != null ? w.price_override : rateFor(bandOf(w), s);   // trusted-friend price
-const memberPriceOf = (w, s = settings()) => Math.round(priceOf(w, s) * (Number(s.member_rate_pct) || 100) / 100);
+// members pay the same price as trusted friends: there is no member discount
+const memberPriceOf = (w, s = settings()) => priceOf(w, s);
 
 function hashPw(pw) { const salt = crypto.randomBytes(16).toString('hex'); return salt + ':' + crypto.scryptSync(pw, salt, 64).toString('hex'); }
 function checkPw(pw, h) { if (!h) return false; const [salt, hex] = h.split(':'); const a = Buffer.from(hex, 'hex'); const b = crypto.scryptSync(pw, salt, 64); return a.length === b.length && crypto.timingSafeEqual(a, b); }

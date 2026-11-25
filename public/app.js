@@ -350,7 +350,7 @@ async function openWeek(w) {
     <dt>Season</dt><dd><i class="season ${w.school_holiday ? 'school' : w.season}"></i> ${seasonName}${w.school_holiday ? ' · <b>school holidays</b>' : ''}</dd>
     ${role !== 'friend' ? `<dt>Holder</dt><dd><i class="swatch" style="background:${w.family_color}"></i> ${esc(w.family_name)}${w.original_family_id && w.original_family_id !== w.family_id ? ' <span class="muted small">(swapped)</span>' : ''}</dd>` : ''}
     ${w.status === 'offered' && w.offer_friends && (w.can_book || role !== 'friend') ? (role === 'friend' ? `<dt>Price</dt><dd><b>${money(w.price)}</b></dd>`
-      : `<dt>Price</dt><dd><b>${money(w.member_price)}</b> for members · ${money(w.friend_price)} for trusted friends${w.price_override != null ? ' <span class="muted small">(set by family)</span>' : ''}
+      : `<dt>Price</dt><dd><b>${money(w.friend_price)}</b>${w.price_override != null ? ' <span class="muted small">(set by family)</span>' : ''}
         <div class="tiny muted">${w.sale_to === 'members' ? 'Members only' : (w.friends_from > todayStr() ? `Members only until ${dfmt(w.friends_from)}, then ` : 'Open to ') + (w.sale_to === 'own' ? `${esc(w.family_name)}’s trusted friends` : 'trusted friends')}</div></dd>`) : ''}
     ${w.note && role !== 'friend' ? `<dt>Note</dt><dd>${esc(w.note)}</dd>` : ''}
     ${w.booking?.gift ? `<dt>Given to</dt><dd>${esc(w.booking.given_to)} · <span class="badge green">Free</span><div class="tiny muted">${esc(w.family_name)} let them use it free of charge${w.booking.reference ? ` · ref ${esc(w.booking.reference)}` : ''}</div>${isSiteRole() ? `<button class="btn sm danger" data-admin-cancel style="margin-top:8px">${icon('x')}Cancel</button>` : ''}</dd>`
@@ -372,7 +372,7 @@ async function openWeek(w) {
   if (w.can_book && !past) {
     const allowAcct = isFam() && (isFamAdmin() || s.allow_member_account_charge);
     html += `<form class="section" id="bookForm"><h3>Book this week · ${money(w.price)}</h3>
-      ${isFam() ? `<p class="muted small" style="margin-top:0">${esc(w.family_name)} have released this week. You pay the member price, which is credited to their household’s account.</p>` : ''}
+      ${isFam() ? `<p class="muted small" style="margin-top:0">${esc(w.family_name)} have released this week. What you pay is credited to their household’s account, less the letting cost.</p>` : ''}
       <div class="grid-2" style="gap:12px"><div class="field"><label>Lead guest name</label><input name="guest_name" value="${esc(S.me.user.name)}" required></div>
       <div class="field"><label>Number in party</label><input name="party_size" type="number" min="1" max="20" value="2"></div></div>
       ${allowAcct ? `<div class="field"><label>How will you pay?</label>
@@ -436,7 +436,7 @@ function planFields(w, s, compact) {
   return `<select name="plan" class="plan-sel">${Object.entries(PLAN).map(([k, p]) => `<option value="${k}" ${w.plan === k ? 'selected' : ''}>${p.label}</option>`).join('')}</select>
     ${compact ? '' : `<div class="tiny muted plan-hint" style="margin-top:4px"></div>`}
     <div class="sale-opts" style="margin-top:10px"><div class="${compact ? 'row' : 'grid-2'}" style="gap:10px">
-      <div class="field" style="margin:0"><label>Friend price <span class="muted">(members pay ${s.member_rate_pct}%)</span></label><input name="price_override" type="number" min="0" step="1" placeholder="${money(s['rate_' + band])} default" value="${w.price_override ?? ''}"></div>
+      <div class="field" style="margin:0"><label>Price</label><input name="price_override" type="number" min="0" step="1" placeholder="${money(s['rate_' + band])} default" value="${w.price_override ?? ''}"></div>
       <div class="field" style="margin:0"><label>Who can book</label><select name="sale_to">${Object.entries(SALE_TO()).map(([k, l]) => `<option value="${k}" ${w.sale_to === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div></div></div>`;
 }
 function bindPlanFields(root) {
@@ -494,7 +494,7 @@ async function enquirySection(w, s) {
   if (w.my_enquiry) return `<div class="section"><h3>Your family has enquired</h3><p class="small" style="margin:0">Asked on ${asked(w.my_enquiry.created_at)}. You’re <b>${ordinal(w.my_enquiry.position)} of ${q}</b> in the queue.
     ${esc(w.family_name)} can give it to your family free, or release it, when you’ll get first refusal for ${s.enquiry_hours || 48} hours, in queue order.</p><p class="small" style="margin:8px 0 0"><a href="#/enquiries">See it on the Enquiries page →</a></p></div>`;
   if (w.can_enquire) return `<form class="section" id="enqForm"><h3>Enquire about this week</h3>
-      <p class="muted small" style="margin-top:0">Your enquiry goes to ${esc(w.family_name)}’s Enquiries page. They can give the week to your family free, or release it: then families who enquired get first refusal for ${s.enquiry_hours || 48} hours at the member price (${money(w.member_price)}), first come first served.${q ? ` <b>${q} famil${q > 1 ? 'ies have' : 'y has'} already enquired.</b>` : ''}</p>
+      <p class="muted small" style="margin-top:0">Your enquiry goes to ${esc(w.family_name)}’s Enquiries page. They can give the week to your family free, or release it: then families who enquired get first refusal for ${s.enquiry_hours || 48} hours at ${money(w.member_price)}, first come first served.${q ? ` <b>${q} famil${q > 1 ? 'ies have' : 'y has'} already enquired.</b>` : ''}</p>
       <div class="field"><label>Message (optional)</label><textarea name="message" rows="2" placeholder="e.g. We’d love this week if your plans change."></textarea></div>
       <button class="btn primary">Enquire</button>${w.holder_contact ? `<p class="tiny muted" style="margin:14px 0 6px">Or ask ${w.holder_contact.name ? esc(w.holder_contact.name) : 'them'} directly:</p>${contactButtons(w.holder_contact)}` : ''}</form>`;
   if (w.in_use) return `<div class="section notice small">${esc(w.family_name)} are using this week, so it isn’t open to enquiries.</div>`;
@@ -587,7 +587,7 @@ function enquiryLists(d, opts = {}) {
 }
 async function viewEnquiries(main) {
   const d = await api('/enquiries'), s = S.me.settings;
-  main.innerHTML = `<h1>Enquiries</h1>${s.member_requests ? `<p class="muted">Enquire about any other family’s week marked <b>Enquire</b> on the calendar: your enquiry appears here and on their Enquiries page. The family that holds the week can give it to you free, or release it, when those who enquired get first refusal for ${s.enquiry_hours || 48} hours at the member price, first come first served; then it opens to all members, then trusted friends. Trusted friends can also ask to book your weeks that are still <b>Undecided</b>: you can let the week to them at the friend price, or decline. For changes to next year’s allocation, ask the site admin.</p>` : `<p class="muted">Trusted friends can ask to book your household’s weeks that are still <b>Undecided</b>. You can let the week to them at the friend price, or decline. (Members asking for other families’ weeks is switched off for now.)</p>`}
+  main.innerHTML = `<h1>Enquiries</h1>${s.member_requests ? `<p class="muted">Enquire about any other family’s week marked <b>Enquire</b> on the calendar: your enquiry appears here and on their Enquiries page. The family that holds the week can give it to you free, or release it, when those who enquired get first refusal for ${s.enquiry_hours || 48} hours, first come first served; then it opens to all members, then trusted friends. Trusted friends can also ask to book your weeks that are still <b>Undecided</b>: you can let the week to them at the friend price, or decline. For changes to next year’s allocation, ask the site admin.</p>` : `<p class="muted">Trusted friends can ask to book your household’s weeks that are still <b>Undecided</b>. You can let the week to them at the friend price, or decline. (Members asking for other families’ weeks is switched off for now.)</p>`}
     ${enquiryLists(d)}
     ${d.swaps.length ? `<h2 style="margin-top:32px">Recent swaps</h2><div class="table-wrap"><table><tbody>${d.swaps.map(x => `<tr><td class="small">${asked(x.at)}</td><td>${esc(x.from_family)} gave ${swapWeek(x.offered)}</td><td>${esc(x.to_family)} gave ${swapWeek(x.target)}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
   bindEnquiryActions(main, () => viewEnquiries(main));
@@ -915,9 +915,9 @@ async function admSettings(el) {
         <div class="row"><label class="btn sm" style="margin:0">${icon('upload')} ${s.hero_version ? 'Replace photograph' : 'Upload photograph'}<input type="file" id="heroFile" accept="image/jpeg,image/png,image/webp" hidden></label>${s.hero_version ? '<button type="button" class="btn sm danger" id="heroRm">Remove</button>' : ''}</div></div>
       ${s.hero_version ? `<img src="/media/hero?v=${esc(s.hero_version)}" alt="" style="width:min(360px,100%);aspect-ratio:3/1;object-fit:cover;border-radius:var(--r-md);border:1px solid var(--line)">` : ''}</div></div>
     <form id="sf" class="grid-2" style="align-items:start">
-    <div class="card"><h3>Trusted-friend prices (per week)</h3><p class="small muted" style="margin-top:0">Used for any released week unless the family sets its own price. Members pay a percentage of these.</p>
+    <div class="card"><h3>Prices (per week)</h3><p class="small muted" style="margin-top:0">Used for any released week unless the family sets its own price. Members and trusted friends pay the same.</p>
       <div class="grid-2" style="gap:12px">${f('rate_school', '<i class="season school"></i> School holidays', 'number', 'min=0')}${f('rate_summer', '<i class="season summer"></i> Summer', 'number', 'min=0')}${f('rate_shoulder', '<i class="season shoulder"></i> Shoulder', 'number', 'min=0')}${f('rate_winter', '<i class="season winter"></i> Winter', 'number', 'min=0')}</div>
-      <div class="grid-2" style="gap:12px">${f('member_rate_pct', 'Members pay (% of friend price)', 'number', 'min=0 max=100')}${f('members_first_days', 'Days for “Members first” releases', 'number', 'min=0')}${f('enquiry_hours', 'Hours of first refusal for enquirers', 'number', 'min=0')}</div>
+      <div class="grid-2" style="gap:12px">${f('members_first_days', 'Days for “Members first” releases', 'number', 'min=0')}${f('enquiry_hours', 'Hours of first refusal for enquirers', 'number', 'min=0')}</div>
       <h3 style="margin-top:8px">Releases &amp; reminders</h3>
       ${f('reminder_weeks', 'Remind about undecided weeks at (weeks before, comma-separated)')}
       <h3 style="margin-top:8px">Seasons</h3><p class="small muted" style="margin-top:0">Months (1–12) used when new years are created. You can override individual weeks under Weeks.</p>

@@ -140,7 +140,7 @@ Opening a page you don't have access to takes you back to Home.
 
 **Credits (switched off for now)**
 - Week credits are hidden from every screen for now, and every season counts the same in the background. The code is kept for when the syndicate decides how to value weeks (see the four-frameworks paper).
-- **Prices still vary by season:** the site admin sets the trusted-friend price for school holidays, summer, shoulder and winter under **Settings**, and members pay a percentage of it. A family can override the price for any one of its weeks.
+- **Prices still vary by season:** the site admin sets the trusted-friend price for school holidays, summer, shoulder and winter under **Settings**, and members and trusted friends pay the same price. A family can override the price for any one of its weeks.
 - **School holidays:** the site admin marks school-holiday weeks under **Weeks & allocation**. 2026 and 2027 are preloaded with assumed English school holidays, so check them.
 
 
@@ -158,9 +158,9 @@ Opening a page you don't have access to takes you back to Home.
 - **Reminders:** family admins are reminded about weeks still **Undecided** at 16 and 8 weeks before arrival. Nothing is released automatically.
 
 **Released weeks and let income**
-- **Booking:** members book released weeks at the **member price** (75% of the friend price by default). Trusted friends pay the friend price. When they can book depends on the family's choice above: straight away, or after the members-first days. A members-first week always opens to friends from 3 weeks before arrival.
+- **Booking:** members and trusted friends pay the same price for a released week. There is no member discount. When they can book depends on the family's choice above: straight away, or after the members-first days. A members-first week always opens to friends from 3 weeks before arrival.
 - **Your week, your income:** when the payment for a let is confirmed, the household that released the week is credited with what was paid, less the **letting cost** (£100 a let by default, set under Settings), which goes to the maintenance fund. The credit comes off that household's service charge, and anything beyond it carries forward against future charges. A released week that doesn't let earns nothing, so releasing early helps.
-- **Members buying weeks:** members can pay by bank transfer, or from their household's **credit** (account in credit from lets or top-ups) if it covers the price. The seller is credited the member price less the letting cost.
+- **Members buying weeks:** members can pay by bank transfer, or from their household's **credit** (account in credit from lets or top-ups) if it covers the price. The seller is credited the price less the letting cost.
 - **Top-ups:** a family admin can top up the household's credit from the Account page. They get the bank details and a reference; the site admin confirms it on the Payments page when the money arrives.
 - **Weeks gained by a change request** (when requests are switched on): if a household lets a week it got through a next-year change request, its credit is capped at that year's service charge per share (£370 in 2026). Anything above goes to the maintenance fund, so there's no profit in asking for peak weeks just to let them.
 - **Cancellations:** if the site admin cancels a paid booking, the credit is reversed.
@@ -176,7 +176,7 @@ Opening a page you don't have access to takes you back to Home.
 - The holding family's admin can answer in one of these ways:
   - **Give it to them free.** The enquiring family can use the week. It is recorded as a £0 booking: no letting cost, nothing on either account, and it doesn't count as a let. The calendar shows *Given to Mackay* to the holder, *Given by Bonar* to the family that receives it, and the receiving family's name to everyone else. The week appears under the receiving family's *Our weeks* filter, and the other enquiries close. Only the site admin can cancel a gift; the week then goes back to its holder as *Undecided*.
   - **Let it to a trusted friend** who has enquired, at the friend price. See below.
-  - **Release it.** Those who enquired get **first refusal** for 48 hours at the member price, first come first served; then whoever the family chose under **who can book**.
+  - **Release it.** Those who enquired get **first refusal** for 48 hours, first come first served; then whoever the family chose under **who can book**.
   - Mark it **Using it**, which closes the enquiries.
   - Reply **not sure yet**, which keeps the enquirers' places in the queue.
 - To switch members' enquiries off again, set `MEMBER_REQUESTS_OPEN` to `false` in `server.js`.
