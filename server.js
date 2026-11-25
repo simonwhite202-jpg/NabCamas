@@ -188,7 +188,9 @@ const DEFAULT_SETTINGS = {
   // prices: rate_* are trusted-friend prices per week; members pay member_rate_pct of that
   rate_school: '1400', member_rate_pct: '75', members_first_days: '7',
   // credits: each share = credits_per_share a year; week values are scaled from these weights so a year adds up exactly
-  credits_per_share: '100', credit_school: '170', credit_summer: '130', credit_shoulder: '100', credit_winter: '45',
+  // Credits are switched off for now: every season counts the same (the screens no longer show credits). Trusted-friend
+  // prices per season (rate_*) are still set by the site admin in Settings.
+  credits_per_share: '100', credit_school: '100', credit_summer: '100', credit_shoulder: '100', credit_winter: '100',
   // (no longer used: the let-income pot was shared by how early weeks were released)
   early_release_weeks: '8', late_release_weight: '0.5', reminder_weeks: '16,8', enquiry_hours: '48',
 };
@@ -1515,6 +1517,11 @@ if (!q1("SELECT 1 FROM settings WHERE key='income_model'")) {
   });
   if (n) console.log(`Let income: ${n} paid let(s) credited to the families that released them`);
 }
+// One-off: credits switched off for now, so every season is given the same value (friend prices per season are unaffected).
+if (!q1("SELECT 1 FROM settings WHERE key='credits_equal'")) tx(() => {
+  run("DELETE FROM settings WHERE key IN ('credit_school','credit_summer','credit_shoulder','credit_winter')");
+  run("INSERT INTO settings (key,value) VALUES ('credits_equal','1')");
+});
 // One-off: in-year swaps are retired. Willing to swap becomes Undecided; open swap offers lapse (the enquiries stay in the queue).
 if (!q1("SELECT 1 FROM settings WHERE key='in_year_swaps'")) tx(() => {
   for (const sw of q("SELECT * FROM swaps WHERE status IN ('pending','proposed')")) {

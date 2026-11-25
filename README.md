@@ -79,7 +79,7 @@ Everyone lands on the **Overview** (Home), headed *Welcome to Camas*, with who's
 | Trusted friend | Home, Available weeks, My bookings, My details | Bookings to pay for |
 | Family member | Home, Calendar, My weeks (view only), Enquiries, Bookings, Family & friends | Bookings to pay for, and first refusals to take or pass |
 | Family admin | The same, plus Account | Also: enquiries to answer (release, using it or not sure yet), friends' booking enquiries, undecided weeks in the next 16 weeks, the balance to pay, and people who haven't set up their login |
-| Site admin | A separate login with no family: Home, Calendar, Payments, Budget, Weeks, Credits & lets, Families, Users, Settings, Activity | Syndicate jobs: payments to confirm, families owing money, families with no admin, service charges not issued, let-income pots not shared out, next year's weeks not set up, demo logins still active, email not switched on, and storage problems. Home also shows balances, credits, the pot and recent activity. |
+| Site admin | A separate login with no family: Home, Calendar, Payments, Budget, Weeks, Lets, Families, Users, Settings, Activity | Syndicate jobs: payments to confirm, families owing money, families with no admin, service charges not issued, let-income pots not shared out, next year's weeks not set up, demo logins still active, email not switched on, and storage problems. Home also shows balances, credits, the pot and recent activity. |
 
 The panels are:
 - **Coming up:** the family's next weeks, or a friend's bookings.
@@ -122,17 +122,17 @@ Opening a page you don't have access to takes you back to Home.
 **Letting to friends and families**
 - **Double booking.** Booking a week puts a hold on it immediately. A second person trying to book sees "someone else has just booked this week".
 - **Bank transfer payments.** The site can't see the bank account. Each booking gets a **unique reference**, and the week is held for N days (3 by default). The site admin ticks it as paid once the money arrives. Unpaid holds lapse automatically and the week becomes available again.
-- **Where the money goes.** When payment is confirmed, the offering family gets a **credit dated to the following year**, which reduces next year's service charge. An optional **syndicate commission %** (default 0) can keep a cut for wear and tear or cleaning.
-- **Family members buying from another family** can pay by bank transfer like a friend. They can also **charge it to their own family account**, which is confirmed instantly and the family admins are notified. This saves a bank transfer and is cancelled out in the ledgers.
+- **Where the money goes.** When payment is confirmed, the family that released the week is credited with what was paid, less the letting cost for the maintenance fund (see *Released weeks and let income* below).
+- **Family members buying from another family** can pay by bank transfer like a friend, or from their household's credit if it covers the price (confirmed instantly).
 - **Friend scope.** A family can let a week to *any* family's trusted friends, or only *their own*. Friends never see family contact details, other families' activity or weeks that aren't offered to them.
 - **Price.** The default comes from the site-wide season rate. A family admin can override it for any one week.
 - **Cancellations.** The booker or the family can cancel an unpaid hold. A paid booking can only be cancelled by the site admin, and the ledger entries are reversed automatically. The refund itself is handled outside the site, under whatever cancellation policy you agree.
 
-**Credits: measuring fairness**
-- **Entitlement:** each share is worth **100 credits** a year (5,200 for 52 shares). Admin adjustments can carry credits from one year to the next.
-- **Week values:** every week has a credit value from its band: school holidays, summer, shoulder or winter (illustrative weights 170 / 130 / 100 / 45). The site scales the weights so each year adds up to about 5,200, give or take rounding; this also handles 53-week years.
+**Credits (switched off for now)**
+- Week credits are hidden from every screen for now, and every season counts the same in the background. The code is kept for when the syndicate decides how to value weeks (see the four-frameworks paper).
+- **Prices still vary by season:** the site admin sets the trusted-friend price for school holidays, summer, shoulder and winter under **Settings**, and members pay a percentage of it. A family can override the price for any one of its weeks.
 - **School holidays:** the site admin marks school-holiday weeks under **Weeks & allocation**. 2026 and 2027 are preloaded with assumed English school holidays, so check them.
-- **Fairness table:** **My weeks** and **Site admin → Credits & lets** show, for each family, the credit value of the weeks it holds against its entitlement.
+
 
 **My weeks**
 - The family admin gives each week a setting:
