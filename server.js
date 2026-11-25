@@ -118,6 +118,10 @@ try {
 try { db.exec('ALTER TABLE weeks ADD COLUMN released_at TEXT'); db.exec("UPDATE weeks SET released_at=datetime('now') WHERE offer_friends=1"); } catch { }
 try { db.exec('ALTER TABLE weeks ADD COLUMN reminded INTEGER NOT NULL DEFAULT 0'); } catch { }
 try { db.exec('ALTER TABLE ledger ADD COLUMN pot_year INTEGER'); } catch { }
+// the date a payment actually arrived (the line's created_at is when it was recorded)
+try { db.exec('ALTER TABLE ledger ADD COLUMN entry_date TEXT'); } catch { }
+// the syndicate's bank balance as the site admin reads it from the bank, by date
+db.exec(`CREATE TABLE IF NOT EXISTS bank_balances (id INTEGER PRIMARY KEY, as_of TEXT NOT NULL, amount REAL NOT NULL, note TEXT, created_by INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP);`);
 // "View as": while the site admin views the portal as another login, the session keeps the admin's id here
 try { db.exec('ALTER TABLE sessions ADD COLUMN viewer_id INTEGER'); } catch { }
 // letting cost kept from each paid let for the maintenance fund (the rest is credited to the family that released the week)
@@ -1345,12 +1349,40 @@ route('POST', '/api/admin/credits', ({ user, body }) => {
 // The yearly pot has been replaced by crediting each let directly (see confirmBooking). Earlier distributions stay in the ledger.
 route('POST', '/api/admin/pot/distribute', () => fail(400, 'Let income is now credited to each household when the guest’s payment is confirmed'));
 route('POST', '/api/admin/ledger', ({ user, body }) => {
-  needAdmin(user); const amt = Number(body.amount); if (!amt) fail(400, 'Amount required');
+  needAdmin(user); const amt = round2(Number(body.amount)); if (!amt) fail(400, 'Amount required');
   const type = body.type === 'payment' ? 'payment' : 'adjustment';
-  run('INSERT INTO ledger (family_id,year,type,description,amount,created_by) VALUES (?,?,?,?,?,?)', Number(body.family_id), Number(body.year), type,
-    body.description || (type === 'payment' ? 'Payment received – thank you' : 'Adjustment'), type === 'payment' ? -Math.abs(amt) : amt, user.id);
-  return { ok: true };
+  const fid = Number(body.family_id), year = Number(body.year); if (!q1('SELECT 1 FROM families WHERE id=?', fid)) fail(404, 'No such family'); if (!year) fail(400, 'Year required');
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(body.date || '') ? body.date : today(), cur = settings().currency;
+  const desc = body.description || (type === 'payment' ? `Payment received ${fmtDate(date)} ${date.slice(0, 4)}, thank you` : 'Adjustment');
+  run('INSERT INTO ledger (family_id,year,type,description,amount,created_by,entry_date) VALUES (?,?,?,?,?,?,?)', fid, year, type, desc, type === 'payment' ? -Math.abs(amt) : amt, user.id, date);
+  if (type === 'payment') notify(familyAdmins(fid), `Thank you: a payment of ${cur}${Math.abs(amt).toLocaleString('en-GB')} towards your ${year} service charge has been recorded.`, '#/account');
+  audit(user.id, 'ledger.' + type, { family: famName(fid), year, amount: amt, date }); return { ok: true };
 });
+// service charges by year: for each family, the charge, payments, other credits and what's outstanding
+route('GET', '/api/admin/charges', ({ user, query }) => {
+  needAdmin(user);
+  const years = [...new Set([...q("SELECT DISTINCT year FROM ledger WHERE type='service_charge'").map(r => r.year), ...q('SELECT year FROM budget_years').map(r => r.year)])].sort();
+  const year = Number(query.year) || years.filter(y => q1("SELECT 1 FROM ledger WHERE type='service_charge' AND year=?", y)).pop() || years.pop() || new Date().getFullYear();
+  const by = (fid, where) => round2(q1(`SELECT COALESCE(SUM(amount),0) n FROM ledger WHERE family_id=? AND year=? AND ${where}`, fid, year).n);
+  const rows = q('SELECT * FROM families WHERE active=1 ORDER BY name').map(f => {
+    const charge = by(f.id, "type='service_charge'"), paid = -by(f.id, "type='payment'"), other = by(f.id, "type NOT IN ('service_charge','payment')");
+    const last = q1("SELECT COALESCE(entry_date, date(created_at)) d, -amount a FROM ledger WHERE family_id=? AND year=? AND type='payment' ORDER BY COALESCE(entry_date, created_at) DESC, id DESC LIMIT 1", f.id, year);
+    return { id: f.id, name: f.name, color: f.color, shares: f.share_units, charge, paid, other, outstanding: round2(charge - paid + other), last_payment: last || null,
+      balance: familyBalance(f.id) };
+  });
+  const by_year = q1('SELECT * FROM budget_years WHERE year=?', year);
+  return { year, years: [...new Set([...years, year])].sort(), label: by_year && by_year.label, rate: by_year && by_year.rate_per_week, rows,
+    totals: ['charge', 'paid', 'other', 'outstanding'].reduce((t, k) => (t[k] = round2(rows.reduce((a, r) => a + r[k], 0)), t), {}) };
+});
+// the syndicate's bank balance by date
+route('GET', '/api/admin/bank-balances', ({ user }) => { needAdmin(user); return q('SELECT b.*, u.name by_name FROM bank_balances b LEFT JOIN users u ON u.id=b.created_by ORDER BY as_of DESC, id DESC LIMIT 50'); });
+route('POST', '/api/admin/bank-balances', ({ user, body }) => {
+  needAdmin(user); const amount = Number(body.amount);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(body.as_of || '')) fail(400, 'Choose the date of the balance'); if (body.amount === '' || body.amount == null || isNaN(amount)) fail(400, 'Enter the balance');
+  const id = run('INSERT INTO bank_balances (as_of,amount,note,created_by) VALUES (?,?,?,?)', body.as_of, round2(amount), body.note || null, user.id).lastInsertRowid;
+  audit(user.id, 'bank_balance.add', { as_of: body.as_of, amount }); return { id };
+});
+route('DELETE', '/api/admin/bank-balances/:id', ({ user, params }) => { needAdmin(user); run('DELETE FROM bank_balances WHERE id=?', params.id); audit(user.id, 'bank_balance.delete', { id: params.id }); return { ok: true }; });
 route('GET', '/api/admin/audit', ({ user }) => { needAdmin(user); return q('SELECT a.*, u.name FROM audit a LEFT JOIN users u ON u.id=a.user_id ORDER BY a.id DESC LIMIT 200'); });
 
 // ---------------------------------------------------------------- server

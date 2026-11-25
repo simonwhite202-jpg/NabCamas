@@ -613,7 +613,7 @@ async function viewAccount(main, familyId) {
     ${!familyId ? `<div id="topupBox"></div><div id="acctSwaps"></div>` : ''}
     <h2>Statement</h2><p class="muted small">When one of your released weeks lets, the payment is credited here as soon as it arrives, less the ${money(S.me.settings.letting_cost || 0)} letting cost for the maintenance fund. Any credit carries forward against future charges. Charges are positive; credits and payments are negative.</p>
     ${a.lines.length ? `<div class="table-wrap"><table><thead><tr><th>Date</th><th>Year</th><th>Type</th><th>Description</th><th class="r">Amount</th><th class="r">Balance</th></tr></thead><tbody>
-    ${a.lines.map(l => `<tr><td class="small">${new Date(l.created_at + 'Z').toLocaleDateString('en-GB')}</td><td>${l.year}</td><td><span class="badge ${l.amount < 0 ? 'green' : 'accent'}">${typeName[l.type]}</span></td><td>${esc(l.description)}</td>
+    ${a.lines.map(l => `<tr><td class="small">${new Date(l.entry_date ? l.entry_date + 'T00:00:00Z' : l.created_at + 'Z').toLocaleDateString('en-GB')}</td><td>${l.year}</td><td><span class="badge ${l.amount < 0 ? 'green' : 'accent'}">${typeName[l.type]}</span></td><td>${esc(l.description)}</td>
       <td class="r num">${l.amount < 0 ? '−' : ''}${money(Math.abs(l.amount), 2)}</td><td class="r num">${money(l.running, 2)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="card empty">No charges or credits yet.</div>'}`;
   const tb = $('#topupBox', main); if (tb) topupBox(tb, Math.max(0, -a.balance), () => viewAccount(main));
   const box = $('#acctSwaps', main);
@@ -707,32 +707,63 @@ async function viewAdmin(main) {
   if (sub.startsWith('account-')) return viewAccount(main, sub.split('-')[1]);
   await ({ overview: admOverview, budget: admBudget, weeks: admWeeks, credits: admCredits, families: admFamilies, users: admUsers, settings: admSettings, audit: admAudit }[sub] || admOverview)(el);
 }
-async function admOverview(el) {
-  const o = await api('/admin/overview');
-  el.innerHTML = `<div class="grid-2" style="align-items:start">
+async function admOverview(el, year) {
+  const [o, c, bank] = await Promise.all([api('/admin/overview'), api('/admin/charges' + (year || S.chargeYear ? '?year=' + (year || S.chargeYear) : '')), api('/admin/bank-balances')]);
+  S.chargeYear = c.year;
+  const today = todayStr(), latest = bank[0], owedAll = o.balances.reduce((a, b) => a + Math.max(0, b.balance), 0);
+  const status = r => !r.charge && !r.paid ? '<span class="badge">No charge yet</span>' : r.outstanding < -0.005 ? '<span class="badge green">In credit</span>' : r.outstanding <= 0.005 ? '<span class="badge green">Paid</span>'
+    : r.paid > 0.005 ? '<span class="badge amber">Part paid</span>' : '<span class="badge red">Unpaid</span>';
+  const signed = n => Math.abs(n) < 0.005 ? '<span class="muted">—</span>' : (n < 0 ? '−' : '') + money(Math.abs(n), 2);
+  el.innerHTML = `<div class="grid-2" style="align-items:start;margin-bottom:28px">
+    <section class="stack"><h2>Bank balance</h2>
+      <div class="card"><div class="muted small">${latest ? `Syndicate account on ${dfmt(latest.as_of, { day: 'numeric', month: 'long', year: 'numeric' })}` : 'No balance recorded yet'}</div>
+        <div class="stat num">${latest ? money(latest.amount, 2) : '—'}</div>${latest && latest.note ? `<div class="small muted" style="margin-top:4px">${esc(latest.note)}</div>` : ''}
+        <form id="bbf" class="row" style="margin-top:14px;gap:8px;align-items:flex-end;flex-wrap:wrap">
+          <div class="field" style="margin:0"><label>Date</label><input name="as_of" type="date" value="${today}" required style="max-width:170px"></div>
+          <div class="field" style="margin:0"><label>Balance (£)</label><input name="amount" type="number" step="0.01" required style="max-width:150px"></div>
+          <div class="field grow" style="margin:0;min-width:160px"><label>Note (optional)</label><input name="note" placeholder="e.g. From online banking"></div>
+          <button class="btn primary">Add balance</button></form></div>
+      ${bank.length ? `<div class="table-wrap"><table><thead><tr><th>Date</th><th class="r">Balance</th><th class="r">Change</th><th>Note</th><th></th></tr></thead><tbody>${bank.slice(0, 8).map((b, i) => { const prev = bank[i + 1]; const d = prev ? b.amount - prev.amount : null;
+        return `<tr><td class="small" style="white-space:nowrap">${dfmt(b.as_of, { day: 'numeric', month: 'short', year: 'numeric' })}</td><td class="r num">${money(b.amount, 2)}</td><td class="r num small ${d > 0 ? 'credit' : ''}" style="white-space:nowrap">${d == null ? '' : (d >= 0 ? '+' : '−') + money(Math.abs(d), 2)}</td><td class="small muted">${esc(b.note || '')}</td><td class="r"><button class="btn sm" data-bbdel="${b.id}" aria-label="Delete this balance">${icon('trash-2')}</button></td></tr>`; }).join('')}</tbody></table></div>` : ''}</section>
     <section class="stack"><h2>Payments to confirm</h2><p class="muted small" style="margin:0">Check the syndicate bank statement for each reference, then confirm. Confirming credits the household that released the week, less the letting cost.</p>
-    ${o.pending.length ? `<div class="table-wrap"><table><thead><tr><th>Ref</th><th>Week</th><th>From</th><th class="r">Amount</th><th></th></tr></thead><tbody>${o.pending.map(b => `<tr><td class="small"><code>${esc(b.reference)}</code><div class="tiny muted">expires ${new Date(b.expires_at + 'Z').toLocaleDateString('en-GB')}</div></td><td>${b.week.week_no} / ${b.week.year}<div class="tiny muted">${esc(b.seller)}</div></td><td>${esc(b.booker)}</td><td class="r num">${money(b.amount, 2)}</td>
-      <td class="r"><button class="btn sm green" data-conf="${b.id}">Paid</button> <button class="btn sm danger" data-rej="${b.id}">Cancel</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="card flat empty small">Nothing waiting</div>'}</section>
-    ${o.topups.length ? `<section class="stack" style="grid-column:1/-1"><h2>Top-ups expected</h2><p class="muted small" style="margin:0">Households sending money in to build up credit for buying weeks. When the transfer arrives, confirm it to add it to their account.</p>
+    ${o.pending.length ? `<div class="table-wrap"><table><thead><tr><th>Ref</th><th>Week</th><th>From</th><th class="r">Amount</th><th></th></tr></thead><tbody>${o.pending.map(b => `<tr><td class="small"><code>${esc(b.reference)}</code><div class="tiny muted">expires ${new Date(b.expires_at + 'Z').toLocaleDateString('en-GB')}</div></td><td>${b.week.week_no} <span class="muted small">${b.week.year}</span></td><td class="small">${esc(b.booker)}</td><td class="r num">${money(b.amount, 2)}</td>
+      <td class="r"><button class="btn sm green" data-conf="${b.id}">Paid</button> <button class="btn sm danger" data-rej="${b.id}">Cancel</button></td></tr>`).join('')}</tbody></table></div>` : '<div class="card flat empty small">Nothing waiting</div>'}</section></div>
+    ${o.topups.length ? `<section class="stack" style="margin-bottom:28px"><h2>Top-ups expected</h2><p class="muted small" style="margin:0">Households sending money in to build up credit for buying weeks. When the transfer arrives, confirm it to add it to their account.</p>
       <div class="table-wrap"><table><thead><tr><th>Ref</th><th>Household</th><th>From</th><th class="r">Amount</th><th></th></tr></thead><tbody>${o.topups.map(t => `<tr><td class="small"><code>${esc(t.reference)}</code></td><td>${esc(t.family)}</td><td class="small">${esc(t.person)} · ${asked(t.created_at)}</td><td class="r num">${money(t.amount, 2)}</td>
       <td class="r"><button class="btn sm green" data-tuconf="${t.id}" data-amt="${t.amount}">Arrived</button> <button class="btn sm danger" data-tucan="${t.id}">Cancel</button></td></tr>`).join('')}</tbody></table></div></section>` : ''}
-    <section class="stack"><h2>Family balances</h2><div class="table-wrap"><table><thead><tr><th>Family</th><th class="r">Balance</th><th></th></tr></thead><tbody>
-      ${o.balances.map(b => `<tr><td><i class="swatch" style="background:${b.color}"></i> <a href="#/admin/account-${b.id}">${esc(b.name)}</a></td><td class="r num ${b.balance > 0 ? '' : 'muted'}">${b.balance > 0 ? money(b.balance, 2) + ' owed' : b.balance < 0 ? money(-b.balance, 2) + ' credit' : 'Settled'}</td><td class="r"><button class="btn sm" data-pay="${b.id}">Record payment</button></td></tr>`).join('')}</tbody>
-      <tfoot><tr><td>Total outstanding</td><td class="r num">${money(o.balances.reduce((a, b) => a + Math.max(0, b.balance), 0), 2)}</td><td></td></tr></tfoot></table></div></section></div>`;
-  el.querySelectorAll('[data-conf]').forEach(b => b.onclick = guard(async () => { await api(`/admin/bookings/${b.dataset.conf}/confirm`, { body: {} }); toast('Payment confirmed'); admOverview(el); }));
+    <section class="stack"><div class="row between"><h2 style="margin:0">Service charges ${c.year}</h2><div class="seg">${c.years.map(y => `<button data-cy="${y}" class="${y === c.year ? 'on' : ''}">${y}</button>`).join('')}</div></div>
+      <p class="muted small" style="margin:0">${c.label ? `Budget year ${esc(c.label)}` : `Budget year ${c.year}`}${c.rate ? ` · ${money(c.rate)} per share` : ''}. Record full or part payments as they arrive. <b>Outstanding</b> is the year’s charge, less payments, plus or minus other credits for that year (let income, purchases, adjustments). <b>Balance now</b> covers every year; in total, households owe ${money(owedAll, 2)}.</p>
+      <div class="table-wrap"><table><thead><tr><th>Household</th><th class="r">Shares</th><th class="r">Charge</th><th class="r">Paid</th><th class="r">Other credits</th><th class="r">Outstanding</th><th>Status</th><th class="r">Balance now</th><th></th></tr></thead><tbody>
+      ${c.rows.map(r => `<tr><td><a href="#/admin/account-${r.id}">${esc(r.name)}</a>${r.last_payment ? `<div class="tiny muted">Last paid ${money(r.last_payment.a, 2)} on ${dfmt(r.last_payment.d)}</div>` : ''}</td><td class="r num">${r.shares}</td><td class="r num">${signed(r.charge)}</td><td class="r num">${signed(r.paid)}</td><td class="r num">${signed(r.other)}</td>
+        <td class="r num"><b>${r.outstanding > 0.005 ? money(r.outstanding, 2) : r.outstanding < -0.005 ? money(-r.outstanding, 2) + ' credit' : money(0, 2)}</b></td><td>${status(r)}</td>
+        <td class="r num small" style="white-space:nowrap">${r.balance > 0.005 ? money(r.balance, 2) + ' owed' : r.balance < -0.005 ? money(-r.balance, 2) + ' credit' : 'Settled'}</td>
+        <td class="r" style="white-space:nowrap">${r.outstanding > 0.005 ? `<button class="btn sm green" data-full="${r.id}">Paid in full</button> ` : ''}<button class="btn sm" data-pay="${r.id}">Record…</button></td></tr>`).join('')}</tbody>
+      <tfoot><tr><td>Total</td><td class="r">${c.rows.reduce((a, r) => a + r.shares, 0)}</td><td class="r">${signed(c.totals.charge)}</td><td class="r">${signed(c.totals.paid)}</td><td class="r">${signed(c.totals.other)}</td><td class="r">${money(Math.max(0, c.totals.outstanding), 2)}</td><td></td><td></td><td></td></tr></tfoot></table></div></section>`;
+  const reload = () => admOverview(el, c.year);
+  el.querySelectorAll('[data-cy]').forEach(b => b.onclick = () => admOverview(el, Number(b.dataset.cy)));
+  $('#bbf', el).onsubmit = guard(async e => { e.preventDefault(); await api('/admin/bank-balances', { body: formData(e.target) }); toast('Bank balance added'); reload(); });
+  el.querySelectorAll('[data-bbdel]').forEach(b => b.onclick = guard(async () => { if (!confirm('Delete this bank balance?')) return; await api('/admin/bank-balances/' + b.dataset.bbdel, { method: 'DELETE' }); reload(); }));
+  el.querySelectorAll('[data-conf]').forEach(b => b.onclick = guard(async () => { await api(`/admin/bookings/${b.dataset.conf}/confirm`, { body: {} }); toast('Payment confirmed'); reload(); }));
   el.querySelectorAll('[data-tuconf]').forEach(b => b.onclick = guard(async () => { const amt = prompt('Amount received (£):', b.dataset.amt); if (amt === null) return;
-    await api(`/admin/topups/${b.dataset.tuconf}/confirm`, { body: { amount: amt } }); toast('Top-up added to their account'); admOverview(el); }));
-  el.querySelectorAll('[data-tucan]').forEach(b => b.onclick = guard(async () => { if (!confirm('Cancel this expected top-up?')) return; await api(`/topups/${b.dataset.tucan}/cancel`, { body: {} }); toast('Cancelled'); admOverview(el); }));
-  el.querySelectorAll('[data-rej]').forEach(b => b.onclick = guard(async () => { if (!confirm('Cancel this reservation and release the week?')) return; await api(`/bookings/${b.dataset.rej}/cancel`, { body: {} }); admOverview(el); }));
+    await api(`/admin/topups/${b.dataset.tuconf}/confirm`, { body: { amount: amt } }); toast('Top-up added to their account'); reload(); }));
+  el.querySelectorAll('[data-tucan]').forEach(b => b.onclick = guard(async () => { if (!confirm('Cancel this expected top-up?')) return; await api(`/topups/${b.dataset.tucan}/cancel`, { body: {} }); toast('Cancelled'); reload(); }));
+  el.querySelectorAll('[data-rej]').forEach(b => b.onclick = guard(async () => { if (!confirm('Cancel this reservation and release the week?')) return; await api(`/bookings/${b.dataset.rej}/cancel`, { body: {} }); reload(); }));
+  el.querySelectorAll('[data-full]').forEach(b => b.onclick = guard(async () => { const r = c.rows.find(x => x.id == b.dataset.full);
+    if (!confirm(`Record ${money(r.outstanding, 2)} received today from ${r.name}, paying their ${c.year} service charge in full?`)) return;
+    await api('/admin/ledger', { body: { family_id: r.id, year: c.year, type: 'payment', amount: r.outstanding, date: today } }); toast(`${r.name}: paid in full`); reload(); }));
   el.querySelectorAll('[data-pay]').forEach(b => b.onclick = () => {
-    const f = o.balances.find(x => x.id == b.dataset.pay);
-    const m = openModal(`<form id="lp"><h2>${esc(f.name)}: record entry</h2><div class="grid-2" style="gap:12px">
-      <div class="field"><label>Type</label><select name="type"><option value="payment">Payment received</option><option value="adjustment">Adjustment (+ charge / − credit)</option></select></div>
-      <div class="field"><label>Year</label><input name="year" type="number" value="${new Date().getFullYear()}"></div></div>
-      <div class="field"><label>Amount</label><input name="amount" type="number" step="0.01" value="${f.balance > 0 ? f.balance : ''}" required></div>
-      <div class="field"><label>Description</label><input name="description" placeholder="e.g. Bank transfer 14 Mar"></div>
+    const r = c.rows.find(x => x.id == b.dataset.pay);
+    const m = openModal(`<form id="lp"><h2>${esc(r.name)}: record a payment</h2>
+      <p class="small muted" style="margin-top:0">${r.outstanding > 0.005 ? `Outstanding for ${c.year}: <b>${money(r.outstanding, 2)}</b>. Enter less for a part payment.` : `Nothing is outstanding for ${c.year}.`}</p>
+      <div class="grid-2" style="gap:12px"><div class="field"><label>Type</label><select name="type"><option value="payment">Payment received</option><option value="adjustment">Adjustment (+ charge / − credit)</option></select></div>
+      <div class="field"><label>Service-charge year</label><input name="year" type="number" value="${c.year}" required></div></div>
+      <div class="grid-2" style="gap:12px"><div class="field"><label>Amount (£)</label><input name="amount" type="number" step="0.01" value="${r.outstanding > 0.005 ? r.outstanding : ''}" required></div>
+      <div class="field"><label>Date received</label><input name="date" type="date" value="${today}"></div></div>
+      <div class="field"><label>Reference or note (optional)</label><input name="description" placeholder="e.g. Bank transfer, first instalment"></div>
       <div class="row" style="justify-content:flex-end"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Save</button></div></form>`);
-    $('#lp', m).onsubmit = guard(async e => { e.preventDefault(); await api('/admin/ledger', { body: { ...formData(e.target), family_id: f.id } }); closeOverlay(); toast('Recorded'); admOverview(el); });
+    $('#lp', m).onsubmit = guard(async e => { e.preventDefault(); const d = formData(e.target);
+      if (d.description && d.type === 'payment') d.description = `Payment received ${dfmt(d.date || today)} ${(d.date || today).slice(0, 4)}: ${d.description}`;
+      await api('/admin/ledger', { body: { ...d, family_id: r.id } }); closeOverlay(); toast('Recorded'); reload(); });
   });
 }
 async function admBudget(el, year) {

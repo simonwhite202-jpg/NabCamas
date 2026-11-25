@@ -179,6 +179,12 @@ Opening a page you don't have access to takes you back to Home.
 - Each budget year has a **period label** (e.g. July 2025 – June 2026), and each line has a **type** (Regular, Postpone, …) and **commentary**, as on the spreadsheet.
 - **Budget years** can be copied from the previous year with an inflation uplift, edited line by line, or imported from Excel or CSV. The importer lets you pick the columns and previews the result first. It also handles a sheet with the budget on the left and families and weeks on the right.
 
+**Payments page (site admin)**
+- **Service charges by year:** for each household, the year's charge, payments, other credits for that year (let income, purchases, adjustments), what's **outstanding**, a status (*Unpaid*, *Part paid*, *Paid*, *In credit*) and the **balance now** across every year. Pick the year at the top.
+- **Recording payments:** **Paid in full** records the outstanding amount as received today. **Record…** takes a full or part amount, the date it arrived and a note (or an adjustment). Statements show the date the money arrived, and the family admins get a thank-you notice.
+- **Bank balance:** add the syndicate account's balance by date (with a note) as you read it from the bank. The latest is shown at the top, with a history and the change between readings.
+- **Payments to confirm** and **Top-ups expected** work as before.
+
 **People and security**
 - Logins are by **invitation link**. The admin adds a person with an email and sends them the link to set their password. The same button produces a password-reset link. People added without an email are contact records only, with no login.
 - Every family must keep at least one family admin.
