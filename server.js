@@ -1116,14 +1116,12 @@ route('POST', '/api/view-as/stop', ({ user }) => {
 // --- Start afresh: remove the demo logins and all test activity, keeping families, allocations, budgets and settings.
 // Service charges are reissued from the budgets: 2026 marked paid in full, 2027 left unpaid. Preview first (GET).
 const RESET_PAID_YEAR = 2026, RESET_UNPAID_YEAR = 2027;
+// Start afresh clears test activity. Every login is kept, the demo ones (@example.com) included.
 function resetPlan(user) {
-  const demo = q("SELECT id, name, email, is_site_admin FROM users WHERE lower(email) LIKE '%@example.com'");
-  const realAdmins = q("SELECT id, name FROM users WHERE is_site_admin=1 AND active=1 AND (email IS NULL OR lower(email) NOT LIKE '%@example.com')");
-  const remove = demo.filter(u => !(u.is_site_admin && !realAdmins.length));   // never remove the only site admin
   const n = t => q1(`SELECT COUNT(*) n FROM ${t}`).n;
   const charge = y => { const b = budgetSummary(y); return { year: y, label: b.label, budget: b.total, charges: b.total ? b.raised : 0 }; };
   return {
-    logins: remove.map(u => `${u.name} (${u.email})`), you_removed: remove.some(u => u.id === user.id), kept_only_admin: demo.length > remove.length, real_admins: realAdmins.map(u => u.name),
+    demo_logins: n("users WHERE lower(email) LIKE '%@example.com'"), proposals: n('outgoing_proposals'),
     bookings: n('bookings'), enquiries: n('enquiries') + n('friend_enquiries'), swaps: n('swaps') + n('change_requests'), topups: n('topups'), bank_balances: n('bank_balances'), notifications: n('notifications'),
     ledger_lines: n('ledger'), credit_lines: n('credit_ledger'),
     weeks_reset: q1("SELECT COUNT(*) n FROM weeks WHERE family_id IS NOT NULL AND (status<>'own_use' OR offer_friends=1 OR offer_swap=1 OR in_use=1 OR price_override IS NOT NULL OR note IS NOT NULL OR gained_by_request=1 OR released_at IS NOT NULL)").n,
@@ -1134,11 +1132,9 @@ route('GET', '/api/admin/reset', ({ user }) => { needAdmin(user); return resetPl
 route('POST', '/api/admin/reset', ({ user, body }) => {
   needAdmin(user); if (body.confirm !== 'RESET') fail(400, 'Type RESET to confirm');
   const plan = resetPlan(user), cur = settings().currency;
-  const demoIds = q("SELECT id, is_site_admin FROM users WHERE lower(email) LIKE '%@example.com'").filter(u => !(u.is_site_admin && plan.kept_only_admin)).map(u => u.id);
   tx(() => {
-    for (const t of ['bookings', 'enquiries', 'friend_enquiries', 'swaps', 'change_requests', 'topups', 'bank_balances', 'notifications', 'credit_ledger', 'ledger', 'audit']) run(`DELETE FROM ${t}`);
+    for (const t of ['bookings', 'enquiries', 'friend_enquiries', 'swaps', 'change_requests', 'topups', 'bank_balances', 'notifications', 'credit_ledger', 'ledger', 'outgoing_proposals', 'audit']) run(`DELETE FROM ${t}`);
     run("UPDATE weeks SET status=CASE WHEN family_id IS NULL THEN 'syndicate' ELSE 'own_use' END, offer_friends=0, offer_swap=0, in_use=0, released_at=NULL, enquiry_until=NULL, price_override=NULL, note=NULL, sale_to='all', gained_by_request=0");
-    for (const id of demoIds) { run('DELETE FROM sessions WHERE user_id=? OR viewer_id=?', id, id); run('DELETE FROM users WHERE id=?', id); }
     for (const [year, paid] of [[RESET_PAID_YEAR, true], [RESET_UNPAID_YEAR, false]]) {
       const b = budgetSummary(year); if (!b.total) continue;
       for (const f of b.split) {
@@ -1149,8 +1145,8 @@ route('POST', '/api/admin/reset', ({ user, body }) => {
     }
     run('DELETE FROM year_status WHERE year=?', RESET_UNPAID_YEAR);
   });
-  audit(user.id, 'reset', { logins: demoIds.length, paid_year: RESET_PAID_YEAR, unpaid_year: RESET_UNPAID_YEAR });
-  return { ok: true, signed_out: plan.you_removed };
+  audit(user.id, 'reset', { paid_year: RESET_PAID_YEAR, unpaid_year: RESET_UNPAID_YEAR });
+  return { ok: true };
 });
 
 // --- allocation sign-off: the site admin marks next year's allocation as agreed (and can reopen a future year)

@@ -225,9 +225,9 @@ Opening a page you don't have access to takes you back to Home.
 - **Payments to confirm** and **Top-ups expected** work as before.
 
 **Start afresh (Settings, site admin)**
-- **Check what would be removed** lists, from the live data, everything that will go: the demo logins (@example.com), bookings and lets, enquiries, swaps, top-ups, bank balances, notices and account lines, plus the weeks whose plans reset to Undecided.
+- **Check what would be removed** lists, from the live data, everything that will go: bookings and lets, enquiries, swaps, expenditure proposals, top-ups, bank balances, notices and account lines, plus the weeks whose plans reset to Undecided. **Every login is kept**, the demo logins (@example.com) included.
 - **Download a backup first** saves a copy of the whole database.
-- **Remove it all** (type RESET) does it. Families, who holds each week, budgets and settings are kept. Service charges are reissued from the budgets: **2026 marked paid in full**, **2027 left unpaid** (if there's no 2027 budget yet, add it and press *Issue charges*). The 2027 allocation goes back to draft. If the demo site admin is the only site admin, it's kept so you're never locked out.
+- **Remove it all** (type RESET) does it. Logins, families, who holds each week, budgets and settings are kept. Service charges are reissued from the budgets: **2026 marked paid in full**, **2027 left unpaid** (if there's no 2027 budget yet, add it and press *Issue charges*). The 2027 allocation goes back to draft. To get rid of a demo login later, open it under **Users** and press **Remove**.
 
 **People and security**
 - Logins are by **invitation link**. The admin adds a person with an email and sends them the link to set their password. The same button produces a password-reset link. People added without an email are contact records only, with no login.

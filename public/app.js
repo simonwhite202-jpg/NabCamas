@@ -1023,27 +1023,25 @@ async function admSettings(el) {
     await api('/admin/hero', { body: { data: c.toDataURL('image/jpeg', 0.84) } }); toast('Photograph saved'); await refreshMe(); admSettings(el);
   });
   $('#heroRm', el) && ($('#heroRm', el).onclick = guard(async () => { if (!confirm('Remove the Overview photograph?')) return; await api('/admin/hero', { method: 'DELETE' }); toast('Photograph removed'); await refreshMe(); admSettings(el); }));
-  // Start afresh: remove the demo logins and test activity (preview first, backup offered, then RESET to confirm)
+  // Start afresh: clear test activity, keeping every login (preview first, backup offered, then RESET to confirm)
   el.insertAdjacentHTML('beforeend', `<div class="card" id="resetCard" style="margin-top:var(--sp-6);border-color:var(--st-alert, #b4544a)"><h3>${icon('trash-2')} Start afresh</h3>
-    <p class="small muted" style="margin:0 0 var(--sp-4);max-width:75ch">Removes the demo logins (@example.com) and all test activity: bookings and lets, enquiries, swaps, top-ups, bank balances, notices and account lines. Each week’s plan goes back to Undecided. Who holds each week, the families, budgets and settings are kept. Service charges are reissued from the budgets: 2026 paid in full, 2027 unpaid. The 2027 allocation goes back to draft.</p>
+    <p class="small muted" style="margin:0 0 var(--sp-4);max-width:75ch">Clears all test activity: bookings and lets, enquiries, swaps, expenditure proposals, top-ups, bank balances, notices and account lines. Every login is kept, including the demo logins (@example.com). Each week’s plan goes back to Undecided. Who holds each week, the families, budgets and settings are kept. Service charges are reissued from the budgets: 2026 paid in full, 2027 unpaid. The 2027 allocation goes back to draft.</p>
     <button type="button" class="btn" id="resetCheck">Check what would be removed</button><div id="resetPlan"></div></div>`);
   $('#resetCheck', el).onclick = guard(async () => {
     const p = await api('/admin/reset'), box = $('#resetPlan', el), yr = x => x.budget ? `${money(x.charges, 2)} from the ${x.year} budget${x.label ? ` (${esc(x.label)})` : ''}` : `no ${x.year} budget yet, so no charges`;
     box.innerHTML = `<ul class="small" style="margin:var(--sp-4) 0;line-height:1.8">
-      <li><b>${p.logins.length} demo login${p.logins.length === 1 ? '' : 's'}</b> removed${p.logins.length ? `: ${p.logins.map(esc).join(', ')}` : ''}</li>
-      <li>${p.bookings} booking${p.bookings === 1 ? '' : 's'} and lets, ${p.enquiries} enquir${p.enquiries === 1 ? 'y' : 'ies'}, ${p.swaps} swap${p.swaps === 1 ? '' : 's'} or change request${p.swaps === 1 ? '' : 's'}, ${p.topups} top-up${p.topups === 1 ? '' : 's'}, ${p.bank_balances} bank balance${p.bank_balances === 1 ? '' : 's'}, ${p.notifications} notice${p.notifications === 1 ? '' : 's'}</li>
+      <li>All logins kept${p.demo_logins ? `, including ${p.demo_logins} demo login${p.demo_logins === 1 ? '' : 's'}` : ''}</li>
+      <li>${p.bookings} booking${p.bookings === 1 ? '' : 's'} and lets, ${p.enquiries} enquir${p.enquiries === 1 ? 'y' : 'ies'}, ${p.swaps} swap${p.swaps === 1 ? '' : 's'} or change request${p.swaps === 1 ? '' : 's'}, ${p.proposals} expenditure proposal${p.proposals === 1 ? '' : 's'}, ${p.topups} top-up${p.topups === 1 ? '' : 's'}, ${p.bank_balances} bank balance${p.bank_balances === 1 ? '' : 's'}, ${p.notifications} notice${p.notifications === 1 ? '' : 's'}</li>
       <li>${p.ledger_lines} account line${p.ledger_lines === 1 ? '' : 's'} cleared, so every family balance starts again from the service charges</li>
       <li>${p.weeks_reset} week${p.weeks_reset === 1 ? '' : 's'} set back to Undecided (who holds them is kept)</li>
       <li><b>2026:</b> ${yr(p.paid)}${p.paid.budget ? ', marked <b>paid in full</b>' : ''}</li>
       <li><b>2027:</b> ${yr(p.unpaid)}${p.unpaid.budget ? ', left <b>unpaid</b>' : '. Add the 2027 budget and press Issue charges afterwards.'}</li>
       <li>2027 allocation: ${p.signed_off ? 'set back to <b>draft</b>' : 'stays a <b>draft</b>'}</li></ul>
-      ${p.kept_only_admin ? '<div class="notice small" style="margin-bottom:12px">The demo site admin is the only site admin, so it will be kept. Add your own site admin login under Users first, then run this again to remove it.</div>' : ''}
-      ${p.you_removed ? `<div class="notice small" style="margin-bottom:12px">You’re signed in with a demo login, which will be removed. Afterwards, sign in as ${esc(p.real_admins.join(' or '))}.</div>` : ''}
       <div class="row" style="gap:8px"><a class="btn" href="/api/admin/backup">${icon('arrow-right')} Download a backup first</a><button type="button" class="btn danger" id="resetGo">Remove it all</button></div>`;
     $('#resetGo', el).onclick = guard(async () => {
-      if (prompt('This can’t be undone. Type RESET to remove the demo logins and test data.') !== 'RESET') return;
+      if (prompt('This can’t be undone. Type RESET to clear the test data (logins are kept).') !== 'RESET') return;
       const r = await api('/admin/reset', { body: { confirm: 'RESET' } });
-      toast('Done: demo logins and test data removed'); setTimeout(() => { location.hash = r.signed_out ? '' : '#/admin/overview'; location.reload(); }, 900);
+      toast('Done: test data cleared, logins kept'); setTimeout(() => { location.hash = '#/admin/overview'; location.reload(); }, 900);
     });
   });
   $('#sf', el).onsubmit = guard(async e => { e.preventDefault(); const d = formData(e.target); d.allow_member_account_charge = e.target.allow_member_account_charge.checked ? '1' : '0'; d.view_as_enabled = e.target.view_as_enabled.checked ? '1' : '0'; await api('/admin/settings', { method: 'PUT', body: d }); toast('Settings saved'); refreshMe(); });
