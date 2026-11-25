@@ -319,7 +319,7 @@ function weekView(w, u, s) {
       ...(b.gift && (isFamily(u) || u.is_site_admin) ? { gift: true, given_to: famName(b.buyer_family_id), ours: isFamily(u) && u.family_id === b.buyer_family_id } : {}) };
   }
   // what this user can do
-  const friendVisible = w.offer_friends && (w.sale_to === 'all' || (w.sale_to === 'own' && u.family_id === w.family_id)) && (friendsFrom(w, s) || '9') <= today();
+  const friendVisible = w.offer_friends && (['all', 'members_first'].includes(w.sale_to) || (w.sale_to === 'own' && u.family_id === w.family_id)) && (friendsFrom(w, s) || '9') <= today();
   v.first_refusal_until = w.offer_friends && w.status === 'offered' && w.enquiry_until && w.enquiry_until > nowSql() && q1("SELECT 1 FROM enquiries WHERE week_id=? AND status='open'", w.id) ? w.enquiry_until : null;
   v.can_book = w.status === 'offered' && !!w.offer_friends && !mine && w.start_date >= today() && !v.first_refusal_until && ((u.role === 'friend' && friendVisible) || isFamily(u));
   v.plan = planOf(w);
@@ -383,11 +383,14 @@ const creditValue = (w, s = settings()) => Math.round((Number(s['credit_' + band
 const daysBetween = (fromIso, toDate) => (Date.parse(toDate + 'T00:00:00Z') - Date.parse(fromIso.replace(' ', 'T') + (fromIso.length > 10 ? 'Z' : 'T00:00:00Z'))) / 864e5;
 // a release counts in full if made early_release_weeks or more before arrival, otherwise late_release_weight
 const releaseWeight = (w, s = settings()) => !w.released_at ? 0 : daysBetween(w.released_at, w.start_date) >= 7 * Number(s.early_release_weeks || 8) ? 1 : Number(s.late_release_weight ?? 0.5);
-// released weeks are for members only for members_first_days, then trusted friends too (but always from 3 weeks before arrival)
+// When trusted friends can book a released week. The family chooses when it releases (sale_to):
+//   all / own      straight away (after any enquirers' first refusal); 'own' = only the family's own trusted friends
+//   members_first  members_first_days later (but always from 3 weeks before arrival)
+//   members        never
 function friendsFrom(w, s = settings()) {
-  if (!w.released_at) return null;
-  const from = w.enquiry_until && w.enquiry_until > w.released_at ? w.enquiry_until : w.released_at;   // members' week starts after enquirers' first refusal
-  const a = new Date(from.replace(' ', 'T') + 'Z'); a.setUTCDate(a.getUTCDate() + Number(s.members_first_days || 0));
+  if (!w.released_at || w.sale_to === 'members') return null;
+  const from = w.enquiry_until && w.enquiry_until > w.released_at ? w.enquiry_until : w.released_at;   // after enquirers' first refusal
+  const a = new Date(from.replace(' ', 'T') + 'Z'); if (w.sale_to === 'members_first') a.setUTCDate(a.getUTCDate() + Number(s.members_first_days || 0));
   const b = new Date(w.start_date + 'T00:00:00Z'); b.setUTCDate(b.getUTCDate() - 21);
   return (a < b ? a : b).toISOString().slice(0, 10);
 }
@@ -738,7 +741,7 @@ route('PUT', '/api/weeks/:id', ({ user, params, body }) => {
   const using = plan === 'using', sell = plan === 'released';
   const price = body.price_override === undefined ? w.price_override : body.price_override === '' || body.price_override == null ? null : Number(body.price_override);
   if (price != null && (isNaN(price) || price < 0)) fail(400, 'Price must be a positive number');
-  const saleTo = ['members', 'all', 'own'].includes(body.sale_to) ? body.sale_to : w.sale_to;
+  const saleTo = ['members', 'members_first', 'all', 'own'].includes(body.sale_to) ? body.sale_to : w.sale_to;
   tx(() => {
     run(`UPDATE weeks SET status=?, offer_friends=?, offer_swap=?, in_use=?, sale_to=?, price_override=?, note=?,
       released_at=${sell ? (w.offer_friends ? 'released_at' : "datetime('now')") : 'NULL'} WHERE id=?`,

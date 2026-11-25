@@ -150,11 +150,15 @@ Opening a page you don't have access to takes you back to Home.
   - **Undecided** (the default)
   - **Using it**
   - **Released**: the family won't use it, and others can book it
-- For released weeks, the family can set its own **friend price** (blank means the admin's default for the band) and **who can book**: other members only; members and any family's trusted friends; or members and our own trusted friends.
+- For released weeks, the family can set its own **friend price** (blank means the admin's default for the band). It also chooses **who can book**, and when:
+  1. **Members and trusted friends, straight away.** This is the default.
+  2. **Members first for 7 days, then trusted friends.** The number of days is set in Site admin → Settings.
+  3. **Members and our own trusted friends.**
+  4. **Other syndicate members only.**
 - **Reminders:** family admins are reminded about weeks still **Undecided** at 16 and 8 weeks before arrival. Nothing is released automatically.
 
 **Released weeks and let income**
-- **Booking:** a released week can be booked by other members first, at the **member price** (75% of the friend price by default). Trusted friends can book it **7 days later**, and always from 3 weeks before arrival.
+- **Booking:** members book released weeks at the **member price** (75% of the friend price by default). Trusted friends pay the friend price. When they can book depends on the family's choice above: straight away, or after the members-first days. A members-first week always opens to friends from 3 weeks before arrival.
 - **Your week, your income:** when the payment for a let is confirmed, the household that released the week is credited with what was paid, less the **letting cost** (£100 a let by default, set under Settings), which goes to the maintenance fund. The credit comes off that household's service charge, and anything beyond it carries forward against future charges. A released week that doesn't let earns nothing, so releasing early helps.
 - **Members buying weeks:** members can pay by bank transfer, or from their household's **credit** (account in credit from lets or top-ups) if it covers the price. The seller is credited the member price less the letting cost.
 - **Top-ups:** a family admin can top up the household's credit from the Account page. They get the bank details and a reference; the site admin confirms it on the Payments page when the money arrives.
@@ -172,7 +176,7 @@ Opening a page you don't have access to takes you back to Home.
 - The holding family's admin can answer in one of these ways:
   - **Give it to them free.** The enquiring family can use the week. It is recorded as a £0 booking: no letting cost, nothing on either account, and it doesn't count as a let. The calendar shows *Given to Mackay* to the holder, *Given by Bonar* to the family that receives it, and the receiving family's name to everyone else. The week appears under the receiving family's *Our weeks* filter, and the other enquiries close. Only the site admin can cancel a gift; the week then goes back to its holder as *Undecided*.
   - **Let it to a trusted friend** who has enquired, at the friend price. See below.
-  - **Release it.** Those who enquired get **first refusal** for 48 hours at the member price, first come first served; then all members for 7 days; then trusted friends.
+  - **Release it.** Those who enquired get **first refusal** for 48 hours at the member price, first come first served; then whoever the family chose under **who can book**.
   - Mark it **Using it**, which closes the enquiries.
   - Reply **not sure yet**, which keeps the enquirers' places in the queue.
 - To switch members' enquiries off again, set `MEMBER_REQUESTS_OPEN` to `false` in `server.js`.
@@ -184,7 +188,7 @@ Opening a page you don't have access to takes you back to Home.
 - **Moving from the old swaps:** on the first start of this version, *Willing to swap* becomes *Undecided*. Swap offers still waiting lapse (with a notice); their enquiries stay in the queue.
 
 **Booking enquiries from trusted friends**
-- **Asking:** a trusted friend can enquire about any week its household hasn't decided about yet (*Undecided*). On their calendar these weeks are marked *Open to enquiries*. They give the lead guest, party size and an optional message. Friends still don't see which household holds a week.
+- **Asking:** a trusted friend can enquire about any week its household hasn't decided about yet (*Undecided*). The trusted friend's calendar has no filters. Every week shows one of three things: **Book now · £price** if it's released to them, **Enquire** if its household hasn't decided, or **Unavailable**. A week is unavailable if it's in use, booked, or released only to members for now. They give the lead guest, party size and an optional message. Friends still don't see which household holds a week.
 - **The holding family's admin** sees the enquiry on the Enquiries page and Overview, with the friend's contact details and whose friend they are. They can:
   - **let it to them**: the week is released and reserved for the friend at the friend price, and the friend gets the bank details and a reference, as with any booking. The payment, less the letting cost, is credited to the family's account. Members who had requested the week are told it has been taken; or
   - **decline**, and the friend is told it isn't available this time.

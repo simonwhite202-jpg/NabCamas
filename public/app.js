@@ -29,7 +29,7 @@ async function boot() {
   const hash = location.hash;
   if (hash.startsWith('#/invite/')) return renderInvite(hash.split('/')[2]);
   try { S.me = await api('/me'); } catch { return renderLogin(); }
-  if (!S.filterSet) { S.filter = S.me.user.role === 'friend' ? 'book' : 'all'; S.filterSet = true; }
+  if (!S.filterSet) { S.filter = 'all'; S.filterSet = true; }
   if (!S.year) S.year = S.me.years.includes(new Date().getFullYear() + 1) && new Date().getMonth() >= 9 ? new Date().getFullYear() + 1 : (S.me.years.includes(new Date().getFullYear()) ? new Date().getFullYear() : S.me.years.at(-1));
   route();
 }
@@ -263,10 +263,12 @@ function adminHome(main, h, greet) {
 const PLAN = {
   undecided: { label: 'Undecided', hint: 'Not decided yet. You’ll get reminders as it gets closer, and trusted friends can ask to book it.' },
   using: { label: 'Using it', hint: 'Definitely being used. No enquiries.' },
-  released: { label: 'Released', hint: 'You won’t use it. Members can book it, then trusted friends. If it lets, the payment is credited to your household’s account, less the letting cost for the maintenance fund.' },
+  released: { label: 'Released', hint: 'You won’t use it. Choose below who can book it, and when. If it lets, the payment is credited to your household’s account, less the letting cost for the maintenance fund.' },
 };
 const BAND = { school: 'School holidays', summer: 'Summer', shoulder: 'Shoulder', winter: 'Winter' };
-const SALE_TO = { members: 'Other syndicate members only', all: 'Members + any family’s trusted friends', own: 'Members + our own trusted friends' };
+// who can book a released week; the family chooses when it releases
+const SALE_TO = () => ({ all: 'Members and trusted friends, straight away', members_first: `Members first for ${S.me.settings.members_first_days || 7} days, then trusted friends`,
+  own: 'Members and our own trusted friends', members: 'Other syndicate members only' });
 function statusBadge(w) {
   if (w.status === 'syndicate') return '<span class="badge">Syndicate</span>';
   if (w.status === 'booked') return `<span class="badge blue">${w.booking?.gift ? `Given to ${esc(w.booking.given_to)}` : w.booking?.mine ? 'Your booking' : 'Let'}</span>`;
@@ -283,9 +285,10 @@ function weekState(w) {
   if (w.booking?.gift) return w.is_mine ? { k: 'booked', who: 'Your week', label: `Given to ${esc(w.booking.given_to)}` }
     : w.booking.ours ? { k: 'yours', who: 'Your week', label: `Given by ${fam}` } : { k: 'other', who: esc(w.booking.given_to), label: `Given by ${fam}` };
   if (w.booking?.mine) return w.booking.status === 'confirmed' ? { k: 'booked', who: 'Your booking', label: 'Booked' } : { k: 'pending', who: 'Your booking', label: 'Awaiting payment' };
-  if (friend) return w.can_book ? { k: 'available', who: 'Available', label: `Available · ${money(w.price)}` }
-    : w.my_friend_enquiry ? { k: 'pending', who: 'Enquiry sent', label: 'Enquired' }
-    : w.can_friend_enquire ? { k: 'other', who: 'Undecided', label: 'Open to enquiries' } : { k: 'other', who: 'Not available', label: 'Not available' };
+  if (friend) { const kind = w.school_holiday ? 'School holidays' : BAND[w.season];
+    return w.can_book ? { k: 'available', who: kind, label: `Book now · ${money(w.price)}`, cta: 'book' }
+      : w.my_friend_enquiry ? { k: 'pending', who: kind, label: 'Enquired' }
+      : w.can_friend_enquire ? { k: 'other', who: kind, label: 'Enquire', cta: 'enquire' } : { k: 'other', who: kind, label: 'Unavailable', off: true }; }
   if (w.status === 'syndicate') return { k: 'other', who: 'Syndicate', label: 'Syndicate week' };
   if (w.status === 'booked') return { k: 'booked', who: w.is_mine ? 'Your week' : fam, label: w.is_mine ? 'Let to guests' : 'Booked' };
   if (w.status === 'pending') return { k: 'pending', who: w.is_mine ? 'Your week' : fam, label: 'Reserved' };
@@ -314,9 +317,9 @@ async function viewCalendar(main) {
   S.weeks = await api('/weeks?year=' + S.year);
   const role = S.me.user.role;
   const filters = isFam() ? [['all', 'All weeks'], ['mine', 'Our weeks'], ['open', 'Available for enquiry']]
-    : [['all', 'All weeks'], ['book', role === 'friend' ? 'Available to book' : 'Available to buy'], role === 'friend' && ['enquire', 'Open to enquiries'], role === 'friend' && ['mine', 'My bookings']].filter(Boolean);
+    : role === 'friend' ? [] : [['all', 'All weeks'], ['book', 'Available to buy']].filter(Boolean);
   if (!filters.filter(Boolean).some(([k]) => k === S.filter)) S.filter = 'all';
-  const intro = isSiteRole() ? 'Every household’s weeks. Open a week to see it, or to change its settings on the household’s behalf.' : role === 'friend' ? 'Weeks the households have made available to trusted friends: open one to book it. Weeks marked <b>Open to enquiries</b> haven’t been decided yet, so you can ask the household whether you could book them.'
+  const intro = isSiteRole() ? 'Every household’s weeks. Open a week to see it, or to change its settings on the household’s behalf.' : role === 'friend' ? 'Weeks marked <b>Book now</b> can be booked straight away. Weeks marked <b>Enquire</b> haven’t been decided yet: ask, and the household will let you know.'
     : (S.me.settings.member_requests ? 'Open any other household’s week to enquire about it, or to book it if it’s been released. ' : 'Open a week to see it, or to book it if it’s been released. ') + 'Open one of your own weeks to set your plans for it.';
   const byMonth = {};
   for (const w of S.weeks) (byMonth[w.start_date.slice(0, 7)] ||= []).push(w);
@@ -325,13 +328,13 @@ async function viewCalendar(main) {
   main.innerHTML = `
     <div class="page-head row between" style="align-items:flex-end"><div class="grow" style="min-width:280px"><h1>${role === 'friend' ? 'Available weeks' : 'Calendar'} ${S.year}</h1><p>${intro}${isFam() && S.weeks.length && S.weeks[0].year_open ? ` The ${S.year} allocation is still a draft until the site admin signs it off; ask the site admin about any changes.` : ''}</p></div>
       <div class="seg" aria-label="Year">${years.map(y => `<button data-year="${y}" class="${y === S.year ? 'on' : ''}">${y}</button>`).join('')}</div></div>
-    <div class="cal-toolbar"><div class="seg" aria-label="Show">${filters.map(([k, l]) => `<button data-filter="${k}" class="${S.filter === k ? 'on' : ''}">${l}</button>`).join('')}</div>
-      <span class="muted small">${visible} week${visible === 1 ? '' : 's'}</span></div>
+    ${filters.length ? `<div class="cal-toolbar"><div class="seg" aria-label="Show">${filters.map(([k, l]) => `<button data-filter="${k}" class="${S.filter === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+      <span class="muted small">${visible} week${visible === 1 ? '' : 's'}</span></div>` : ''}
     <div class="months">${Object.entries(byMonth).map(([m, ws]) => `<section class="month"><h3>${dfmt(m + '-01', { month: 'long' })}<span class="tiny muted">${m.slice(0, 4) != S.year ? m.slice(0, 4) : ''}</span></h3>
       ${ws.map(w => { const x = weekState(w); return `<button class="week st-${x.k} ${filterMatch(w) ? '' : 'dim'} ${w.start_date < todayStr() ? 'past' : ''}" data-week="${w.id}" aria-label="Week ${w.week_no}, ${range(w)}: ${x.who}, ${x.label}">
         <span class="no">Week<b>${w.week_no}</b></span>
-        <span style="min-width:0"><div class="who">${x.who}</div><div class="when">${range(w)} · ${band(w)}${w.enquiries && !w.my_enquiry ? ` · ${w.enquiries} enquir${w.enquiries > 1 ? 'ies' : 'y'}` : ''}</div>${w.comment ? `<div class="cmt">${esc(w.comment)}</div>` : ''}</span>
-        <span class="tag ${x.k}">${x.label}</span></button>`; }).join('')}</section>`).join('')}</div>`;
+        <span style="min-width:0"><div class="who">${x.who}</div><div class="when">${range(w)}${role === 'friend' ? '' : ` · ${band(w)}`}${w.enquiries && !w.my_enquiry ? ` · ${w.enquiries} enquir${w.enquiries > 1 ? 'ies' : 'y'}` : ''}</div>${w.comment ? `<div class="cmt">${esc(w.comment)}</div>` : ''}</span>
+        ${x.cta ? `<span class="btn sm ${x.cta === 'book' ? 'green' : ''} cal-cta">${x.label}</span>` : `<span class="tag ${x.off ? 'off' : x.k}">${x.label}</span>`}</button>`; }).join('')}</section>`).join('')}</div>`;
   main.querySelectorAll('[data-year]').forEach(b => b.onclick = () => { S.year = Number(b.dataset.year); viewCalendar(main); });
   main.querySelectorAll('[data-filter]').forEach(b => b.onclick = () => { S.filter = b.dataset.filter; viewCalendar(main); });
   main.querySelectorAll('[data-week]').forEach(b => b.onclick = () => openWeek(S.weeks.find(w => w.id == b.dataset.week)));
@@ -434,7 +437,7 @@ function planFields(w, s, compact) {
     ${compact ? '' : `<div class="tiny muted plan-hint" style="margin-top:4px"></div>`}
     <div class="sale-opts" style="margin-top:10px"><div class="${compact ? 'row' : 'grid-2'}" style="gap:10px">
       <div class="field" style="margin:0"><label>Friend price <span class="muted">(members pay ${s.member_rate_pct}%)</span></label><input name="price_override" type="number" min="0" step="1" placeholder="${money(s['rate_' + band])} default" value="${w.price_override ?? ''}"></div>
-      <div class="field" style="margin:0"><label>Who can book</label><select name="sale_to">${Object.entries(SALE_TO).map(([k, l]) => `<option value="${k}" ${w.sale_to === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div></div></div>`;
+      <div class="field" style="margin:0"><label>Who can book</label><select name="sale_to">${Object.entries(SALE_TO()).map(([k, l]) => `<option value="${k}" ${w.sale_to === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div></div></div>`;
 }
 function bindPlanFields(root) {
   const sel = $('[name=plan]', root);
@@ -914,7 +917,7 @@ async function admSettings(el) {
     <form id="sf" class="grid-2" style="align-items:start">
     <div class="card"><h3>Trusted-friend prices (per week)</h3><p class="small muted" style="margin-top:0">Used for any released week unless the family sets its own price. Members pay a percentage of these.</p>
       <div class="grid-2" style="gap:12px">${f('rate_school', '<i class="season school"></i> School holidays', 'number', 'min=0')}${f('rate_summer', '<i class="season summer"></i> Summer', 'number', 'min=0')}${f('rate_shoulder', '<i class="season shoulder"></i> Shoulder', 'number', 'min=0')}${f('rate_winter', '<i class="season winter"></i> Winter', 'number', 'min=0')}</div>
-      <div class="grid-2" style="gap:12px">${f('member_rate_pct', 'Members pay (% of friend price)', 'number', 'min=0 max=100')}${f('members_first_days', 'Members-only days after release', 'number', 'min=0')}${f('enquiry_hours', 'Hours of first refusal for enquirers', 'number', 'min=0')}</div>
+      <div class="grid-2" style="gap:12px">${f('member_rate_pct', 'Members pay (% of friend price)', 'number', 'min=0 max=100')}${f('members_first_days', 'Days for “Members first” releases', 'number', 'min=0')}${f('enquiry_hours', 'Hours of first refusal for enquirers', 'number', 'min=0')}</div>
       <h3 style="margin-top:8px">Releases &amp; reminders</h3>
       ${f('reminder_weeks', 'Remind about undecided weeks at (weeks before, comma-separated)')}
       <h3 style="margin-top:8px">Seasons</h3><p class="small muted" style="margin-top:0">Months (1–12) used when new years are created. You can override individual weeks under Weeks.</p>

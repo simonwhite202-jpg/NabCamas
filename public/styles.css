@@ -163,6 +163,7 @@ input[type=file] { padding: 9px 12px; }
 .badge.red, .tag.alert { background: var(--st-alert-soft); color: var(--st-alert-ink); }
 .badge.accent, .tag.yours { background: var(--st-yours-soft); color: var(--st-yours-ink); }
 .tag.outline { background: transparent; border-color: var(--line); color: var(--ink-2); }
+.tag.off { background: transparent; color: var(--ink-2); padding-right: 4px; }   /* a trusted friend's "Unavailable": plain text, not a button */
 .season { display: inline-block; width: 8px; height: 8px; border-radius: 50%; vertical-align: 1px; }
 .season.summer { background: var(--summer); } .season.school { background: var(--school); } .season.shoulder { background: var(--shoulder); } .season.winter { background: var(--winter); }
 
@@ -282,6 +283,8 @@ tr.past-row { opacity: .5; }
 .week.st-booked { border-left-color: var(--st-booked); }
 .week.st-other, .week.st-syndicate { border-left-color: var(--st-other); }
 .week.st-other .tag { background: transparent; border-color: var(--line); color: var(--ink-2); }
+.week .tag.off { border-color: transparent; }
+.week .cal-cta { padding: 0 12px; white-space: nowrap; }
 .week.dim { opacity: .35; }
 .week.past { opacity: .5; }
 
