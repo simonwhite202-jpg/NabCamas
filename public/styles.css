@@ -91,7 +91,7 @@ code { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: .92em;
 /* who is logged in: always at the top of the sidebar, and under the header on tablets and phones */
 .whoami { margin: var(--sp-6) 0 0; padding: var(--sp-3) var(--sp-3) 14px; border: 1px solid rgba(229,235,226,.16); border-radius: var(--r-lg); background: rgba(255,255,255,.04); }
 .whoami-label { display: block; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: #9FB3A6; margin-bottom: var(--sp-2); }
-.whoami-row { display: flex; align-items: flex-start; gap: var(--sp-3); }
+.whoami-row { display: flex; align-items: center; gap: var(--sp-3); }
 .whoami .who { min-width: 0; line-height: 1.35; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .whoami .who b { color: #fff; font-weight: 500; font-size: 15px; max-width: 100%; overflow-wrap: anywhere; }
 .whoami .role-pill { display: inline-block; padding: 1px 9px; border-radius: 999px; background: var(--sage); color: var(--woodland); font-size: 12px; font-weight: 600; letter-spacing: .01em; }

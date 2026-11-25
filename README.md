@@ -70,7 +70,7 @@ Icons are thin-stroke **Lucide** icons, bundled in `public/icons.js` (ISC licenc
 
 **View as (site admin, for testing).** The site admin can pick any household login from the **View as** list under "Logged in as" to see the portal exactly as that person does: their menu, Overview, permissions and buttons. A banner shows who you're viewing as, with **Back to site admin**. Anything done while viewing as someone really happens, as them, and the Activity log records it as "site admin acting as …". It can be switched off under **Settings**.
 
-Every page shows who is **logged in**: name, role (site admin, family admin, family member or trusted friend) and household. This appears at the top of the sidebar, or in a strip under the header on tablets and phones. The Overview greets families by household ("Good evening, Mackay family"), and trusted friends and the site admin by name.
+Every page shows who is **logged in** (their name). This appears at the top of the sidebar, or in a strip under the header on tablets and phones. The Overview greets families by household ("Good evening, Mackay family"), and trusted friends and the site admin by name.
 
 Everyone lands on the **Overview** (Home), headed *Welcome to Camas*, with who's in residence this week, who's arriving next and your next stay. At the top, **Needs your attention** lists what needs doing; below it are panels with useful information and quick links. The calendar is its own tab.
 

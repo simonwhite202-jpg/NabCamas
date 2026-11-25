@@ -104,16 +104,15 @@ function renderShell(tab) {
   if (!$('main')) $('#app').innerHTML = '<div class="shell"><aside class="sidebar" aria-label="Main menu"></aside><div class="menu-scrim"></div><header class="mobilebar"></header><main id="main"></main></div>';
   const initials = esc((u.name.match(/\b[A-Za-z]/g) || ['?']).join('').slice(0, 2).toUpperCase());
   const unread = S.me.unread ? `<span class="count">${S.me.unread}</span>` : '';
-  const { role, house } = whoAmI();
   $('.sidebar').innerHTML = `<a class="wordmark" href="#/home">${site}</a><span class="place">${esc(S.me.settings.place_line || '')}</span>
-    <div class="whoami" role="status" aria-label="Logged in as ${esc(u.name)}, ${role}${house ? ', ' + house : ''}"><span class="whoami-label">Logged in as</span>
-      <div class="whoami-row"><span class="avatar">${initials}</span><span class="who"><b>${esc(u.name)}</b><span class="role-pill">${role}</span>${house ? `<span class="house">${house}</span>` : ''}</span></div></div>
+    <div class="whoami" role="status" aria-label="Logged in as ${esc(u.name)}"><span class="whoami-label">Logged in as</span>
+      <div class="whoami-row"><span class="avatar">${initials}</span><span class="who"><b>${esc(u.name)}</b></span></div></div>
     ${viewAsPicker(u)}
     <nav class="side-nav">${tabs.map(([k, l, n]) => { const on = navOn(k, tab); return `<a href="#/${k}" class="${on ? 'on' : ''}" ${on ? 'aria-current="page"' : ''}>${icon(NAV_ICON[k] || 'chevron-right')}<span>${l}</span>${n ? `<span class="count">${n}</span>` : ''}</a>`; }).join('')}</nav>
     <div class="side-foot">
       <div class="side-actions"><button class="side-btn" data-notes>${icon('bell')}Notices${unread}</button><button class="side-btn" data-logout>${icon('log-out')}Sign out</button></div></div>`;
   $('.mobilebar').innerHTML = `<div class="mb-row"><button class="iconbtn" data-menu aria-label="Open menu">${icon('menu')}</button><a class="wordmark" href="#/home">${site}</a><button class="iconbtn" data-notes aria-label="Notifications">${icon('bell')}${unread}</button></div>
-    <div class="mb-who">Logged in as <b>${esc(u.name)}</b> · <span>${role}</span>${house ? ` · <span>${house}</span>` : ''}</div>`;
+    <div class="mb-who">Logged in as <b>${esc(u.name)}</b></div>`;
   viewAsBar();
   document.querySelectorAll('[data-notes]').forEach(b => b.onclick = guard(showNotifications));
   $('[data-logout]').onclick = guard(async () => { await api('/logout', { body: {} }); S.me = null; document.body.classList.remove('menu-open'); $('#app').innerHTML = ''; renderLogin(); });
