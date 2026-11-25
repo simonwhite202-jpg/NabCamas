@@ -212,7 +212,7 @@ async function viewHome(main) {
       ${panelCard('calendar-clock', 'Upcoming stays', h.upcoming.length ? h.upcoming.map(x => weekRow(x, upTag(x))).join('') : quiet(friend ? 'You have no upcoming stays yet.' : 'Nothing coming up.'), friend ? '' : '<a href="#/weeks">All your household’s weeks →</a>')}
       ${panelCard('key-round', friend ? 'Weeks you can book' : 'Weeks available to book', h.available.length ? h.available.map(x => weekRow({ ...x, detail: x.family ? `From ${x.family}` : '' }, `<span class="tag available">${money(x.price)}</span>`)).join('')
         : quiet('Nothing is available right now. You’ll get a notice when a week is released.'), `<a href="#/calendar">${friend ? 'All available weeks' : 'Open the calendar'} →</a>`)}
-      ${friend ? '' : panelCard('messages-square', 'Your enquiries', h.enquiries.length ? h.enquiries.map(x => weekRow({ ...x, detail: `${x.holder} · ${PLAN[x.plan] ? PLAN[x.plan].label : ''}` }, `<span class="tag pending">${ordinal(x.position)} of ${x.queue}</span>`)).join('')
+      ${friend || !S.me.settings.member_requests ? '' : panelCard('messages-square', 'Your enquiries', h.enquiries.length ? h.enquiries.map(x => weekRow({ ...x, detail: `${x.holder} · ${PLAN[x.plan] ? PLAN[x.plan].label : ''}` }, `<span class="tag pending">${ordinal(x.position)} of ${x.queue}</span>`)).join('')
         : quiet('Open any other household’s week on the calendar to enquire about it. If they release it, you get first refusal.'), '<a href="#/enquiries">All enquiries →</a>')}
       ${f ? panelCard('coins', `${esc(f.name)} at a glance · ${f.year}`, `<dl class="kv" style="grid-template-columns:1fr auto">
           ${c ? `<dt>Weeks released</dt><dd class="num">${c.released}</dd>
@@ -245,7 +245,7 @@ function adminHome(main, h, greet) {
 
 // ------------------------------------------------------------ calendar
 const PLAN = {
-  undecided: { label: 'Undecided', hint: 'Not decided yet. Other families and trusted friends can enquire about it, and you’ll get reminders as it gets closer.' },
+  undecided: { label: 'Undecided', hint: 'Not decided yet. You’ll get reminders as it gets closer, and trusted friends can ask to book it.' },
   using: { label: 'Using it', hint: 'Definitely being used. No enquiries.' },
   released: { label: 'Released', hint: 'You won’t use it. Members can book it, then trusted friends. If it lets, the payment is credited to your household’s account, less the letting cost for the maintenance fund.' },
 };
@@ -294,13 +294,13 @@ async function viewCalendar(main) {
   if (!years.length) { main.innerHTML = '<div class="card empty">No weeks have been set up yet. The site admin can create a year under Site admin → Weeks.</div>'; return; }
   S.weeks = await api('/weeks?year=' + S.year);
   const role = S.me.user.role;
-  const filters = [['all', 'All weeks'], ['book', role === 'friend' ? 'Available to book' : 'Available to buy'], isFam() && ['swap', 'Open to enquiries'], isFam() && ['mine', 'Your household’s weeks'], role === 'friend' && ['enquire', 'Open to enquiries'], role === 'friend' && ['mine', 'My bookings']].filter(Boolean);
+  const filters = [['all', 'All weeks'], ['book', role === 'friend' ? 'Available to book' : 'Available to buy'], isFam() && S.me.settings.member_requests && ['swap', 'Open to enquiries'], isFam() && ['mine', 'Your household’s weeks'], role === 'friend' && ['enquire', 'Open to enquiries'], role === 'friend' && ['mine', 'My bookings']].filter(Boolean);
   const intro = isSiteRole() ? 'Every household’s weeks. Open a week to see it, or to change its settings on the household’s behalf.' : role === 'friend' ? 'Weeks the households have made available to trusted friends: open one to book it. Weeks marked <b>Open to enquiries</b> haven’t been decided yet, so you can ask the household whether you could book them.'
-    : 'Open any other household’s week to enquire about it, or to book it if it’s been released. Open one of your household’s weeks to set your plans for it: <b>Using it</b>, <b>Undecided</b> or <b>Released</b>. <b>Your household’s weeks</b> shows just yours.';
+    : (S.me.settings.member_requests ? 'Open any other household’s week to enquire about it, or to book it if it’s been released. ' : 'Open any household’s week to see it, or to book it if it’s been released. ') + 'Open one of your household’s weeks to set your plans for it: <b>Using it</b>, <b>Undecided</b> or <b>Released</b>. <b>Your household’s weeks</b> shows just yours.';
   const byMonth = {};
   for (const w of S.weeks) (byMonth[w.start_date.slice(0, 7)] ||= []).push(w);
   const visible = S.weeks.filter(filterMatch).length;
-  const key = role === 'friend' ? [['available', 'Available to book'], ['pending', 'Enquired or awaiting payment'], ['booked', 'Your bookings'], ['other', 'Not released yet']] : isSiteRole() ? STATUS_KEY.slice(1) : STATUS_KEY;
+  const key = role === 'friend' ? [['available', 'Available to book'], ['pending', 'Enquired or awaiting payment'], ['booked', 'Your bookings'], ['other', 'Not released yet']] : isSiteRole() ? STATUS_KEY.slice(1) : STATUS_KEY.map(([k, l]) => k === 'pending' && !S.me.settings.member_requests && role !== 'friend' ? [k, 'Reserved or awaiting payment'] : [k, l]);
   const band = w => w.school_holiday ? 'School holidays' : { summer: 'Summer', shoulder: 'Shoulder', winter: 'Winter' }[w.season];
   const st = S.me.settings, price = n => money(isFam() ? Math.round(n * st.member_rate_pct / 100) : n);
   main.innerHTML = `
@@ -362,7 +362,7 @@ async function openWeek(w) {
       <button class="btn green">Reserve week</button></form>`;
   }
 
-  if (isFam() && !w.is_mine && !past && w.family_id) html += await enquirySection(w, s);
+  if (isFam() && S.me.settings.member_requests && !w.is_mine && !past && w.family_id) html += await enquirySection(w, s);
   if (w.booking?.mine && w.booking.status === 'pending') html += `<div class="section">${payBox(w.booking.reference, w.price)}</div>`;
   if (role === 'friend' && !w.can_book && !w.booking?.mine) {
     if (w.my_friend_enquiry) html += `<div class="section"><h3>You’ve enquired about this week</h3><p class="small" style="margin:0">Sent on ${asked(w.my_friend_enquiry.created_at)}. The household that holds it will let you know. If they agree, it’s reserved for you at ${money(w.price)}.</p>
@@ -581,13 +581,15 @@ function enquiryLists(d, opts = {}) {
   const groups = {}, group = wk => (groups[wk.id] ||= { week: wk, items: [], friends: [] });
   d.incoming.filter(e => !opts.openOnly || e.status === 'open').forEach(e => group(e.week).items.push(e));
   (d.friends || []).filter(f => !opts.openOnly || f.status === 'open').forEach(f => group(f.week).friends.push(f));
-  const out = d.outgoing.filter(e => !opts.openOnly || e.status === 'open');
-  return `<div class="grid-2"><section class="stack"><h3 style="margin-bottom:0">About your family’s weeks</h3>${Object.values(groups).sort((a, b) => a.week.start_date.localeCompare(b.week.start_date)).map(incomingCard).join('') || '<div class="card flat empty small">No enquiries about your weeks</div>'}</section>
+  const out = d.outgoing.filter(e => !opts.openOnly || e.status === 'open'), mine = S.me.settings.member_requests;
+  const about = Object.values(groups).sort((a, b) => a.week.start_date.localeCompare(b.week.start_date)).map(incomingCard).join('') || `<div class="card flat empty small">${mine ? 'No enquiries about your weeks' : 'No booking enquiries from trusted friends at the moment'}</div>`;
+  if (!mine) return `<section class="stack" style="max-width:760px">${about}</section>`;
+  return `<div class="grid-2"><section class="stack"><h3 style="margin-bottom:0">About your family’s weeks</h3>${about}</section>
     <section class="stack"><h3 style="margin-bottom:0">Your family’s enquiries</h3>${out.map(outgoingCard).join('') || '<div class="card flat empty small">None yet. Click another family’s week on the calendar to enquire.</div>'}</section></div>`;
 }
 async function viewEnquiries(main) {
   const d = await api('/enquiries'), s = S.me.settings;
-  main.innerHTML = `<h1>Enquiries</h1><p class="muted">Enquire about any other family’s week that isn’t marked <b>Using it</b> by clicking it on the calendar. If they release it, those who enquired get first refusal for ${s.enquiry_hours || 48} hours at the member price, first come first served; then it opens to all members, then trusted friends. Trusted friends can also ask to book your weeks that are still <b>Undecided</b>: you can let the week to them at the friend price, or decline. For changes to next year’s allocation, ask the site admin.</p>
+  main.innerHTML = `<h1>Enquiries</h1>${s.member_requests ? `<p class="muted">Enquire about any other family’s week that isn’t marked <b>Using it</b> by clicking it on the calendar. If they release it, those who enquired get first refusal for ${s.enquiry_hours || 48} hours at the member price, first come first served; then it opens to all members, then trusted friends. Trusted friends can also ask to book your weeks that are still <b>Undecided</b>: you can let the week to them at the friend price, or decline. For changes to next year’s allocation, ask the site admin.</p>` : `<p class="muted">Trusted friends can ask to book your household’s weeks that are still <b>Undecided</b>. You can let the week to them at the friend price, or decline. (Members asking for other families’ weeks is switched off for now.)</p>`}
     ${enquiryLists(d)}
     ${d.swaps.length ? `<h2 style="margin-top:32px">Recent swaps</h2><div class="table-wrap"><table><tbody>${d.swaps.map(x => `<tr><td class="small">${asked(x.at)}</td><td>${esc(x.from_family)} gave ${swapWeek(x.offered)}</td><td>${esc(x.to_family)} gave ${swapWeek(x.target)}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
   bindEnquiryActions(main, () => viewEnquiries(main));

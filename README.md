@@ -155,6 +155,7 @@ Opening a page you don't have access to takes you back to Home.
 - **Moving from the old pot:** on the first start of this version, paid lets that were waiting for a pot share-out are credited to the families that released them. Years already shared out are left as they were.
 
 **Enquiries (signed-off years)**
+- **Switched off for now:** members can't currently request (enquire about) another family's week, so there's no queue or first refusal; a released week goes straight to members, then trusted friends. Trusted friends' booking enquiries still work. To bring member requests back, set `MEMBER_REQUESTS_OPEN` to `true` in `server.js`. When it was switched off, any open requests were closed and the families told.
 - Once a year's allocation is signed off, weeks change hands only by being **released and bought**: there are no swaps between families.
 - Any family member can **enquire** about another family's week that isn't *Using it*. If the family releases it, those who enquired get **first refusal** for 48 hours at the member price, first come first served; then all members for 7 days; then trusted friends.
 - The holding family can also mark it *Using it* (the enquiries close) or reply **not sure yet** (enquirers keep their place).

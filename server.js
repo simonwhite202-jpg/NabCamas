@@ -310,7 +310,7 @@ function weekView(w, u, s) {
     v.my_enquiry = i >= 0 ? { id: queue[i].id, position: i + 1, claim: queue[i].claim, created_at: queue[i].created_at } : null;
   }
   // enquire = join the queue for another family's week that isn't marked Using it, let or released
-  v.can_enquire = isFamily(u) && !mine && w.family_id != null && !w.in_use && w.status === 'own_use' && w.start_date >= today() && !v.my_enquiry;
+  v.can_enquire = MEMBER_REQUESTS_OPEN && isFamily(u) && !mine && w.family_id != null && !w.in_use && w.status === 'own_use' && w.start_date >= today() && !v.my_enquiry;
   v.swappable = swappable(w);
   v.can_manage = canManageFamily(u, w.family_id) && w.family_id != null;
   v.is_mine = mine;
@@ -541,7 +541,7 @@ route('GET', '/api/me', ({ user }) => {
   need(user, true); resolveFirstRefusal(); const s = settings();
   const unread = q1('SELECT COUNT(*) n FROM notifications WHERE user_id=? AND read=0', user.id).n;
   const years = q('SELECT DISTINCT year FROM weeks ORDER BY year').map(r => r.year);
-  const pub = { site_name: s.site_name, place_line: s.place_line, hero: s.hero_version || null, currency: s.currency, rate_summer: +s.rate_summer, rate_shoulder: +s.rate_shoulder, rate_winter: +s.rate_winter, rate_school: +s.rate_school, hold_days: +s.hold_days,
+  const pub = { member_requests: MEMBER_REQUESTS_OPEN, site_name: s.site_name, place_line: s.place_line, hero: s.hero_version || null, currency: s.currency, rate_summer: +s.rate_summer, rate_shoulder: +s.rate_shoulder, rate_winter: +s.rate_winter, rate_school: +s.rate_school, hold_days: +s.hold_days,
     member_rate_pct: +s.member_rate_pct, members_first_days: +s.members_first_days, enquiry_hours: +s.enquiry_hours, early_release_weeks: +s.early_release_weeks, late_release_weight: +s.late_release_weight, letting_cost: +s.letting_cost, credits_per_share: +s.credits_per_share,
     bank: { name: s.bank_name, account_name: s.bank_account_name, sort_code: s.bank_sort_code, account_no: s.bank_account_no, iban: s.bank_iban }, allow_member_account_charge: s.allow_member_account_charge === '1' };
   const fam = user.family_id ? q1('SELECT * FROM families WHERE id=?', user.family_id) : null;
@@ -833,7 +833,11 @@ function doSwap(sw, user) {
     `Swap agreed! ${famName(sw.from_family_id)} now has ${weekLabel(b)} and ${famName(sw.to_family_id)} has ${weekLabel(a)}.`, '#/enquiries');
   audit(user.id, 'swap.accept', { id: sw.id });
 }
+// Members asking for another family's week ("requests", with first refusal when it's released) are switched off for now.
+// The code stays; set this to true to bring it back. Trusted friends' booking enquiries are separate and stay on.
+const MEMBER_REQUESTS_OPEN = false;
 route('POST', '/api/enquiries', ({ user, body }) => {
+  if (!MEMBER_REQUESTS_OPEN) fail(400, 'Requests for other families’ weeks are switched off for now');
   need(user, isFamily(user), 'Only family members can enquire about weeks');
   resolveFirstRefusal();
   const w = q1('SELECT * FROM weeks WHERE id=?', body.week_id) || fail(404, 'Week not found');
@@ -1526,6 +1530,16 @@ if (!q1("SELECT 1 FROM settings WHERE key='income_model'")) {
 if (!q1("SELECT 1 FROM settings WHERE key='credits_equal'")) tx(() => {
   run("DELETE FROM settings WHERE key IN ('credit_school','credit_summer','credit_shoulder','credit_winter')");
   run("INSERT INTO settings (key,value) VALUES ('credits_equal','1')");
+});
+// One-off: with member requests switched off, requests still open are closed (and any first-refusal window ends now).
+if (!MEMBER_REQUESTS_OPEN && !q1("SELECT 1 FROM settings WHERE key='member_requests_off'")) tx(() => {
+  for (const e of q("SELECT * FROM enquiries WHERE status='open'")) {
+    const w = q1('SELECT * FROM weeks WHERE id=?', e.week_id);
+    run("UPDATE enquiries SET status='closed', close_reason='switched_off', closed_at=datetime('now') WHERE id=?", e.id);
+    run("UPDATE weeks SET enquiry_until=MIN(enquiry_until, datetime('now')) WHERE id=? AND enquiry_until IS NOT NULL", w.id);
+    notify([e.user_id], `Requests for other families’ weeks are switched off for now, so your request for ${weekLabel(w)} has been closed. If it’s released, you can still book it from the calendar.`, '#/calendar');
+  }
+  run("INSERT INTO settings (key,value) VALUES ('member_requests_off','1')");
 });
 // One-off: in-year swaps are retired. Willing to swap becomes Undecided; open swap offers lapse (the enquiries stay in the queue).
 if (!q1("SELECT 1 FROM settings WHERE key='in_year_swaps'")) tx(() => {
