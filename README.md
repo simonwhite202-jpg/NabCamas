@@ -205,8 +205,11 @@ Opening a page you don't have access to takes you back to Home.
 - A year without its own figures uses the most recent figure set for this year or later.
 
 **Payments page (site admin)**
-- **Service charges by year:** for each household, the year's charge, payments, other credits for that year (let income, purchases, adjustments), what's **outstanding**, a status (*Unpaid*, *Part paid*, *Paid*, *In credit*) and the **balance now** across every year. Pick the year at the top.
-- **Recording payments:** **Paid in full** records the outstanding amount as received today. **Record…** takes a full or part amount, the date it arrived and a note (or an adjustment). Statements show the date the money arrived, and the family admins get a thank-you notice.
+- **Service charges by year:** pick the year at the top. The card shows that year's budget, the budget divided by the weeks, the **charge per week** (type one in, or **Round to £5 / £10**), the total raised, and whether the year's charges are **issued**.
+  - **Before issuing,** each household's planned charge from the budget shows as *Not issued*.
+  - **Issue {year} service charges** puts each charge on the households' accounts and tells their admins. **Re-issue** replaces the charges and leaves payments alone.
+- **The table:** each household's charge, what it has paid, what's **outstanding** (after any let income or purchases for that year), and a status: *Not issued*, *Unpaid*, *Part paid*, *Paid* or *In credit*.
+- **Recording payments:** **Paid in full** records the outstanding amount as received today. **Record payment** takes a full or part amount, the date it arrived and a note, or an adjustment. It works before the charges are issued too. Statements show the date the money arrived, and the family admins get a thank-you notice.
 - **Bank balance:** add the syndicate account's balance by date (with a note) as you read it from the bank. The latest is shown at the top, with a history and the change between readings.
 - **Payments to confirm** and **Top-ups expected** work as before.
 

@@ -738,8 +738,10 @@ async function viewAdmin(main) {
 async function admOverview(el, year) {
   const [o, c, bank] = await Promise.all([api('/admin/overview'), api('/admin/charges' + (year || S.chargeYear ? '?year=' + (year || S.chargeYear) : '')), api('/admin/bank-balances')]);
   S.chargeYear = c.year;
+  const b = await api('/admin/budget?year=' + c.year), cur = S.me.settings.currency, plan = Object.fromEntries(b.split.map(x => [x.id, x]));
+  const issued = r => Math.abs(r.charge) > 0.005;
   const today = todayStr(), latest = bank[0], owedAll = o.balances.reduce((a, b) => a + Math.max(0, b.balance), 0);
-  const status = r => !r.charge && !r.paid ? '<span class="badge">No charge yet</span>' : r.outstanding < -0.005 ? '<span class="badge green">In credit</span>' : r.outstanding <= 0.005 ? '<span class="badge green">Paid</span>'
+  const status = r => !issued(r) ? (r.paid > 0.005 ? '<span class="badge amber">Paid before issue</span>' : '<span class="badge">Not issued</span>') : r.outstanding < -0.005 ? '<span class="badge green">In credit</span>' : r.outstanding <= 0.005 ? '<span class="badge green">Paid</span>'
     : r.paid > 0.005 ? '<span class="badge amber">Part paid</span>' : '<span class="badge red">Unpaid</span>';
   const signed = n => Math.abs(n) < 0.005 ? '<span class="muted">—</span>' : (n < 0 ? '−' : '') + money(Math.abs(n), 2);
   el.innerHTML = `<div class="grid-2" style="align-items:start;margin-bottom:28px">
@@ -760,15 +762,32 @@ async function admOverview(el, year) {
       <div class="table-wrap"><table><thead><tr><th>Ref</th><th>Household</th><th>From</th><th class="r">Amount</th><th></th></tr></thead><tbody>${o.topups.map(t => `<tr><td class="small"><code>${esc(t.reference)}</code></td><td>${esc(t.family)}</td><td class="small">${esc(t.person)} · ${asked(t.created_at)}</td><td class="r num">${money(t.amount, 2)}</td>
       <td class="r"><button class="btn sm green" data-tuconf="${t.id}" data-amt="${t.amount}">Arrived</button> <button class="btn sm danger" data-tucan="${t.id}">Cancel</button></td></tr>`).join('')}</tbody></table></div></section>` : ''}
     <section class="stack"><div class="row between"><h2 style="margin:0">Service charges ${c.year}</h2><div class="seg">${c.years.map(y => `<button data-cy="${y}" class="${y === c.year ? 'on' : ''}">${y}</button>`).join('')}</div></div>
-      <p class="muted small" style="margin:0">${c.label ? `Budget year ${esc(c.label)}` : `Budget year ${c.year}`}${c.rate ? ` · ${money(c.rate)} per share` : ''}. Record full or part payments as they arrive. <b>Outstanding</b> is the year’s charge, less payments, plus or minus other credits for that year (let income, purchases, adjustments). <b>Balance now</b> covers every year; in total, households owe ${money(owedAll, 2)}.</p>
-      <div class="table-wrap"><table><thead><tr><th>Household</th><th class="r">Shares</th><th class="r">Charge</th><th class="r">Paid</th><th class="r">Other credits</th><th class="r">Outstanding</th><th>Status</th><th class="r">Balance now</th><th></th></tr></thead><tbody>
-      ${c.rows.map(r => `<tr><td><a href="#/admin/account-${r.id}">${esc(r.name)}</a>${r.last_payment ? `<div class="tiny muted">Last paid ${money(r.last_payment.a, 2)} on ${dfmt(r.last_payment.d)}</div>` : ''}</td><td class="r num">${r.shares}</td><td class="r num">${signed(r.charge)}</td><td class="r num">${signed(r.paid)}</td><td class="r num">${signed(r.other)}</td>
-        <td class="r num"><b>${r.outstanding > 0.005 ? money(r.outstanding, 2) : r.outstanding < -0.005 ? money(-r.outstanding, 2) + ' credit' : money(0, 2)}</b></td><td>${status(r)}</td>
-        <td class="r num small" style="white-space:nowrap">${r.balance > 0.005 ? money(r.balance, 2) + ' owed' : r.balance < -0.005 ? money(-r.balance, 2) + ' credit' : 'Settled'}</td>
-        <td class="r" style="white-space:nowrap">${r.outstanding > 0.005 ? `<button class="btn sm green" data-full="${r.id}">Paid in full</button> ` : ''}<button class="btn sm" data-pay="${r.id}">Record…</button></td></tr>`).join('')}</tbody>
-      <tfoot><tr><td>Total</td><td class="r">${c.rows.reduce((a, r) => a + r.shares, 0)}</td><td class="r">${signed(c.totals.charge)}</td><td class="r">${signed(c.totals.paid)}</td><td class="r">${signed(c.totals.other)}</td><td class="r">${money(Math.max(0, c.totals.outstanding), 2)}</td><td></td><td></td><td></td></tr></tfoot></table></div></section>`;
+      <div class="card"><div class="row" style="gap:28px;flex-wrap:wrap;align-items:flex-end">
+        <div><div class="muted small">Budget ${esc(b.label || String(c.year))}</div><div class="num" style="font-size:20px">${money(b.total, 2)}</div></div>
+        <div><div class="muted small">÷ ${b.units} weeks</div><div class="num" style="font-size:20px">${money(b.rate_calc, 2)}<span class="small muted"> / week</span></div></div>
+        <div class="field" style="margin:0"><label>Charge per week</label><div class="row" style="flex-wrap:nowrap;gap:6px"><input id="rate" type="number" step="0.01" min="0" value="${b.rate_per_week ?? ''}" placeholder="${b.rate_calc}" style="max-width:120px">
+          <button class="btn sm" data-round="5">Round to ${cur}5</button><button class="btn sm" data-round="10">${cur}10</button></div></div>
+        <div><div class="muted small">Total raised</div><div class="num" style="font-size:20px">${money(b.raised, 2)}</div>${Math.abs(b.difference) > 0.01 ? `<div class="tiny" style="color:${b.difference < 0 ? 'var(--amber)' : 'var(--green)'}">${b.difference < 0 ? 'Shortfall' : 'Surplus'} ${money(Math.abs(b.difference), 2)}</div>` : ''}</div></div>
+        <div class="row between" style="margin-top:16px;padding-top:14px;border-top:1px solid var(--line);gap:12px;flex-wrap:wrap">
+          <span class="small">${b.generated ? `<span class="badge green">Issued</span> Each household’s ${c.year} charge is on its account. Re-issuing replaces the charges with the figures below; payments are untouched.` : `<span class="badge amber">Not issued yet</span> Issuing adds each household’s charge below to its account and tells its admins.`}</span>
+          <button class="btn ${b.generated ? '' : 'primary'}" id="gen" ${b.total || b.rate_per_week ? '' : 'disabled'}>${b.generated ? 'Re-issue' : 'Issue'} ${c.year} service charges</button></div></div>
+      <div class="table-wrap"><table><thead><tr><th>Household</th><th class="r">Charge</th><th class="r">Paid</th><th class="r">Outstanding</th><th>Status</th><th></th></tr></thead><tbody>
+      ${c.rows.map(r => { const pl = plan[r.id], on = issued(r);
+        return `<tr><td><a href="#/admin/account-${r.id}">${esc(r.name)}</a><div class="tiny muted">${r.shares} share${r.shares === 1 ? '' : 's'} × ${money(b.rate, 2)}${r.last_payment ? ` · last paid ${money(r.last_payment.a, 2)} on ${dfmt(r.last_payment.d)}` : ''}</div></td>
+        <td class="r num">${on ? money(r.charge, 2) + (pl && Math.abs(pl.charge - r.charge) > 0.01 ? `<div class="tiny" style="color:var(--amber)">budget now ${money(pl.charge, 2)}</div>` : '') : `<span class="muted">${money(pl ? pl.charge : 0, 2)}</span><div class="tiny muted">not issued</div>`}</td>
+        <td class="r num">${signed(r.paid)}</td>
+        <td class="r num">${on ? `<b>${r.outstanding > 0.005 ? money(r.outstanding, 2) : r.outstanding < -0.005 ? money(-r.outstanding, 2) + ' credit' : money(0, 2)}</b>${Math.abs(r.other) > 0.005 ? `<div class="tiny muted">${r.other < 0 ? 'after' : 'plus'} ${money(Math.abs(r.other), 2)} ${r.other < 0 ? 'let income' : 'purchases'}</div>` : ''}` : '<span class="muted">—</span>'}</td>
+        <td>${status(r)}</td>
+        <td class="r" style="white-space:nowrap">${on && r.outstanding > 0.005 ? `<button class="btn sm green" data-full="${r.id}">Paid in full</button> ` : ''}<button class="btn sm" data-pay="${r.id}">Record payment</button></td></tr>`; }).join('')}</tbody>
+      <tfoot><tr><td>Total</td><td class="r">${b.generated ? signed(c.totals.charge) : money(b.raised, 2)}</td><td class="r">${signed(c.totals.paid)}</td><td class="r">${b.generated ? money(Math.max(0, c.totals.outstanding), 2) : '—'}</td><td></td><td></td></tr></tfoot></table></div>
+      <p class="tiny muted" style="margin:0">Outstanding is the year’s charge less payments, after any let income or purchases on the household’s account for that year. In total across all years, households owe ${money(owedAll, 2)}.</p></section>`;
   const reload = () => admOverview(el, c.year);
-  el.querySelectorAll('[data-cy]').forEach(b => b.onclick = () => admOverview(el, Number(b.dataset.cy)));
+  el.querySelectorAll('[data-cy]').forEach(x => x.onclick = () => admOverview(el, Number(x.dataset.cy)));
+  const saveRate = guard(async v => { await api('/admin/budget-year/' + c.year, { method: 'PUT', body: { rate_per_week: v } }); reload(); });
+  $('#rate', el).onchange = e => saveRate(e.target.value);
+  el.querySelectorAll('[data-round]').forEach(x => x.onclick = () => { const n = +x.dataset.round; saveRate(Math.round(b.rate_calc / n) * n); });
+  $('#gen', el).onclick = guard(async () => { if (!confirm(`${b.generated ? 'Re-issue' : 'Issue'} the ${c.year} service charges at ${money(b.rate, 2)} per week (total ${money(b.raised, 2)})?${b.generated ? '' : ' Each household’s admin is told.'}`)) return;
+    await api('/admin/budget/generate', { body: { year: c.year } }); toast(`${c.year} service charges issued`); reload(); });
   $('#bbf', el).onsubmit = guard(async e => { e.preventDefault(); await api('/admin/bank-balances', { body: formData(e.target) }); toast('Bank balance added'); reload(); });
   el.querySelectorAll('[data-bbdel]').forEach(b => b.onclick = guard(async () => { if (!confirm('Delete this bank balance?')) return; await api('/admin/bank-balances/' + b.dataset.bbdel, { method: 'DELETE' }); reload(); }));
   el.querySelectorAll('[data-conf]').forEach(b => b.onclick = guard(async () => { await api(`/admin/bookings/${b.dataset.conf}/confirm`, { body: {} }); toast('Payment confirmed'); reload(); }));
@@ -782,7 +801,7 @@ async function admOverview(el, year) {
   el.querySelectorAll('[data-pay]').forEach(b => b.onclick = () => {
     const r = c.rows.find(x => x.id == b.dataset.pay);
     const m = openModal(`<form id="lp"><h2>${esc(r.name)}: record a payment</h2>
-      <p class="small muted" style="margin-top:0">${r.outstanding > 0.005 ? `Outstanding for ${c.year}: <b>${money(r.outstanding, 2)}</b>. Enter less for a part payment.` : `Nothing is outstanding for ${c.year}.`}</p>
+      <p class="small muted" style="margin-top:0">${!issued(r) ? `The ${c.year} charges haven’t been issued yet${plan[r.id] ? ` (${esc(r.name)}’s will be ${money(plan[r.id].charge, 2)})` : ''}. A payment recorded now counts towards it.` : r.outstanding > 0.005 ? `Outstanding for ${c.year}: <b>${money(r.outstanding, 2)}</b>. Enter less for a part payment.` : `Nothing is outstanding for ${c.year}.`}</p>
       <div class="grid-2" style="gap:12px"><div class="field"><label>Type</label><select name="type"><option value="payment">Payment received</option><option value="adjustment">Adjustment (+ charge / − credit)</option></select></div>
       <div class="field"><label>Service-charge year</label><input name="year" type="number" value="${c.year}" required></div></div>
       <div class="grid-2" style="gap:12px"><div class="field"><label>Amount (£)</label><input name="amount" type="number" step="0.01" value="${r.outstanding > 0.005 ? r.outstanding : ''}" required></div>
@@ -810,15 +829,9 @@ async function admBudget(el, year) {
       </tbody><tfoot><tr><td>Estimated funding need</td><td class="r num">${money(b.total, 2)}</td><td colspan="3"></td></tr></tfoot></table></div>
       <datalist id="cats">${['Regular', 'Postpone', 'Provision', 'One-off', ...cats].filter((v, i, a) => a.indexOf(v) === i).map(c => `<option value="${esc(c)}">`).join('')}</datalist><p class="tiny muted">Changes save when you leave a field.</p></section>
     <section class="stack"><div class="card"><h3>Service charges ${esc(b.label || year)}</h3>
-      <dl class="kv" style="grid-template-columns:1fr auto"><dt>Funding need</dt><dd class="num r">${money(b.total, 2)}</dd><dt>÷ ${b.units} weeks</dt><dd class="num">${money(b.rate_calc, 2)} / week</dd></dl>
-      <div class="field" style="margin-top:12px"><label>Service charge per week</label><div class="row" style="flex-wrap:nowrap"><input id="rate" type="number" step="0.01" min="0" value="${b.rate_per_week ?? ''}" placeholder="${b.rate_calc}">
-        <button class="btn sm" data-round="5">Round to ${cur}5</button><button class="btn sm" data-round="10">${cur}10</button></div>
-        <div class="tiny muted" style="margin-top:4px">Leave blank to charge exactly ${money(b.rate_calc, 2)}.</div></div>
-      <table><tbody>${b.split.map(s => `<tr><td><i class="swatch" style="background:${s.color}"></i> ${esc(s.name)}<div class="tiny muted">${s.share_units} weeks × ${money(b.rate, 2)}</div></td><td class="r num">${money(s.charge, 2)}${s.charged != null && Math.abs(s.charged - s.charge) > 0.01 ? `<div class="tiny" style="color:var(--amber)">issued ${money(s.charged, 2)}</div>` : ''}</td></tr>`).join('')}</tbody>
-        <tfoot><tr><td>Total raised</td><td class="r num">${money(b.raised, 2)}</td></tr></tfoot></table>
-      ${Math.abs(b.difference) > 0.01 ? `<p class="small" style="margin:10px 0 0;color:${b.difference < 0 ? 'var(--amber)' : 'var(--green)'}">${b.difference < 0 ? 'Shortfall' : 'Surplus'} against budget: <b>${money(Math.abs(b.difference), 2)}</b></p>` : ''}
-      <button class="btn primary block" id="gen" style="margin-top:14px" ${b.total ? '' : 'disabled'}>${b.generated ? 'Re-issue' : 'Issue'} ${year} service charges</button>
-      <p class="tiny muted" style="margin-bottom:0">${b.generated ? 'Charges for this year have been issued. Re-issuing replaces them with the figures above. Payments, credits and letting income are untouched.' : 'This adds each family’s charge to their account and notifies their admins.'}</p></div></section></div>`;
+      <dl class="kv" style="grid-template-columns:1fr auto"><dt>Funding need</dt><dd class="num r">${money(b.total, 2)}</dd><dt>÷ ${b.units} weeks</dt><dd class="num">${money(b.rate_calc, 2)} / week</dd>
+        <dt>Charge per week</dt><dd class="num">${money(b.rate, 2)}</dd><dt>Status</dt><dd>${b.generated ? '<span class="badge green">Issued</span>' : '<span class="badge amber">Not issued</span>'}</dd></dl>
+      <a class="btn block" href="#/admin/overview" id="toPay" style="margin-top:14px">Set the charge, issue and record payments on Payments →</a></div></section></div>`;
   const reload = () => admBudget(el, year);
   el.querySelectorAll('[data-y]').forEach(x => x.onclick = () => admBudget(el, Number(x.dataset.y)));
   el.querySelectorAll('tr[data-id] input').forEach(inp => inp.onchange = guard(async () => { await api('/admin/budget/' + inp.closest('tr').dataset.id, { method: 'PUT', body: { [inp.name]: inp.value } }); reload(); }));
@@ -826,9 +839,7 @@ async function admBudget(el, year) {
   $('#addi', el).onclick = guard(async () => { const r = $('#newrow', el); const d = Object.fromEntries([...r.querySelectorAll('input')].map(i => [i.name, i.value])); await api('/admin/budget', { body: { ...d, year } }); reload(); });
   const saveYear = guard(async body => { await api('/admin/budget-year/' + year, { method: 'PUT', body }); reload(); });
   $('#blabel', el).onchange = e => saveYear({ label: e.target.value });
-  $('#rate', el).onchange = e => saveYear({ rate_per_week: e.target.value });
-  el.querySelectorAll('[data-round]').forEach(x => x.onclick = () => { const n = +x.dataset.round; saveYear({ rate_per_week: Math.round(b.rate_calc / n) * n }); });
-  $('#gen', el).onclick = guard(async () => { if (!confirm(`${b.generated ? 'Re-issue' : 'Issue'} ${year} service charges at ${money(b.rate, 2)} per week (total ${money(b.raised, 2)})?`)) return; await api('/admin/budget/generate', { body: { year } }); toast('Service charges issued'); reload(); });
+  $('#toPay', el).onclick = () => { S.chargeYear = year; };
   $('#copy', el).onclick = () => { const m = openModal(`<form id="cf"><h2>Start ${year} from ${year - 1}</h2><div class="field"><label>Inflation uplift %</label><input name="uplift_pct" type="number" step="0.1" value="3"></div><div class="row" style="justify-content:flex-end"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Copy</button></div></form>`);
     $('#cf', m).onsubmit = guard(async e => { e.preventDefault(); await api('/admin/budget/copy', { body: { from: year - 1, to: year, ...formData(e.target) } }); closeOverlay(); reload(); }); };
   $('#imp', el).onclick = () => importDialog('budget', year, reload);

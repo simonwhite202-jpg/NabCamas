@@ -1478,7 +1478,7 @@ route('POST', '/api/admin/ledger', ({ user, body }) => {
 // service charges by year: for each family, the charge, payments, other credits and what's outstanding
 route('GET', '/api/admin/charges', ({ user, query }) => {
   needAdmin(user);
-  const years = [...new Set([...q("SELECT DISTINCT year FROM ledger WHERE type='service_charge'").map(r => r.year), ...q('SELECT year FROM budget_years').map(r => r.year)])].sort();
+  const years = [...new Set([...q("SELECT DISTINCT year FROM ledger WHERE type='service_charge'").map(r => r.year), ...q('SELECT year FROM budget_years UNION SELECT DISTINCT year FROM budget_items UNION SELECT DISTINCT year FROM weeks').map(r => r.year)])].sort();
   const year = Number(query.year) || years.filter(y => q1("SELECT 1 FROM ledger WHERE type='service_charge' AND year=?", y)).pop() || years.pop() || new Date().getFullYear();
   const by = (fid, where) => round2(q1(`SELECT COALESCE(SUM(amount),0) n FROM ledger WHERE family_id=? AND year=? AND ${where}`, fid, year).n);
   const rows = q('SELECT * FROM families WHERE active=1 ORDER BY name').map(f => {
