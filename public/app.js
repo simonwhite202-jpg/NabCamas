@@ -419,37 +419,6 @@ function bindPlanFields(root) {
   const sync = () => { $('.sale-opts', root).style.display = sel.value === 'released' ? '' : 'none'; const h = $('.plan-hint', root); if (h) h.textContent = PLAN[sel.value].hint; };
   sel.addEventListener('change', sync); sync();
 }
-const CR_ST = { open: '<span class="badge amber">With the site admin</span>', approved: '<span class="badge green">Approved</span>', declined: '<span class="badge">Declined</span>', withdrawn: '<span class="badge">Withdrawn</span>', lapsed: '<span class="badge">Lapsed</span>' };
-async function changeRequestsBox(box, year, reload) {
-  const list = await api('/change-requests?year=' + year);
-  if (!list.length) { box.innerHTML = ''; return; }
-  box.innerHTML = `<h2 style="margin-top:32px">Change requests for ${year}</h2><div class="stack">${list.map(r => `<div class="card flat" style="padding:14px 16px"><div class="row between"><div class="small">Your ${swapWeek(r.give)} for ${esc(r.want.asked_of || r.want.holder)}’s ${swapWeek(r.want)}</div>${CR_ST[r.status]}</div>
-    ${r.note ? `<div class="small muted" style="margin-top:4px">“${esc(r.note)}”</div>` : ''}${r.admin_note ? `<div class="small" style="margin-top:4px">Site admin: “${esc(r.admin_note)}”</div>` : ''}
-    ${r.can_withdraw ? `<div class="row" style="margin-top:8px"><button class="btn sm danger" data-crw="${r.id}">Withdraw</button></div>` : ''}</div>`).join('')}</div>`;
-  box.querySelectorAll('[data-crw]').forEach(b => b.onclick = guard(async () => { if (!confirm('Withdraw this request?')) return; await api(`/change-requests/${b.dataset.crw}/withdraw`, { body: {} }); toast('Request withdrawn'); reload(); }));
-}
-async function adminChangeBox(box, year, reload) {
-  const open = (S.me.open_years || []).includes(year), list = await api('/change-requests?year=' + year), waiting = list.filter(r => r.status === 'open').length;
-  const reopen = !open && year > new Date().getFullYear();
-  box.innerHTML = `<div class="card" style="margin-bottom:18px"><div class="row between" style="align-items:flex-start"><div class="grow" style="min-width:260px"><h3 style="margin:0">${year} allocation · ${open ? 'draft, not yet signed off' : 'signed off'}</h3>
-      <p class="small muted" style="margin:4px 0 0;max-width:70ch">${open ? 'Families ask you directly for any changes. Make them in the table below (“Allocated to”), then sign off when the allocation is agreed. After that, families buy and sell weeks rather than swap them.' : 'Families now buy and sell these weeks rather than swap them.'}</p></div>
-      ${open ? `<button class="btn primary" id="signoff">Sign off ${year} allocation</button>` : reopen ? '<button class="btn" id="reopen">Reopen for changes</button>' : ''}</div>
-    ${list.length ? `<div class="table-wrap" style="margin-top:14px"><table><thead><tr><th>Household</th><th>Gives</th><th>Wants</th><th>Status</th><th></th></tr></thead><tbody>${list.map(r => `<tr>
-      <td><b>${esc(r.family)}</b><div class="tiny muted">${esc(r.by)} · ${asked(r.created_at)}</div>${r.note ? `<div class="tiny">“${esc(r.note)}”</div>` : ''}</td>
-      <td class="small">${swapWeek(r.give)}</td><td class="small">${swapWeek(r.want)}<div class="tiny muted">held by ${esc(r.want.holder)}</div></td>
-      <td>${CR_ST[r.status]}${r.admin_note ? `<div class="tiny muted">${esc(r.admin_note)}</div>` : ''}</td>
-      <td class="r" style="white-space:nowrap">${r.can_decide ? `<button class="btn sm green" data-cra="${r.id}">Approve</button> <button class="btn sm" data-crd="${r.id}">Decline</button>` : ''}</td></tr>`).join('')}</tbody></table></div>`
-      : ''}</div>`;
-  box.querySelectorAll('[data-cra]').forEach(b => b.onclick = guard(async () => { const r = list.find(x => x.id == b.dataset.cra);
-    if (!confirm(`Approve? ${r.family} get week ${r.want.week_no} and ${r.want.holder} get week ${r.give.week_no} in the ${year} allocation. Both weeks start afresh as Undecided.`)) return;
-    await api(`/admin/change-requests/${r.id}/decide`, { body: { approve: true } }); toast('Approved and reallocated'); reload(); }));
-  box.querySelectorAll('[data-crd]').forEach(b => b.onclick = guard(async () => { const note = prompt('Reason, if you’d like to give one (shown to the household):', ''); if (note === null) return;
-    await api(`/admin/change-requests/${b.dataset.crd}/decide`, { body: { approve: false, note } }); toast('Declined'); reload(); }));
-  const so = $('#signoff', box); if (so) so.onclick = guard(async () => {
-    if (!confirm(`Sign off the ${year} allocation?${waiting ? ` The ${waiting} request${waiting > 1 ? 's' : ''} still waiting will be declined.` : ''} Every family is told that ${year} weeks are now bought and sold rather than swapped.`)) return;
-    await api(`/admin/years/${year}/signoff`, { body: {} }); await refreshMe(); toast(`${year} allocation signed off`); reload(); });
-  const ro = $('#reopen', box); if (ro) ro.onclick = guard(async () => { if (!confirm(`Reopen the ${year} allocation for change requests?`)) return; await api(`/admin/years/${year}/signoff`, { body: { undo: true } }); await refreshMe(); toast('Reopened'); reload(); });
-}
 async function topupBox(box, credit, reload) {
   const list = await api('/topups'), pend = list.filter(t => t.status === 'pending');
   box.innerHTML = `<div class="card" style="margin-bottom:28px"><div class="row between" style="align-items:flex-start"><div class="grow" style="min-width:260px"><h3 style="margin:0">Credit for buying weeks: ${money(credit, 2)}</h3>
@@ -809,19 +778,23 @@ async function admWeeks(el, year) {
   year = year || S.year; const weeks = await api('/weeks?year=' + year); const fams = (await api('/admin/families')).filter(f => f.active);
   const years = [...new Set([...S.me.years, year])].sort();
   const counts = {}; weeks.forEach(w => counts[w.original_family_id] = (counts[w.original_family_id] || 0) + 1);
+  const draft = weeks.length && weeks[0].year_open;
   el.innerHTML = `<div class="row between" style="margin-bottom:14px"><div class="seg">${years.map(y => `<button data-y="${y}" class="${y === year ? 'on' : ''}">${y}</button>`).join('')}<button data-new>+ Year</button></div>
     <div class="row"><button class="btn" id="imp">Import allocation</button><button class="btn" id="rot">Roll forward from ${year - 1}…</button></div></div>
-    ${weeks.length ? '<div id="crAdmin"></div>' : ''}
     ${weeks.length ? `<div class="legend">${fams.map(f => `<span><i class="swatch" style="background:${f.color}"></i>${esc(f.name)}: ${counts[f.id] || 0} weeks</span>`).join('')}<span>Syndicate: ${counts[null] || counts['null'] || 0}</span></div>
-    <div class="table-wrap"><table><thead><tr><th>Week</th><th>Starts</th><th>Nights</th><th>School hols</th><th>Season</th><th>Allocated to</th><th>Currently held by</th><th>Status</th></tr></thead><tbody>
-    ${weeks.map(w => `<tr data-id="${w.id}"><td><b>${w.week_no}</b></td><td><input type="date" name="start_date" value="${w.start_date}" style="max-width:150px"><div class="tiny muted">${dfmt(w.start_date, { weekday: 'long' })}</div></td><td class="num ${nights(w) !== 7 ? '' : 'muted'}">${nights(w)}</td>
+    <div class="table-bar">${draft ? `<span><b>${year} allocation</b> <span class="badge amber">Draft</span> <span class="muted small">Families ask you for any changes. Make them below, then sign off.</span></span><button class="btn primary sm" id="signoff">Sign off ${year} allocation</button>`
+      : `<span><b>${year} allocation</b> <span class="badge green">Signed off</span></span>${year > new Date().getFullYear() ? '<button class="btn sm" id="reopen">Reopen as draft</button>' : ''}`}</div>
+    <div class="table-wrap"><table><thead><tr><th>Week</th><th>Starts</th><th>School hols</th><th>Season</th><th>Allocated to</th><th>Status</th></tr></thead><tbody>
+    ${weeks.map(w => `<tr data-id="${w.id}"><td><b>${w.week_no}</b></td><td><input type="date" name="start_date" value="${w.start_date}" style="max-width:150px"><div class="tiny muted">${dfmt(w.start_date, { weekday: 'long' })}${nights(w) !== 7 ? ` · ${nights(w)} nights` : ''}</div></td>
       <td><input type="checkbox" name="school_holiday" ${w.school_holiday ? 'checked' : ''}></td>
       <td><select name="season" style="max-width:120px">${['summer', 'shoulder', 'winter'].map(s => `<option ${s === w.season ? 'selected' : ''}>${s}</option>`).join('')}</select></td>
       <td><select name="family_id" style="max-width:180px" ${['pending', 'booked'].includes(w.status) ? 'disabled' : ''}><option value="">Syndicate (unallocated)</option>${fams.map(f => `<option value="${f.id}" ${f.id === w.original_family_id ? 'selected' : ''}>${esc(f.name)}</option>`).join('')}</select></td>
-      <td>${w.family_id !== w.original_family_id ? `<i class="swatch" style="background:${w.family_color}"></i> ${esc(w.family_name)} <span class="badge">swapped</span>` : '<span class="muted small">same</span>'}</td><td>${statusBadge(w) || '<span class="muted small">Own use</span>'}<input name="comment" value="${esc(w.comment || '')}" placeholder="Calendar note" style="margin-top:4px;font-size:12px"></td></tr>`).join('')}</tbody></table></div>
+      <td>${statusBadge(w) || '<span class="muted small">Own use</span>'}<input name="comment" value="${esc(w.comment || '')}" placeholder="Calendar note" style="margin-top:4px;font-size:12px"></td></tr>`).join('')}</tbody></table></div>
     <p class="tiny muted">Changing “Allocated to” resets that week’s holder. Weeks with a booking can’t be reallocated. Changing a start date also moves the end of the week before.</p>` : '<div class="card empty">No weeks for this year yet.</div>'}`;
   el.querySelectorAll('[data-y]').forEach(x => x.onclick = () => admWeeks(el, Number(x.dataset.y)));
-  if ($('#crAdmin', el)) adminChangeBox($('#crAdmin', el), year, () => admWeeks(el, year));
+  const so = $('#signoff', el); if (so) so.onclick = guard(async () => { if (!confirm(`Sign off the ${year} allocation? Every family is told it’s agreed, and that ${year} weeks are now bought and sold.`)) return;
+    await api(`/admin/years/${year}/signoff`, { body: {} }); await refreshMe(); toast(`${year} allocation signed off`); admWeeks(el, year); });
+  const ro = $('#reopen', el); if (ro) ro.onclick = guard(async () => { if (!confirm(`Mark the ${year} allocation as a draft again?`)) return; await api(`/admin/years/${year}/signoff`, { body: { undo: true } }); await refreshMe(); toast('Back to draft'); admWeeks(el, year); });
   $('[data-new]', el).onclick = guard(async () => { const y = Number(prompt('Create weeks for which year?', Math.max(...years) + 1)); if (!y) return; const r = await api('/admin/years', { body: { year: y } }); toast(`Created ${r.weeks} weeks for ${y}`); await refreshMe(); admWeeks(el, y); });
   el.querySelectorAll('tr[data-id] select, tr[data-id] input').forEach(s => s.onchange = guard(async () => { await api('/admin/weeks/' + s.closest('tr').dataset.id, { method: 'PUT', body: { [s.name]: s.type === 'checkbox' ? s.checked : s.value } }); toast('Saved'); admWeeks(el, year); }));
   $('#imp', el).onclick = () => importDialog('allocation', year, async () => { await refreshMe(); admWeeks(el, year); }, weeks);

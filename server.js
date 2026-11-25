@@ -146,8 +146,8 @@ db.exec(`CREATE TABLE IF NOT EXISTS friend_enquiries (
   message TEXT, guest_name TEXT, party_size INTEGER,
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','accepted','declined','closed','withdrawn')),
   close_reason TEXT, booking_id INTEGER, answered_by INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP, closed_at TEXT);`);
-// Next-year allocation: a year stays open for change requests until the site admin signs it off (this year and earlier are
-// always signed off). A family admin asks to change one of their weeks for another; the site admin alone decides.
+// Allocation sign-off (year_status). Change requests through the portal were removed; the site admin edits the allocation
+// directly on the Weeks page. The change_requests table stays so earlier records are kept.
 db.exec(`CREATE TABLE IF NOT EXISTS year_status (year INTEGER PRIMARY KEY, signed_off_at TEXT, signed_off_by INTEGER);
 CREATE TABLE IF NOT EXISTS change_requests (
   id INTEGER PRIMARY KEY, year INTEGER NOT NULL, family_id INTEGER NOT NULL REFERENCES families(id), user_id INTEGER NOT NULL REFERENCES users(id),
@@ -339,6 +339,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 // A week can be asked for (or offered) in a swap if a family holds it, it isn't let/reserved, its family hasn't marked it in use, and it's in the future.
 const swappable = w => w.family_id != null && !w.in_use && !['pending', 'booked', 'syndicate'].includes(w.status) && w.start_date >= today();
 const thisYear = () => new Date().getFullYear();
+// A year's allocation is a draft until the site admin signs it off (this year and earlier always count as signed off).
 const signedOff = year => year <= thisYear() || !!q1('SELECT 1 FROM year_status WHERE year=? AND signed_off_at IS NOT NULL', year);
 const openYears = () => q('SELECT DISTINCT year FROM weeks ORDER BY year').map(r => r.year).filter(y => !signedOff(y));
 const familyBalance = fid => round2(q1('SELECT COALESCE(SUM(amount),0) n FROM ledger WHERE family_id=?', fid).n);
@@ -660,11 +661,7 @@ route('GET', '/api/home', ({ user }) => {
     const owing = balances().filter(b => b.balance > 0.005);
     const tops = q("SELECT * FROM topups WHERE status='pending'");
     if (tops.length) syndicate.push({ tone: 'action', title: `${tops.length} top-up${tops.length > 1 ? 's' : ''} expected (${money(tops.reduce((a, t) => a + t.amount, 0))})`, detail: 'Check the bank statement for each reference, then confirm the top-up on the Payments page.', link: '#/admin/overview', cta: 'Payments' });
-    for (const y of openYears()) {
-      const n = q1("SELECT COUNT(*) n FROM change_requests WHERE year=? AND status='open'", y).n;
-      syndicate.push(n ? { tone: 'action', title: `${n} change request${n > 1 ? 's' : ''} for the ${y} allocation`, detail: 'Approve or decline them, then sign off the allocation.', link: '#/admin/weeks', cta: 'Review' }
-        : { tone: 'info', title: `The ${y} allocation is still a draft`, detail: 'Make any agreed changes on the Weeks page, then sign it off. After that, families buy and sell weeks rather than swap them.', link: '#/admin/weeks', cta: 'Weeks' });
-    }
+    for (const y of openYears()) syndicate.push({ tone: 'info', title: `The ${y} allocation is still a draft`, detail: 'Make any agreed changes on the Weeks page, then sign it off.', link: '#/admin/weeks', cta: 'Weeks' });
     if (owing.length) syndicate.push({ tone: 'info', title: `${owing.length} famil${owing.length > 1 ? 'ies owe' : 'y owes'} ${money(owing.reduce((a, b) => a + b.balance, 0))} in total`, detail: owing.map(b => `${b.name} ${money(b.balance)}`).join(' · '), link: '#/admin/overview', cta: 'Balances' });
     const noAdmin = q("SELECT name FROM families f WHERE active=1 AND NOT EXISTS (SELECT 1 FROM users u WHERE u.family_id=f.id AND u.role='family_admin' AND u.active=1)").map(r => r.name);
     if (noAdmin.length) syndicate.push({ tone: 'urgent', title: `${noAdmin.join(', ')} ${noAdmin.length > 1 ? 'have' : 'has'} no family admin`, detail: 'Nobody can manage their weeks or answer enquiries.', link: '#/admin/users', cta: 'All users' });
@@ -709,8 +706,8 @@ route('GET', '/api/home', ({ user }) => {
 route('GET', '/api/weeks', ({ user, query }) => {
   need(user, true); expireHolds(); const s = settings();
   const year = Number(query.year) || new Date().getFullYear(); resolveFirstRefusal();
-  const open = !signedOff(year);   // still open for next-year change requests
-  return q('SELECT * FROM weeks WHERE year=? ORDER BY week_no', year).map(w => ({ ...weekView(w, user, s), year_open: open }));
+  const draft = !signedOff(year);   // not yet signed off by the site admin
+  return q('SELECT * FROM weeks WHERE year=? ORDER BY week_no', year).map(w => ({ ...weekView(w, user, s), year_open: draft }));
 });
 route('PUT', '/api/weeks/:id', ({ user, params, body }) => {
   const w = q1('SELECT * FROM weeks WHERE id=?', params.id) || fail(404, 'Week not found');
@@ -1047,77 +1044,7 @@ route('POST', '/api/view-as/stop', ({ user }) => {
   return { ok: true };
 });
 
-// --- next-year allocation: change requests (decided by the site admin) and sign-off
-const weekBrief = w => w && `week ${w.week_no} (${fmtDate(w.start_date)} – ${fmtDate(w.end_date || w.start_date)})`;
-function changeView(r, user) {
-  const g = q1('SELECT * FROM weeks WHERE id=?', r.give_week_id), t = q1('SELECT * FROM weeks WHERE id=?', r.want_week_id);
-  return { id: r.id, year: r.year, status: r.status, note: r.note, admin_note: r.admin_note, created_at: r.created_at, decided_at: r.decided_at,
-    family: famName(r.family_id), family_id: r.family_id, by: q1('SELECT name FROM users WHERE id=?', r.user_id).name,
-    give: { ...swapWeekView(g), holder: famName(g.family_id) }, want: { ...swapWeekView(t), holder: t.family_id ? famName(t.family_id) : 'Syndicate', asked_of: r.want_family_id ? famName(r.want_family_id) : null },
-    can_withdraw: r.status === 'open' && isAdminOf(user, r.family_id), can_decide: r.status === 'open' && !!user.is_site_admin };
-}
-route('GET', '/api/change-requests', ({ user, query }) => {
-  need(user, isFamily(user) || user.is_site_admin);
-  const year = Number(query.year) || null;
-  const rows = user.is_site_admin
-    ? q(`SELECT * FROM change_requests WHERE (? IS NULL OR year=?) ORDER BY status<>'open', created_at`, year, year)
-    : q(`SELECT * FROM change_requests WHERE family_id=? AND (? IS NULL OR year=?) ORDER BY status<>'open', created_at DESC`, user.family_id, year, year);
-  return rows.map(r => changeView(r, user));
-});
-// For now changes are arranged with the site admin directly (who edits the allocation on the Weeks page), so families
-// can't send requests through the portal. The request and decision code is kept for when this is switched back on.
-const CHANGE_REQUESTS_OPEN = false;
-route('POST', '/api/change-requests', ({ user, body }) => {
-  if (!CHANGE_REQUESTS_OPEN) fail(400, 'For now, ask the site admin directly if you’d like to change a week');
-  need(user, user.role === 'family_admin', 'Only family admins can ask for allocation changes');
-  const g = q1('SELECT * FROM weeks WHERE id=?', body.give_week_id), t = q1('SELECT * FROM weeks WHERE id=?', body.want_week_id);
-  if (!g || !t || g.year !== t.year) fail(400, 'Choose one of your weeks and a week you would like instead, in the same year');
-  if (signedOff(g.year)) fail(400, `The ${g.year} allocation is signed off. Weeks can now only be bought and sold.`);
-  if (g.family_id !== user.family_id) fail(400, 'You can only offer one of your own household’s weeks');
-  if (t.family_id == null || t.family_id === user.family_id) fail(400, 'Choose a week held by another household');
-  if ([g, t].some(x => ['pending', 'booked'].includes(x.status))) fail(400, 'One of those weeks has a booking on it');
-  if (q1("SELECT 1 FROM change_requests WHERE status='open' AND give_week_id=? AND want_week_id=?", g.id, t.id)) fail(400, 'You have already asked for that change');
-  const id = run('INSERT INTO change_requests (year,family_id,user_id,give_week_id,want_week_id,want_family_id,note) VALUES (?,?,?,?,?,?,?)', g.year, user.family_id, user.id, g.id, t.id, t.family_id, body.note || null).lastInsertRowid;
-  notify(siteAdmins(), `${famName(user.family_id)} ask to change their ${weekBrief(g)} for ${famName(t.family_id)}’s ${weekBrief(t)} in the ${g.year} allocation.`, '#/admin/weeks');
-  audit(user.id, 'change_request.create', { id }); return { id };
-});
-route('POST', '/api/change-requests/:id/withdraw', ({ user, params }) => {
-  const r = q1("SELECT * FROM change_requests WHERE id=? AND status='open'", params.id) || fail(404, 'This request is already closed');
-  need(user, isAdminOf(user, r.family_id));
-  run("UPDATE change_requests SET status='withdrawn', decided_at=datetime('now') WHERE id=?", r.id);
-  return { ok: true };
-});
-route('POST', '/api/admin/change-requests/:id/decide', ({ user, params, body }) => {
-  needAdmin(user);
-  const r = q1("SELECT * FROM change_requests WHERE id=? AND status='open'", params.id) || fail(404, 'This request is already closed');
-  const g = q1('SELECT * FROM weeks WHERE id=?', r.give_week_id), t = q1('SELECT * FROM weeks WHERE id=?', r.want_week_id), who = famName(r.family_id);
-  const tell = [...new Set([r.user_id, ...familyAdmins(r.family_id)])];
-  if (!body.approve) {
-    run("UPDATE change_requests SET status='declined', admin_note=?, decided_by=?, decided_at=datetime('now') WHERE id=?", body.note || null, user.id, r.id);
-    notify(tell, `The site admin declined your request to change your ${weekBrief(g)} for ${weekBrief(t)} in ${r.year}.${body.note ? ` “${body.note}”` : ''}`, '#/weeks');
-    audit(user.id, 'change_request.decline', { id: r.id }); return { status: 'declined' };
-  }
-  if (signedOff(r.year)) fail(400, `The ${r.year} allocation is signed off`);
-  if (g.family_id !== r.family_id) fail(409, `Week ${g.week_no} is no longer ${who}’s`);
-  if (t.family_id == null || t.family_id === r.family_id || (r.want_family_id && t.family_id !== r.want_family_id)) fail(409, `Week ${t.week_no} has changed hands since this request was made`);
-  if ([g, t].some(x => ['pending', 'booked'].includes(x.status))) fail(409, 'One of the weeks has a booking. Cancel it first.');
-  const other = t.family_id;
-  tx(() => {
-    // the allocation itself changes; both weeks start afresh as Undecided
-    const fresh = "status='own_use', offer_friends=0, offer_swap=0, in_use=0, released_at=NULL, enquiry_until=NULL, price_override=NULL";
-    run(`UPDATE weeks SET family_id=?, original_family_id=?, ${fresh}, gained_by_request=1, note=? WHERE id=?`, r.family_id, r.family_id, `Changed at ${who}’s request (was ${famName(other)}’s)`, t.id);
-    run(`UPDATE weeks SET family_id=?, original_family_id=?, ${fresh}, gained_by_request=0, note=? WHERE id=?`, other, other, `Changed by the site admin (was ${who}’s)`, g.id);
-    run("UPDATE change_requests SET status='approved', admin_note=?, decided_by=?, decided_at=datetime('now') WHERE id=?", body.note || null, user.id, r.id);
-    for (const o of q("SELECT * FROM change_requests WHERE status='open' AND id<>? AND (give_week_id IN (?,?) OR want_week_id IN (?,?))", r.id, g.id, t.id, g.id, t.id)) {
-      run("UPDATE change_requests SET status='lapsed', decided_at=datetime('now') WHERE id=?", o.id);
-      notify(familyAdmins(o.family_id), `Your ${o.year} change request has lapsed because one of its weeks has been reallocated.`, '#/weeks');
-    }
-    for (const x of [g, t].map(x => q1('SELECT * FROM weeks WHERE id=?', x.id))) { releaseSwaps(x, 'reallocated', user); closeEnquiries(x, 'swapped'); closeFriendEnquiries(x, 'swapped'); }
-  });
-  notify(tell, `Approved: ${weekBrief(t)} in ${r.year} is now ${who}’s, and your ${weekBrief(g)} goes to ${famName(other)}.`, '#/weeks');
-  notify(familyAdmins(other), `The site admin has changed the ${r.year} allocation: your ${weekBrief(t)} has been exchanged for ${weekBrief(g)}, which was ${who}’s.`, '#/weeks');
-  audit(user.id, 'change_request.approve', { id: r.id }); return { status: 'approved' };
-});
+// --- allocation sign-off: the site admin marks next year's allocation as agreed (and can reopen a future year)
 route('POST', '/api/admin/years/:year/signoff', ({ user, params, body }) => {
   needAdmin(user); const year = Number(params.year);
   if (!q1('SELECT 1 FROM weeks WHERE year=?', year)) fail(404, 'No weeks for that year');
@@ -1126,15 +1053,9 @@ route('POST', '/api/admin/years/:year/signoff', ({ user, params, body }) => {
     run('DELETE FROM year_status WHERE year=?', year); audit(user.id, 'year.reopen', { year }); return { ok: true };
   }
   if (signedOff(year)) fail(400, `The ${year} allocation is already signed off`);
-  tx(() => {
-    for (const r of q("SELECT * FROM change_requests WHERE year=? AND status='open'", year)) {
-      run("UPDATE change_requests SET status='declined', admin_note=?, decided_by=?, decided_at=datetime('now') WHERE id=?", 'Not agreed before the allocation was signed off', user.id, r.id);
-      notify(familyAdmins(r.family_id), `Your ${year} change request wasn’t agreed before the allocation was signed off.`, '#/weeks');
-    }
-    run("INSERT INTO year_status (year,signed_off_at,signed_off_by) VALUES (?,datetime('now'),?) ON CONFLICT(year) DO UPDATE SET signed_off_at=excluded.signed_off_at, signed_off_by=excluded.signed_off_by", year, user.id);
-  });
+  run("INSERT INTO year_status (year,signed_off_at,signed_off_by) VALUES (?,datetime('now'),?) ON CONFLICT(year) DO UPDATE SET signed_off_at=excluded.signed_off_at, signed_off_by=excluded.signed_off_by", year, user.id);
   notify(q("SELECT id FROM users WHERE active=1 AND role IN ('family_admin','family_member')").map(r => r.id),
-    `The ${year} allocation has been signed off. From now on, ${year} weeks are bought and sold rather than swapped: release a week you won’t use, and enquire about other families’ weeks.`, '#/weeks');
+    `The ${year} allocation has been signed off. From now on, ${year} weeks are bought and sold: release a week you won’t use, and book weeks other families release.`, '#/calendar');
   audit(user.id, 'year.signoff', { year }); return { ok: true };
 });
 
@@ -1548,6 +1469,15 @@ if (!MEMBER_REQUESTS_OPEN && !q1("SELECT 1 FROM settings WHERE key='member_reque
     notify([e.user_id], `Requests for other families’ weeks are switched off for now, so your request for ${weekLabel(w)} has been closed. If it’s released, you can still book it from the calendar.`, '#/calendar');
   }
   run("INSERT INTO settings (key,value) VALUES ('member_requests_off','1')");
+});
+// One-off: change requests through the portal are removed, so any still waiting are closed and the families told.
+if (!q1("SELECT 1 FROM settings WHERE key='change_requests_removed'")) tx(() => {
+  for (const r of q("SELECT * FROM change_requests WHERE status='open'")) {
+    run("UPDATE change_requests SET status='lapsed', admin_note=?, decided_at=datetime('now') WHERE id=?", 'Change requests were removed from the portal', r.id);
+    const g = q1('SELECT * FROM weeks WHERE id=?', r.give_week_id);
+    notify(familyAdmins(r.family_id), `Allocation changes are now arranged directly with the site admin, so your request to change ${weekLabel(g)} has been closed. Please contact the site admin if you’d still like it.`, '#/calendar');
+  }
+  run("INSERT INTO settings (key,value) VALUES ('change_requests_removed','1')");
 });
 // One-off: in-year swaps are retired. Willing to swap becomes Undecided; open swap offers lapse (the enquiries stay in the queue).
 if (!q1("SELECT 1 FROM settings WHERE key='in_year_swaps'")) tx(() => {

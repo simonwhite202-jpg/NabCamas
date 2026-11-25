@@ -161,9 +161,9 @@ Opening a page you don't have access to takes you back to Home.
 - The holding family can also mark it *Using it* (the enquiries close) or reply **not sure yet** (enquirers keep their place).
 
 **Next-year allocation: changes and sign-off**
-- The next year's allocation stays a **draft** until the site admin **signs it off** (the syndicate does this in November). The current year and earlier are always signed off.
-- **For now, changes are arranged directly with the site admin**, who makes them on **Site admin → Weeks** ("Allocated to"). The portal's change-request feature (family admins asking from My weeks, the site admin approving) is built but switched off (`CHANGE_REQUESTS_OPEN` in `server.js`).
-- **Sign off** closes the year to changes and tells everyone that weeks are now bought and sold.
+- Next year's allocation shows as a **Draft** (on the family calendar and the site admin's Overview) until the site admin **signs it off** (the syndicate does this in November). The current year and earlier are always signed off.
+- **Changes are arranged directly with the site admin**, who makes them on **Site admin → Weeks** with the "Allocated to" dropdowns. The bar above the table shows the year as *Draft* or *Signed off*, with **Sign off** (and **Reopen as draft** for a future year). Signing off tells every family.
+- Change requests through the portal have been removed; any that were still waiting were closed, and the families told.
 - **Moving from the old swaps:** on the first start of this version, *Willing to swap* becomes *Undecided*. Swap offers still waiting lapse (with a notice); their enquiries stay in the queue.
 
 **Booking enquiries from trusted friends**

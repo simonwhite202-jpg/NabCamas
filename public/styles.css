@@ -290,6 +290,8 @@ ol.queue { list-style: none; margin: var(--sp-3) 0 0; padding: 0; counter-reset:
 ol.queue > li { padding: var(--sp-3) 0 var(--sp-3) 36px; border-top: 1px solid var(--line); position: relative; counter-increment: q; }
 ol.queue > li::before { content: counter(q); position: absolute; left: 0; top: 14px; width: 24px; height: 24px; border-radius: 50%; background: var(--sage); color: var(--woodland); font-size: var(--fs-xs); font-weight: 500; display: grid; place-items: center; }
 ol.queue > li.done { opacity: .55; }
+.table-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); flex-wrap: wrap; padding: 12px 16px; margin-bottom: -1px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg) var(--r-lg) 0 0; }
+.table-bar + .table-wrap { border-top-left-radius: 0; border-top-right-radius: 0; }
 .pick-list { margin: 8px 0 4px; display: flex; flex-direction: column; gap: 6px; }
 .pick-row { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); font-size: var(--fs-sm); }
 .offer { margin-top: var(--sp-2); padding: var(--sp-3) 14px; border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--line); }
