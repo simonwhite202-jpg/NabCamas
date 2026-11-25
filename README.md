@@ -77,13 +77,13 @@ Everyone lands on the **Overview** (Home), headed *Welcome to Camas*, with who's
 | Trusted friend | Home, Available weeks, My bookings, My details | Bookings to pay for |
 | Family member | Home, Calendar, My weeks (view only), Enquiries, Bookings, Family & friends | Bookings to pay for, and first refusals to take or pass |
 | Family admin | The same, plus Account | Also: swap requests to answer (pick a week, release or say using it), swaps to confirm, undecided weeks in the next 16 weeks, the balance to pay, and people who haven't set up their login |
-| Site admin | A separate login with no family: Home, Calendar, Payments, Budget, Weeks, Credits & pot, Families, Users, Settings, Activity | Syndicate jobs: payments to confirm, families owing money, families with no admin, service charges not issued, let-income pots not shared out, next year's weeks not set up, demo logins still active, email not switched on, and storage problems. Home also shows balances, credits, the pot and recent activity. |
+| Site admin | A separate login with no family: Home, Calendar, Payments, Budget, Weeks, Credits & lets, Families, Users, Settings, Activity | Syndicate jobs: payments to confirm, families owing money, families with no admin, service charges not issued, let-income pots not shared out, next year's weeks not set up, demo logins still active, email not switched on, and storage problems. Home also shows balances, credits, the pot and recent activity. |
 
 The panels are:
 - **Coming up:** the family's next weeks, or a friend's bookings.
 - **Weeks you can book**
 - **Your enquiries**
-- **Family at a glance:** credits, releases, pot share and balance.
+- **Family at a glance:** credits, releases, let income credited and balance.
 - **What's new:** the latest notifications.
 - **Quick links**
 
@@ -129,7 +129,7 @@ Opening a page you don't have access to takes you back to Home.
 - **Entitlement:** each share is worth **100 credits** a year (5,200 for 52 shares). Uneven swaps and admin adjustments carry credits from one year to the next.
 - **Week values:** every week has a credit value from its band: school holidays, summer, shoulder or winter (illustrative weights 170 / 130 / 100 / 45). The site scales the weights so each year adds up to about 5,200, give or take rounding; this also handles 53-week years.
 - **School holidays:** the site admin marks school-holiday weeks under **Weeks & allocation**. 2026 and 2027 are preloaded with assumed English school holidays, so check them.
-- **Fairness table:** **My weeks** and **Site admin → Credits & pot** show, for each family, the credit value of the weeks it holds against its entitlement.
+- **Fairness table:** **My weeks** and **Site admin → Credits & lets** show, for each family, the credit value of the weeks it holds against its entitlement.
 
 **My weeks**
 - The family admin gives each week a setting:
@@ -140,11 +140,12 @@ Opening a page you don't have access to takes you back to Home.
 - For released weeks, the family can set its own **friend price** (blank means the admin's default for the band) and **who can book**: other members only; members and any family's trusted friends; or members and our own trusted friends.
 - **Reminders:** family admins are reminded about weeks still **Undecided** at 16 and 8 weeks before arrival. Nothing is released automatically.
 
-**Released weeks and the let-income pot**
+**Released weeks and let income**
 - **Booking:** a released week can be booked by other members first, at the **member price** (75% of the friend price by default). Trusted friends can book it **7 days later**, and always from 3 weeks before arrival.
-- **The pot:** all money paid for a year's released weeks goes into one **let-income pot**.
-- **Release points:** the pot is shared by each released week's credit value, counted **in full if released 8+ weeks ahead**, otherwise at 50%. A released week counts whether or not anyone books it.
-- **Paying out:** the site admin presses **Distribute pot** (Site admin → Credits & pot). Each family's share is credited against the following year's service charge. Re-distributing replaces the earlier figures.
+- **Your week, your income:** when the payment for a let is confirmed, the household that released the week is credited with what was paid, less the **letting cost** (£100 a let by default, set under Settings), which goes to the maintenance fund. The credit comes off that household's service charge, and anything beyond it carries forward against future charges. A released week that doesn't let earns nothing, so releasing early helps.
+- **Members buying weeks:** a member who charges a week to their family account is charged the member price, and the seller is credited the same less the letting cost.
+- **Cancellations:** if the site admin cancels a paid booking, the credit is reversed.
+- **Moving from the old pot:** on the first start of this version, paid lets that were waiting for a pot share-out are credited to the families that released them. Years already shared out are left as they were.
 
 **Swaps**
 - **Asking:** any family member can request any other family's week that isn't *Using it*, from the week's panel on the calendar. They only name the week they want. The panel shows which of their own weeks are marked *Willing to swap*, and warns them before sending if there are none.
@@ -160,7 +161,7 @@ Opening a page you don't have access to takes you back to Home.
 **Booking enquiries from trusted friends**
 - **Asking:** a trusted friend can enquire about any week its household hasn't decided about yet (*Undecided*). On their calendar these weeks are marked *Open to enquiries*. They give the lead guest, party size and an optional message. Friends still don't see which household holds a week.
 - **The holding family's admin** sees the enquiry on the Enquiries page and Overview, with the friend's contact details and whose friend they are. They can:
-  - **let it to them**: the week is released and reserved for the friend at the friend price, and the friend gets the bank details and a reference, as with any booking. The money goes into the let-income pot, and the release counts towards the family's share. Members who had requested the week are told it has been taken; or
+  - **let it to them**: the week is released and reserved for the friend at the friend price, and the friend gets the bank details and a reference, as with any booking. The payment, less the letting cost, is credited to the family's account. Members who had requested the week are told it has been taken; or
   - **decline**, and the friend is told it isn't available this time.
 - **Closing automatically:** if the family marks the week *Using it*, releases it in the usual way, swaps it, or someone else books it, the friend's enquiry closes and they're told why. Friends see their enquiries under **My bookings** and can withdraw them.
 

@@ -81,7 +81,7 @@ function navOn(k, tab) {
 //   family member  → Home, Calendar, My weeks (view), Enquiries, Bookings, Family & friends
 //   family admin   → the same plus Account (and editing on My weeks / Family & friends)
 //   site admin     → a separate login with no family: Home, Calendar and the admin pages
-const ADMIN_PAGES = [['admin/overview', 'Payments'], ['admin/budget', 'Budget'], ['admin/weeks', 'Weeks'], ['admin/credits', 'Credits & pot'], ['admin/families', 'Families'], ['admin/users', 'Users'], ['admin/settings', 'Settings'], ['admin/audit', 'Activity']];
+const ADMIN_PAGES = [['admin/overview', 'Payments'], ['admin/budget', 'Budget'], ['admin/weeks', 'Weeks'], ['admin/credits', 'Credits & lets'], ['admin/families', 'Families'], ['admin/users', 'Users'], ['admin/settings', 'Settings'], ['admin/audit', 'Activity']];
 const isSiteRole = () => S.me.user.role === 'site_admin';
 // Who is logged in: name, role and household (site admins have no household). Escaped, ready for HTML.
 function whoAmI() {
@@ -181,8 +181,8 @@ async function viewHome(main) {
         : quiet('Open any other household’s week on the calendar to request a swap. They pick one of your weeks marked Willing to swap, or release it and you get first refusal.'), '<a href="#/enquiries">All enquiries →</a>')}
       ${f ? panelCard('coins', `${esc(f.name)} at a glance · ${f.year}`, `<dl class="kv" style="grid-template-columns:1fr auto">
           ${c ? `<dt>Credit value of your weeks</dt><dd class="num">${c.value.toLocaleString('en-GB')} of ${c.entitlement.toLocaleString('en-GB')} <span class="muted small">(${c.diff > 0 ? '+' : ''}${c.diff})</span></dd>
-          <dt>Weeks released</dt><dd class="num">${c.released} <span class="muted small">(${c.points} points)</span></dd>
-          <dt>Share of the let-income pot</dt><dd class="num">${money(c.pot_share, 2)}</dd>` : ''}
+          <dt>Weeks released</dt><dd class="num">${c.released}</dd>
+          <dt>Let income credited</dt><dd class="num">${money(c.let_income, 2)} <span class="muted small">(${c.lets} let${c.lets === 1 ? '' : 's'})</span></dd>` : ''}
           ${f.balance != null ? `<dt>Account balance</dt><dd class="num">${f.balance > 0.005 ? money(f.balance, 2) + ' to pay' : f.balance < -0.005 ? money(-f.balance, 2) + ' in credit' : 'Settled'}</dd>` : ''}</dl>`, '<a href="#/weeks">Credits for every household →</a>') : ''}
       ${panelCard('bell', 'Recent notices', h.notifications.length ? h.notifications.map(n => `<a class="list-row ${n.read ? '' : 'unread'}" href="${esc(n.link || '#/home')}"><span class="grow small">${esc(n.text)}<div class="tiny muted">${stamp(n.created_at)}</div></span></a>`).join('') : quiet('No notices yet.'))}
       ${panelCard('arrow-right', 'Quick links', `<div class="quick">${links.map(([href, l]) => `<a class="btn sm" href="${href}">${l}</a>`).join('')}</div>`)}
@@ -196,12 +196,12 @@ function adminHome(main, h, greet) {
     <div class="grid-3" style="margin-bottom:var(--sp-6)">
       <div class="card"><span class="eyebrow">Households · logins</span><div class="stat num">${h.counts.families} <span class="small muted">· ${h.counts.logins}</span></div></div>
       <div class="card"><span class="eyebrow">Weeks released in ${h.credits.year}</span><div class="stat num">${h.counts.released}</div><div class="small muted">${h.counts.enquiries} open enquir${h.counts.enquiries === 1 ? 'y' : 'ies'}</div></div>
-      <div class="card"><span class="eyebrow">${h.credits.year} let-income pot</span><div class="stat num credit">${money(h.credits.pot.net, 2)}</div><div class="small muted">${h.credits.pot.lets} let${h.credits.pot.lets === 1 ? '' : 's'}${h.credits.pot.distributed ? ' · distributed' : ''}</div></div></div>
+      <div class="card"><span class="eyebrow">${h.credits.year} lets</span><div class="stat num credit">${money(h.credits.income.credited, 2)}</div><div class="small muted">credited to households from ${h.credits.income.lets} let${h.credits.income.lets === 1 ? '' : 's'} · ${money(h.credits.income.fund, 2)} to the maintenance fund</div></div></div>
     <section class="stack" style="margin-bottom:var(--sp-6)"><div class="section-title"><h2>Outstanding actions</h2>${h.attention.length ? `<span class="muted small">${h.attention.length} to look at</span>` : ''}</div>
       ${h.attention.length ? h.attention.map(todoItem).join('') : todoItem({ tone: 'info', title: 'All clear', detail: 'No syndicate jobs waiting.' })}</section>
     <div class="home-grid">
       ${panelCard('wallet', 'Household balances', owing.length ? `<table><tbody>${owing.map(b => `<tr><td><a href="#/admin/account-${b.id}">${esc(b.name)}</a></td><td class="r num">${b.balance > 0 ? money(b.balance, 2) + ' owed' : money(-b.balance, 2) + ' credit'}</td></tr>`).join('')}</tbody></table>` : quiet('Every household is settled.'), '<a href="#/admin/overview">Payments and balances →</a>')}
-      ${panelCard('coins', `Credits ${h.credits.year}`, `<table><tbody>${h.credits.rows.map(r => `<tr><td>${esc(r.name)}</td><td class="r num">${r.value.toLocaleString('en-GB')} / ${r.entitlement.toLocaleString('en-GB')}</td><td class="r num" style="color:${Math.abs(r.diff) < 50 ? 'inherit' : r.diff > 0 ? 'var(--amber)' : 'var(--blue)'}">${r.diff > 0 ? '+' : ''}${r.diff}</td></tr>`).join('')}</tbody></table>`, '<a href="#/admin/credits">Credits and pot →</a>')}
+      ${panelCard('coins', `Credits ${h.credits.year}`, `<table><tbody>${h.credits.rows.map(r => `<tr><td>${esc(r.name)}</td><td class="r num">${r.value.toLocaleString('en-GB')} / ${r.entitlement.toLocaleString('en-GB')}</td><td class="r num" style="color:${Math.abs(r.diff) < 50 ? 'inherit' : r.diff > 0 ? 'var(--amber)' : 'var(--blue)'}">${r.diff > 0 ? '+' : ''}${r.diff}</td></tr>`).join('')}</tbody></table>`, '<a href="#/admin/credits">Credits and lets →</a>')}
       ${panelCard('history', 'Recent activity', h.activity.length ? h.activity.map(a => `<div class="list-row" style="cursor:default"><span class="grow small"><b>${esc(a.name || 'System')}</b> ${esc(a.action.replace('.', ' '))}<div class="tiny muted">${stamp(a.created_at)}</div></span></div>`).join('') : quiet('Nothing yet.'), '<a href="#/admin/audit">Activity log →</a>')}
       ${panelCard('bell', 'Recent notices', h.notifications.length ? h.notifications.map(n => `<a class="list-row ${n.read ? '' : 'unread'}" href="${esc(n.link || '#/home')}"><span class="grow small">${esc(n.text)}<div class="tiny muted">${stamp(n.created_at)}</div></span></a>`).join('') : quiet('No notices yet.'))}
       ${panelCard('arrow-right', 'Quick links', `<div class="quick">${ADMIN_PAGES.map(([k, l]) => `<a class="btn sm" href="#/${k}">${l}</a>`).join('')}<a class="btn sm" href="#/calendar">Calendar</a></div>`)}
@@ -214,7 +214,7 @@ const PLAN = {
   undecided: { label: 'Undecided', hint: 'Not decided yet. Other families can still ask to swap for it, and you’ll get reminders as it gets closer.' },
   using: { label: 'Using it', hint: 'Definitely being used. No swap requests.' },
   swap: { label: 'Willing to swap', hint: 'You’d give it up in exchange for another family’s week.' },
-  released: { label: 'Released', hint: 'You won’t use it. Members can book it, then trusted friends. The money goes into the yearly let-income pot, shared by the credit value each family releases.' },
+  released: { label: 'Released', hint: 'You won’t use it. Members can book it, then trusted friends. If it lets, the payment is credited to your household’s account, less the letting cost for the maintenance fund.' },
 };
 const BAND = { school: 'School holidays', summer: 'Summer', shoulder: 'Shoulder', winter: 'Winter' };
 const credits = n => `${Math.round(n).toLocaleString('en-GB')} cr`;
@@ -294,7 +294,7 @@ async function viewCalendar(main) {
 async function openWeek(w) {
   const s = S.me.settings; const role = S.me.user.role;
   const seasonName = { summer: 'Summer', shoulder: 'Shoulder', winter: 'Winter' }[w.season];
-  const relNote = w.is_mine && w.plan === 'released' && w.released_at ? `<div class="section notice small">Released on ${dfmt(w.released_at.slice(0, 10))}. ${w.release_weight >= 1 ? 'Released early enough to count in full' : `Released less than ${s.early_release_weeks} weeks ahead, so it counts at ${w.release_weight * 100}%`} towards your share of the ${w.year} let-income pot.</div>` : '';
+  const relNote = w.is_mine && w.plan === 'released' && w.released_at ? `<div class="section notice small">Released on ${dfmt(w.released_at.slice(0, 10))}. If it lets, the payment is credited to your household’s account, less the ${money(s.letting_cost || 0)} letting cost for the maintenance fund.</div>` : '';
   let html = `<dl class="kv"><dt>Dates</dt><dd>${dfmt(w.start_date, { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' })} → ${dfmt(endOf(w), { weekday: 'short', day: 'numeric', month: 'long' })}${nights(w) !== 7 ? `<div class="tiny muted">${nights(w)} nights (changeover day switches this week)</div>` : ''}</dd>
     ${w.comment ? `<dt>Calendar note</dt><dd>${esc(w.comment)}</dd>` : ''}
     <dt>Season</dt><dd><i class="season ${w.school_holiday ? 'school' : w.season}"></i> ${seasonName}${w.school_holiday ? ' · <b>school holidays</b>' : ''}</dd>
@@ -321,7 +321,7 @@ async function openWeek(w) {
   if (w.can_book && !past) {
     const allowAcct = isFam() && (isFamAdmin() || s.allow_member_account_charge);
     html += `<form class="section" id="bookForm"><h3>Book this week · ${money(w.price)}</h3>
-      ${isFam() ? `<p class="muted small" style="margin-top:0">${esc(w.family_name)} have released this week. You pay the member price; the money goes into the syndicate’s let-income pot.</p>` : ''}
+      ${isFam() ? `<p class="muted small" style="margin-top:0">${esc(w.family_name)} have released this week. You pay the member price, which is credited to their household’s account.</p>` : ''}
       <div class="grid-2" style="gap:12px"><div class="field"><label>Lead guest name</label><input name="guest_name" value="${esc(S.me.user.name)}" required></div>
       <div class="field"><label>Number in party</label><input name="party_size" type="number" min="1" max="20" value="2"></div></div>
       ${allowAcct ? `<div class="field"><label>How will you pay?</label>
@@ -388,35 +388,35 @@ function bindPlanFields(root) {
   const sync = () => { $('.sale-opts', root).style.display = sel.value === 'released' ? '' : 'none'; const h = $('.plan-hint', root); if (h) h.textContent = PLAN[sel.value].hint; };
   sel.addEventListener('change', sync); sync();
 }
-// fairness meter: each family's weeks valued in credits against its entitlement, plus release points and pot shares
+// fairness meter: each family's weeks valued in credits against its entitlement, plus releases and the let income credited
 function creditsTable(c, highlight) {
   const cur = S.me.settings.currency;
-  return `<div class="table-wrap"><table><thead><tr><th>Family</th><th class="r">Shares</th><th class="r">Entitlement</th><th class="r">Weeks</th><th class="r">Credit value</th><th class="r">Difference</th><th class="r">School-hol weeks</th><th class="r">Released</th><th class="r">Release points</th><th class="r">Pot share</th></tr></thead><tbody>
+  return `<div class="table-wrap"><table><thead><tr><th>Family</th><th class="r">Shares</th><th class="r">Entitlement</th><th class="r">Weeks</th><th class="r">Credit value</th><th class="r">Difference</th><th class="r">School-hol weeks</th><th class="r">Released</th><th class="r">Lets</th><th class="r">Let income credited</th></tr></thead><tbody>
     ${c.rows.map(r => `<tr ${r.id === highlight ? 'style="background:var(--accent-soft)"' : ''}><td><i class="swatch" style="background:${r.color}"></i> ${esc(r.name)}</td><td class="r num">${r.shares}</td>
       <td class="r num">${r.entitlement.toLocaleString('en-GB')}${r.carried ? `<div class="tiny muted">${r.carried > 0 ? '+' : ''}${r.carried} carried</div>` : ''}</td><td class="r num">${r.weeks}</td><td class="r num">${r.value.toLocaleString('en-GB')}</td>
       <td class="r num" style="color:${Math.abs(r.diff) < 50 ? 'inherit' : r.diff > 0 ? 'var(--amber)' : 'var(--blue)'}">${r.diff > 0 ? '+' : ''}${r.diff.toLocaleString('en-GB')}${r.settled ? `<div class="tiny muted">${r.settled > 0 ? '+' : ''}${r.settled} settled by swaps</div>` : ''}</td>
-      <td class="r num">${r.school_weeks}</td><td class="r num">${r.released_weeks}</td><td class="r num">${r.release_points}</td><td class="r num">${money(r.pot_share, 2)}</td></tr>`).join('')}</tbody>
-    <tfoot><tr><td>Total</td><td class="r">${c.rows.reduce((a, r) => a + r.shares, 0)}</td><td class="r">${c.rows.reduce((a, r) => a + r.entitlement, 0).toLocaleString('en-GB')}</td><td class="r">${c.rows.reduce((a, r) => a + r.weeks, 0)}</td><td class="r">${c.rows.reduce((a, r) => a + r.value, 0).toLocaleString('en-GB')}</td><td></td><td></td><td class="r">${c.rows.reduce((a, r) => a + r.released_weeks, 0)}</td><td class="r">${c.pot.total_points}</td><td class="r">${money(c.pot.net, 2)}</td></tr></tfoot></table></div>
-    <p class="tiny muted">Week values this year: ${Object.entries(c.bands).map(([b, x]) => `${BAND[b]} ${x.credits} cr (${x.weeks} weeks)`).join(' · ')}. Each share is worth ${c.per} credits. Difference = credit value of weeks held minus entitlement, after any swap differences already carried to next year. Pot so far: ${c.pot.lets} let${c.pot.lets === 1 ? '' : 's'}, ${money(c.pot.gross, 2)}${c.pot.commission ? ` less ${money(c.pot.commission, 2)} syndicate commission` : ''}${c.pot.distributed ? ' (already distributed)' : ''}.</p>`;
+      <td class="r num">${r.school_weeks}</td><td class="r num">${r.released_weeks}</td><td class="r num">${r.lets}</td><td class="r num">${money(r.let_income, 2)}</td></tr>`).join('')}</tbody>
+    <tfoot><tr><td>Total</td><td class="r">${c.rows.reduce((a, r) => a + r.shares, 0)}</td><td class="r">${c.rows.reduce((a, r) => a + r.entitlement, 0).toLocaleString('en-GB')}</td><td class="r">${c.rows.reduce((a, r) => a + r.weeks, 0)}</td><td class="r">${c.rows.reduce((a, r) => a + r.value, 0).toLocaleString('en-GB')}</td><td></td><td></td><td class="r">${c.rows.reduce((a, r) => a + r.released_weeks, 0)}</td><td class="r">${c.income.lets}</td><td class="r">${money(c.income.credited, 2)}</td></tr></tfoot></table></div>
+    <p class="tiny muted">Week values this year: ${Object.entries(c.bands).map(([b, x]) => `${BAND[b]} ${x.credits} cr (${x.weeks} weeks)`).join(' · ')}. Each share is worth ${c.per} credits. Difference = credit value of weeks held minus entitlement, after any swap differences already carried to next year. Lets so far: ${c.income.lets}, paying ${money(c.income.gross, 2)}: ${money(c.income.credited, 2)} credited to the households that released the weeks and ${money(c.income.fund, 2)} to the maintenance fund.</p>`;
 }
 async function viewMyWeeks(main) {
   const year = S.myYear || S.year; S.myYear = year;
   const s = S.me.settings; const admin = isFamAdmin();
   const [all, cs] = await Promise.all([api('/weeks?year=' + year), api('/credits?year=' + year)]);
-  const weeks = all.filter(w => w.is_mine), me = cs.rows.find(r => r.id === S.me.user.family_id) || { value: 0, entitlement: 0, diff: 0, release_points: 0, pot_share: 0, released_weeks: 0, carried: 0 };
+  const weeks = all.filter(w => w.is_mine), me = cs.rows.find(r => r.id === S.me.user.family_id) || { value: 0, entitlement: 0, diff: 0, lets: 0, let_income: 0, released_weeks: 0, carried: 0 };
   const counts = {}; weeks.forEach(w => counts[w.plan] = (counts[w.plan] || 0) + 1);
   const locked = w => ['pending', 'booked'].includes(w.status) || w.start_date < todayStr();
   main.innerHTML = `<div class="row between" style="margin-bottom:6px"><h1 style="margin:0">${esc(S.me.family.name)} weeks ${year}</h1>
       <div class="seg">${S.me.years.map(y => `<button data-y="${y}" class="${y === year ? 'on' : ''}">${y}</button>`).join('')}</div></div>
     <p class="muted" style="margin-top:0">${admin ? 'Set what your family plans for each week. Changes save straight away.' : 'Your family admin sets these. Ask them if something needs changing.'}
-      Other families can ask to swap for any week that isn’t <b>Using it</b>. When your family asks for someone else’s week, they choose from your <b>Willing to swap</b> or <b>Released</b> weeks.</p>
+      Other families can ask to swap for any week that isn’t <b>Using it</b>. When your family asks for someone else’s week, they choose from your <b>Willing to swap</b> weeks. A <b>Released</b> week that lets is credited to your account, less the ${money(s.letting_cost || 0)} letting cost.</p>
     <div class="grid-3" style="margin-bottom:18px">
       <div class="card"><div class="muted small">Credit value of your ${year} weeks</div><div class="stat num">${me.value.toLocaleString('en-GB')} <span class="small muted">credits</span></div>
         <div class="small muted" style="margin-top:6px">Entitlement ${me.entitlement.toLocaleString('en-GB')} (${S.me.family.share_units} shares × ${cs.per}${me.carried ? `, ${me.carried > 0 ? '+' : ''}${me.carried} carried` : ''}) · <b style="color:var(--ink)">${me.diff > 0 ? '+' : ''}${me.diff}</b></div></div>
       <div class="card"><div class="muted small">Released this year</div><div class="stat num">${me.released_weeks} <span class="small muted">week${me.released_weeks === 1 ? '' : 's'}</span></div>
-        <div class="small muted" style="margin-top:6px">${me.release_points} release points of ${cs.pot.total_points}. Releasing ${s.early_release_weeks}+ weeks ahead counts in full, later ${s.late_release_weight * 100}%.</div></div>
-      <div class="card"><div class="muted small">Your share of the ${year} let-income pot so far</div><div class="stat num credit">${money(me.pot_share, 2)}</div>
-        <div class="small muted" style="margin-top:6px">Pot ${money(cs.pot.net, 2)} from ${cs.pot.lets} let${cs.pot.lets === 1 ? '' : 's'}${cs.pot.distributed ? ', already credited to accounts' : '. Credited against next year’s service charge'}.</div></div></div>
+        <div class="small muted" style="margin-top:6px">Releasing early gives a week longer to find a guest. Members get the first chance, then trusted friends.</div></div>
+      <div class="card"><div class="muted small">Let income credited for ${year}</div><div class="stat num credit">${money(me.let_income, 2)}</div>
+        <div class="small muted" style="margin-top:6px">From ${me.lets} let${me.lets === 1 ? '' : 's'}, after the ${money(s.letting_cost || 0)} letting cost on each. It comes off your service charge, and any extra carries forward.</div></div></div>
     <div class="legend">${Object.entries(PLAN).map(([k, p]) => `<span><b>${counts[k] || 0}</b>&nbsp;${p.label}</span>`).join('')}</div>
     ${weeks.length ? `<div class="table-wrap"><table class="myweeks"><thead><tr><th>Week</th><th>Dates</th><th class="r">Credits</th><th>Setting</th><th>Price &amp; who can book</th><th>Activity</th></tr></thead><tbody>
     ${weeks.map(w => `<tr data-id="${w.id}" class="${w.start_date < todayStr() ? 'past-row' : ''}"><td><b>${w.week_no}</b><div class="tiny muted"><i class="season ${w.band}"></i> ${BAND[w.band]}</div></td>
@@ -425,7 +425,7 @@ async function viewMyWeeks(main) {
       ${admin && !locked(w) ? `<td colspan="2">${planFields(w, s, true)}</td>`
         : `<td>${w.start_date < todayStr() ? '<span class="muted small">Past</span>' : `<span class="badge ${w.plan === 'using' ? 'accent' : w.plan === 'undecided' ? '' : w.plan === 'swap' ? 'blue' : 'green'}">${PLAN[w.plan].label}</span>`}</td>
            <td class="small">${w.plan === 'released' ? `${money(w.member_price)} members · ${money(w.friend_price)} friends<div class="tiny muted">${SALE_TO[w.sale_to]}</div>` : '<span class="muted">—</span>'}</td>`}
-      <td class="small">${w.plan === 'released' && w.released_at ? `<div class="tiny muted">Released ${dfmt(w.released_at.slice(0, 10))} · counts ${w.release_weight >= 1 ? 'in full' : w.release_weight * 100 + '%'}</div>` : ''}${statusBadge({ ...w, plan: null })}${w.booking?.guest ? `<div class="tiny muted">${esc(w.booking.guest)}</div>` : ''}${w.enquiries ? `<a href="#/enquiries" class="badge amber">${w.enquiries} enquir${w.enquiries > 1 ? 'ies' : 'y'}${w.pending_swaps ? ` · ${w.pending_swaps} swap offer${w.pending_swaps > 1 ? 's' : ''}` : ''}</a>` : ''}${w.friend_enquiries ? ` <a href="#/enquiries" class="badge amber">${w.friend_enquiries} friend enquir${w.friend_enquiries > 1 ? 'ies' : 'y'}</a>` : ''}${w.first_refusal_until ? `<div class="tiny muted">First refusal until ${whenTime(w.first_refusal_until)}</div>` : ''}</td></tr>`).join('')}
+      <td class="small">${w.plan === 'released' && w.released_at ? `<div class="tiny muted">Released ${dfmt(w.released_at.slice(0, 10))}</div>` : ''}${statusBadge({ ...w, plan: null })}${w.booking?.guest ? `<div class="tiny muted">${esc(w.booking.guest)}</div>` : ''}${w.enquiries ? `<a href="#/enquiries" class="badge amber">${w.enquiries} enquir${w.enquiries > 1 ? 'ies' : 'y'}${w.pending_swaps ? ` · ${w.pending_swaps} swap offer${w.pending_swaps > 1 ? 's' : ''}` : ''}</a>` : ''}${w.friend_enquiries ? ` <a href="#/enquiries" class="badge amber">${w.friend_enquiries} friend enquir${w.friend_enquiries > 1 ? 'ies' : 'y'}</a>` : ''}${w.first_refusal_until ? `<div class="tiny muted">First refusal until ${whenTime(w.first_refusal_until)}</div>` : ''}</td></tr>`).join('')}
     </tbody></table></div>` : '<div class="card empty">Your family has no weeks in this year.</div>'}
     <h2 style="margin-top:32px">All families ${year}</h2><p class="muted small" style="margin-top:0">Every week is valued in credits by demand, so the syndicate can see whether each family’s weeks match its share. Gaps are evened out over time by carrying credits forward.</p>
     ${creditsTable(cs, S.me.user.family_id)}`;
@@ -564,7 +564,7 @@ function bindEnquiryActions(root, reload) {
   act('[data-pick]', async b => { if (!confirm('Swap your week for this one? Their family admin will be asked to confirm before the weeks change hands.')) return false;
     await api(`/enquiries/${b.dataset.pick}/pick`, { body: { week_id: Number(b.dataset.pickWeek) } }); toast('Swap proposed. Waiting for them to confirm'); });
   act('[data-fe-accept]', async b => { const d = b.dataset, n = Number(d.feMembers);
-    if (!confirm(`Let week ${d.feWeek} to ${d.feName} at ${money(Number(d.fePrice))}?\n\nThe week is released and reserved for them. They pay the syndicate within ${S.me.settings.hold_days} days, and the money goes into the let-income pot.${n ? `\n\n${n} member famil${n > 1 ? 'ies have' : 'y has'} also asked for this week and will be told it has been taken.` : ''}`)) return false;
+    if (!confirm(`Let week ${d.feWeek} to ${d.feName} at ${money(Number(d.fePrice))}?\n\nThe week is released and reserved for them. They pay the syndicate within ${S.me.settings.hold_days} days, and the payment is credited to your household’s account, less the ${money(S.me.settings.letting_cost || 0)} letting cost.${n ? `\n\n${n} member famil${n > 1 ? 'ies have' : 'y has'} also asked for this week and will be told it has been taken.` : ''}`)) return false;
     await api(`/friend-enquiries/${d.feAccept}/answer`, { body: { accept: true } }); toast('Reserved for them. They’ve been sent the payment details'); });
   act('[data-fe-decline]', async b => { if (!confirm('Decline this booking enquiry? They’ll be told the week isn’t available.')) return false; await api(`/friend-enquiries/${b.dataset.feDecline}/answer`, { body: { accept: false } }); toast('Declined'); });
   act('[data-unsure]', async b => { await api(`/enquiries/${b.dataset.unsure}/reply`, { body: { reply: 'unsure' } }); toast('They’ve been told you’re not sure yet'); });
@@ -633,7 +633,7 @@ async function viewAccount(main, familyId) {
         <div class="small muted" style="margin-top:6px">${a.weeks.map(w => `${w.n} weeks held in ${w.year}`).join(' · ')}</div></div>
       <div class="card"><div class="muted small">By year</div>${a.byYear.map(y => `<div class="row between small"><span>${y.year}</span><span class="num">${Math.abs(y.total) < 0.005 ? 'Settled' : y.total > 0 ? money(y.total, 2) + ' due' : money(-y.total, 2) + ' credit'}</span></div>`).join('') || '<div class="small muted">No entries yet</div>'}</div></div>
     ${!familyId ? `<div id="acctSwaps"></div>` : ''}
-    <h2>Statement</h2><p class="muted small">Your share of each year’s let-income pot is credited against the following year’s service charge. Charges are positive; credits and payments are negative.</p>
+    <h2>Statement</h2><p class="muted small">When one of your released weeks lets, the payment is credited here as soon as it arrives, less the ${money(S.me.settings.letting_cost || 0)} letting cost for the maintenance fund. Any credit carries forward against future charges. Charges are positive; credits and payments are negative.</p>
     ${a.lines.length ? `<div class="table-wrap"><table><thead><tr><th>Date</th><th>Year</th><th>Type</th><th>Description</th><th class="r">Amount</th><th class="r">Balance</th></tr></thead><tbody>
     ${a.lines.map(l => `<tr><td class="small">${new Date(l.created_at + 'Z').toLocaleDateString('en-GB')}</td><td>${l.year}</td><td><span class="badge ${l.amount < 0 ? 'green' : 'accent'}">${typeName[l.type]}</span></td><td>${esc(l.description)}</td>
       <td class="r num">${l.amount < 0 ? '−' : ''}${money(Math.abs(l.amount), 2)}</td><td class="r num">${money(l.running, 2)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="card empty">No charges or credits yet.</div>'}`;
@@ -721,7 +721,7 @@ function bindProfile(main) {
 // ------------------------------------------------------------ site admin
 async function viewAdmin(main) {
   const sub = location.hash.split('/')[2] || 'overview';
-  const tabs = [['overview', 'Payments & balances'], ['budget', 'Budget & charges'], ['weeks', 'Weeks & allocation'], ['credits', 'Credits & pot'], ['families', 'Families'], ['users', 'All users'], ['settings', 'Settings & rates'], ['audit', 'Activity log']];
+  const tabs = [['overview', 'Payments & balances'], ['budget', 'Budget & charges'], ['weeks', 'Weeks & allocation'], ['credits', 'Credits & lets'], ['families', 'Families'], ['users', 'All users'], ['settings', 'Settings & rates'], ['audit', 'Activity log']];
   main.innerHTML = isSiteRole() ? `<h1>${(tabs.find(t => t[0] === sub) || tabs[0])[1]}</h1><div id="adm"></div>`
     : `<h1>Site admin</h1><div class="subtabs">${tabs.map(([k, l]) => `<a href="#/admin/${k}" class="${k === sub ? 'on' : ''}">${l}</a>`).join('')}</div><div id="adm"></div>`;
   const el = $('#adm', main);
@@ -854,11 +854,10 @@ async function admSettings(el) {
       <h3 style="margin-top:8px">Credits</h3><p class="small muted" style="margin-top:0">Relative week values. The site scales them so each year adds up to shares × credits per share (give or take rounding, as each week is a whole number).</p>
       <div class="grid-2" style="gap:12px">${f('credits_per_share', 'Credits per share', 'number', 'min=1')}${f('credit_school', 'School-holiday week', 'number', 'min=0')}${f('credit_summer', 'Summer week', 'number', 'min=0')}${f('credit_shoulder', 'Shoulder week', 'number', 'min=0')}${f('credit_winter', 'Winter week', 'number', 'min=0')}</div>
       <h3 style="margin-top:8px">Releases &amp; reminders</h3>
-      <div class="grid-2" style="gap:12px">${f('early_release_weeks', 'Counts in full if released this many weeks ahead', 'number', 'min=0')}${f('late_release_weight', 'Later releases count (0–1)', 'number', 'min=0 max=1 step=0.05')}</div>
       ${f('reminder_weeks', 'Remind about undecided weeks at (weeks before, comma-separated)')}
       <h3 style="margin-top:8px">Seasons</h3><p class="small muted" style="margin-top:0">Months (1–12) used when new years are created. You can override individual weeks under Weeks.</p>
       <div class="grid-2" style="gap:12px">${f('summer_months', 'Summer months')}${f('shoulder_months', 'Shoulder months')}</div>
-      <h3 style="margin-top:8px">Booking rules</h3><div class="grid-2" style="gap:12px">${f('hold_days', 'Days to pay before a hold lapses', 'number', 'min=1')}${f('commission_pct', 'Syndicate commission on lets (%)', 'number', 'min=0 max=100 step=0.5')}</div>
+      <h3 style="margin-top:8px">Booking rules</h3><div class="grid-2" style="gap:12px">${f('hold_days', 'Days to pay before a hold lapses', 'number', 'min=1')}${f('letting_cost', 'Letting cost per let, to the maintenance fund (£)', 'number', 'min=0')}</div>
       <label class="check"><input type="checkbox" name="allow_member_account_charge" ${s.allow_member_account_charge === '1' ? 'checked' : ''}><span><b>Family members can charge weeks to their family account</b>If off, only family admins can; members pay by bank transfer.</span></label></div>
     <div class="card"><h3>Syndicate bank account</h3><p class="small muted" style="margin-top:0">Shown to people when they book a week.</p>
       ${f('bank_account_name', 'Account name')}${f('bank_name', 'Bank')}<div class="grid-2" style="gap:12px">${f('bank_sort_code', 'Sort code')}${f('bank_account_no', 'Account number')}</div>${f('bank_iban', 'IBAN (optional)')}
@@ -881,14 +880,12 @@ async function admCredits(el, year) {
   year = year || S.creditYear || S.year; S.creditYear = year;
   const c = await api('/credits?year=' + year); const cur = S.me.settings.currency;
   el.innerHTML = `<div class="row between" style="margin-bottom:14px"><div class="seg">${S.me.years.map(y => `<button data-y="${y}" class="${y === year ? 'on' : ''}">${y}</button>`).join('')}</div>
-      <div class="row"><button class="btn" id="adj">Adjust credits…</button><button class="btn primary" id="dist" ${c.pot.net && c.pot.total_points ? '' : 'disabled'}>${c.pot.distributed ? 'Re-distribute' : 'Distribute'} ${year} pot</button></div></div>
+      <div class="row"><button class="btn" id="adj">Adjust credits…</button></div></div>
     ${creditsTable(c)}
-    <div class="grid-2" style="margin-top:20px"><div class="card"><h3>How the pot is shared</h3><p class="small" style="margin:0">All money paid for released ${year} weeks (by members and trusted friends) goes into one pot${c.pot.commission ? ', less the syndicate commission' : ''}.
-      It’s shared by <b>release points</b>: each released week’s credit value, counted in full if released ${S.me.settings.early_release_weeks}+ weeks ahead, otherwise at ${S.me.settings.late_release_weight * 100}%. A released week counts whether or not it was booked.
-      Distributing credits each family’s share against its ${year + 1} service charge. Re-distributing replaces the earlier figures.</p></div>
+    <div class="grid-2" style="margin-top:20px"><div class="card"><h3>Let income</h3><p class="small" style="margin:0">When a released ${year} week lets and the payment is confirmed, the household that released it is credited with the payment less the ${money(S.me.settings.letting_cost || 0)} letting cost, which goes to the maintenance fund.
+      So far: ${money(c.income.gross, 2)} from ${c.income.lets} let${c.income.lets === 1 ? '' : 's'}, of which <b>${money(c.income.fund, 2)}</b> to the maintenance fund. Credit comes off the household’s service charge and any extra carries forward.</p></div>
       <div class="card"><h3>Carried credits</h3><p class="small" style="margin:0">Uneven swaps are carried automatically: the family that gets the more valuable week has the difference taken off next year’s entitlement, and the other family gains it. Use <b>Adjust credits</b> to carry this year’s allocation differences forward, if the syndicate agrees.</p></div></div>`;
   el.querySelectorAll('[data-y]').forEach(b => b.onclick = () => admCredits(el, Number(b.dataset.y)));
-  $('#dist', el).onclick = guard(async () => { if (!confirm(`Credit ${money(c.pot.net, 2)} from the ${year} pot to families against their ${year + 1} service charges?`)) return; await api('/admin/pot/distribute', { body: { year } }); toast('Pot distributed'); admCredits(el, year); });
   $('#adj', el).onclick = () => {
     const m = openModal(`<form id="cf"><h2>Adjust credits</h2><p class="small muted">Adds or removes credits from a family’s entitlement for a year, e.g. to carry ${year} allocation differences into ${year + 1}.</p>
       <div class="grid-2" style="gap:12px"><div class="field"><label>Family</label><select name="family_id">${c.rows.map(r => `<option value="${r.id}">${esc(r.name)} (${r.diff > 0 ? '+' : ''}${r.diff} in ${year})</option>`).join('')}</select></div>

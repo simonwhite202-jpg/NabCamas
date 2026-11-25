@@ -118,6 +118,8 @@ try {
 try { db.exec('ALTER TABLE weeks ADD COLUMN released_at TEXT'); db.exec("UPDATE weeks SET released_at=datetime('now') WHERE offer_friends=1"); } catch { }
 try { db.exec('ALTER TABLE weeks ADD COLUMN reminded INTEGER NOT NULL DEFAULT 0'); } catch { }
 try { db.exec('ALTER TABLE ledger ADD COLUMN pot_year INTEGER'); } catch { }
+// letting cost kept from each paid let for the maintenance fund (the rest is credited to the family that released the week)
+try { db.exec('ALTER TABLE bookings ADD COLUMN letting_cost REAL'); } catch { }
 // Enquiries: a family's place in the queue for another family's week. If the holder releases the week, enquirers get
 // first refusal (enquiry_hours), first come first served; a swap offer can be attached to an enquiry.
 db.exec(`CREATE TABLE IF NOT EXISTS enquiries (
@@ -163,14 +165,14 @@ const round2 = n => Math.round(n * 100) / 100;
 
 const DEFAULT_SETTINGS = {
   site_name: 'Nab Camas', place_line: 'Loch Carron · Scottish Highlands', hero_version: '', currency: '£', rate_summer: '1200', rate_shoulder: '800', rate_winter: '500',
-  commission_pct: '0', hold_days: '3', winter_changeover_day: '5', summer_changeover_day: '6', summer_changeover_from: '12', summer_changeover_to: '43',
+  commission_pct: '0', letting_cost: '100', hold_days: '3', winter_changeover_day: '5', summer_changeover_day: '6', summer_changeover_from: '12', summer_changeover_to: '43',
   bank_name: 'Syndicate bank account', bank_account_name: 'Nab Camas Syndicate', bank_sort_code: '00-00-00', bank_account_no: '00000000', bank_iban: '',
   summer_months: '6,7,8', shoulder_months: '4,5,9,10', allow_member_account_charge: '1',
   // prices: rate_* are trusted-friend prices per week; members pay member_rate_pct of that
   rate_school: '1400', member_rate_pct: '75', members_first_days: '7',
   // credits: each share = credits_per_share a year; week values are scaled from these weights so a year adds up exactly
   credits_per_share: '100', credit_school: '170', credit_summer: '130', credit_shoulder: '100', credit_winter: '45',
-  // let-income pot: releases this many weeks ahead count in full, later ones count late_release_weight
+  // (no longer used: the let-income pot was shared by how early weeks were released)
   early_release_weeks: '8', late_release_weight: '0.5', reminder_weeks: '16,8', enquiry_hours: '48',
 };
 function settings() { const s = { ...DEFAULT_SETTINGS }; for (const r of q('SELECT key,value FROM settings')) s[r.key] = r.value; return s; }
@@ -298,14 +300,14 @@ function weekView(w, u, s) {
 const today = () => new Date().toISOString().slice(0, 10);
 // A week can be asked for (or offered) in a swap if a family holds it, it isn't let/reserved, its family hasn't marked it in use, and it's in the future.
 const swappable = w => w.family_id != null && !w.in_use && !['pending', 'booked', 'syndicate'].includes(w.status) && w.start_date >= today();
-// Each week's setting: undecided | using | swap (willing to give it in a swap) | released (others can book it; income → pot)
+// Each week's setting: undecided | using | swap (willing to give it in a swap) | released (others can book it; income → that family's account, less the letting cost)
 const PLANS = ['undecided', 'using', 'swap', 'released'];
 const planOf = w => w.in_use ? 'using' : w.offer_friends ? 'released' : w.offer_swap ? 'swap' : 'undecided';
 // the weeks a family has marked Willing to swap (and that can still change hands): what the holder of a requested week picks from
 const swapWeeksOf = fid => q("SELECT * FROM weeks WHERE family_id=? AND offer_swap=1 AND offer_friends=0 AND in_use=0 ORDER BY start_date", fid).filter(swappable);
 const swapWeekView = w => w && { id: w.id, year: w.year, week_no: w.week_no, start_date: w.start_date, end_date: w.end_date, season: w.season, comment: w.comment, school_holiday: w.school_holiday, credits: creditValue(w) };
 
-// ---------------------------------------------------------------- credits & let-income pot
+// ---------------------------------------------------------------- credits & let income
 // Every week has a credit value from its band (school holiday / summer / shoulder / winter). The weights are scaled so that
 // a year's weeks add up to total shares × credits_per_share (5,200 for 52 shares, give or take rounding), whatever the number of weeks.
 let creditMemo = new Map();     // per-request cache of each year's scale factor
@@ -328,31 +330,27 @@ function friendsFrom(w, s = settings()) {
   const b = new Date(w.start_date + 'T00:00:00Z'); b.setUTCDate(b.getUTCDate() - 21);
   return (a < b ? a : b).toISOString().slice(0, 10);
 }
-// Let income for a year's weeks: confirmed bookings (older bookings already credited directly to a family are left out).
-function potTotal(year, s = settings()) {
-  const g = q1(`SELECT COALESCE(SUM(b.amount),0) n, COUNT(*) c FROM bookings b JOIN weeks w ON w.id=b.week_id WHERE b.status='confirmed' AND w.year=?
-    AND NOT EXISTS (SELECT 1 FROM ledger l WHERE l.booking_id=b.id AND l.type='rental_credit')`, year);
-  const commission = round2(g.n * (Number(s.commission_pct) || 0) / 100);
-  return { gross: round2(g.n), lets: g.c, commission, net: round2(g.n - commission) };
+// Let income: each paid let is credited to the family that released the week, less the letting cost, which goes to
+// the maintenance fund. Credit sits on the family's account and carries forward against future charges.
+function letIncome(year) {
+  const g = q1(`SELECT COALESCE(SUM(b.amount),0) n, COUNT(*) c, COALESCE(SUM(b.letting_cost),0) f FROM bookings b JOIN weeks w ON w.id=b.week_id WHERE b.status='confirmed' AND w.year=?`, year);
+  return { gross: round2(g.n), lets: g.c, fund: round2(g.f), credited: round2(g.n - g.f) };
 }
 function creditSummary(year, s = settings()) {
-  const per = Number(s.credits_per_share || 100), weeks = q('SELECT * FROM weeks WHERE year=?', year), pot = potTotal(year, s);
+  const per = Number(s.credits_per_share || 100), weeks = q('SELECT * FROM weeks WHERE year=?', year), income = letIncome(year);
   const rows = q('SELECT * FROM families WHERE active=1 ORDER BY name').map(f => {
     const held = weeks.filter(w => w.family_id === f.id);
     const carried = q1('SELECT COALESCE(SUM(amount),0) n FROM credit_ledger WHERE family_id=? AND year=?', f.id, year).n;
-    const released = held.filter(w => w.offer_friends && w.released_at);
     const value = held.reduce((a, w) => a + creditValue(w, s), 0), entitlement = f.share_units * per + carried;
     // differences from this year's uneven swaps are already settled by credits carried into next year
     const settled = q1(`SELECT COALESCE(SUM(c.amount),0) n FROM credit_ledger c JOIN swaps sw ON sw.id=c.swap_id JOIN weeks t ON t.id=sw.target_week_id
       WHERE c.family_id=? AND c.year=? AND t.year=?`, f.id, year + 1, year).n;
+    const lets = q1(`SELECT COUNT(*) c, COALESCE(SUM(b.amount - COALESCE(b.letting_cost,0)),0) n FROM bookings b JOIN weeks w ON w.id=b.week_id WHERE b.status='confirmed' AND w.year=? AND b.seller_family_id=?`, year, f.id);
     return { id: f.id, name: f.name, color: f.color, shares: f.share_units, carried, entitlement, weeks: held.length, value, settled, diff: value - entitlement + settled,
-      school_weeks: held.filter(w => w.school_holiday).length, released_weeks: released.length,
-      release_points: Math.round(released.reduce((a, w) => a + creditValue(w, s) * releaseWeight(w, s), 0) * 10) / 10 };
+      school_weeks: held.filter(w => w.school_holiday).length, released_weeks: held.filter(w => w.offer_friends && w.released_at).length, lets: lets.c, let_income: round2(lets.n) };
   });
-  const totalPoints = rows.reduce((a, r) => a + r.release_points, 0);
-  rows.forEach(r => r.pot_share = totalPoints ? round2(pot.net * r.release_points / totalPoints) : 0);
   const bands = Object.fromEntries(['school', 'summer', 'shoulder', 'winter'].map(b => [b, { credits: Math.round(Number(s['credit_' + b]) * yearScale(year, s)), weeks: weeks.filter(w => bandOf(w) === b).length }]));
-  return { year, per, bands, rows, pot: { ...pot, total_points: Math.round(totalPoints * 10) / 10, distributed: !!q1('SELECT 1 FROM ledger WHERE pot_year=? LIMIT 1', year) } };
+  return { year, per, bands, rows, income };
 }
 
 // Reminders: weeks still "undecided" get a nudge to their family admins at each reminder point (default 16 and 8 weeks before).
@@ -371,7 +369,7 @@ function runReminders() {
   }
   const asked = w => { const n = openEnquiries(w.id).length; return n ? `, ${n} famil${n > 1 ? 'ies have' : 'y has'} enquired` : ''; };
   for (const [fid, ws] of Object.entries(due)) notify(familyAdmins(Number(fid)),
-    `Still undecided: ${ws.map(w => `week ${w.week_no} (${fmtDate(w.start_date)}${asked(w)})`).join('; ')}. Please mark ${ws.length > 1 ? 'them' : 'it'} Using it, Willing to swap or Released. Releasing ${s.early_release_weeks}+ weeks ahead earns a full share of the let-income pot.`, '#/weeks');
+    `Still undecided: ${ws.map(w => `week ${w.week_no} (${fmtDate(w.start_date)}${asked(w)})`).join('; ')}. Please mark ${ws.length > 1 ? 'them' : 'it'} Using it, Willing to swap or Released. If you release a week and it lets, the payment, less the ${s.currency}${s.letting_cost} letting cost, is credited to your account.`, '#/weeks');
 }
 
 // Called whenever a week stops being available, so swap offers that depend on it don't hang around:
@@ -462,16 +460,17 @@ function balances() {
 }
 function confirmBooking(b, byUser) {
   const s = settings(); const w = q1('SELECT * FROM weeks WHERE id=?', b.week_id);
-  const commission = round2(b.amount * (Number(s.commission_pct) || 0) / 100);
-  const credit = round2(b.amount - commission);
-  const buyer = q1('SELECT * FROM users WHERE id=?', b.user_id);
-  run("UPDATE bookings SET status='confirmed', confirmed_at=datetime('now'), confirmed_by=? WHERE id=?", byUser.id, b.id);
+  const cost = round2(Math.min(b.amount, Number(s.letting_cost) || 0)), credit = round2(b.amount - cost);
+  const buyer = q1('SELECT * FROM users WHERE id=?', b.user_id), guest = b.guest_name || buyer.name;
+  run("UPDATE bookings SET status='confirmed', confirmed_at=datetime('now'), confirmed_by=?, letting_cost=? WHERE id=?", byUser.id, cost, b.id);
+  if (credit > 0) run("INSERT INTO ledger (family_id,year,type,description,amount,booking_id,created_by) VALUES (?,?,'rental_credit',?,?,?,?)",
+    b.seller_family_id, w.year, `Week ${w.week_no} ${w.year} let to ${guest}: ${s.currency}${b.amount} less ${s.currency}${cost} letting cost`, -credit, b.id, byUser.id);
   run("UPDATE weeks SET status='booked' WHERE id=?", w.id);
   if (b.method === 'account') run("INSERT INTO ledger (family_id,year,type,description,amount,booking_id,created_by) VALUES (?,?,?,?,?,?,?)",
     b.buyer_family_id, w.year, 'purchase', `Bought week ${w.week_no} ${w.year} from ${famName(b.seller_family_id)}`, b.amount, b.id, byUser.id);
   releaseSwaps(w, 'let', byUser);
   notify([b.user_id], `Confirmed: ${weekLabel(w)} is booked. Reference ${b.reference}.`, '#/bookings');
-  notify(familyAdmins(b.seller_family_id), `${weekLabel(w)} has been let to ${b.guest_name || buyer.name}. The ${s.currency}${credit} goes into the ${w.year} let-income pot, shared by the families who released weeks.`, '#/weeks');
+  notify(familyAdmins(b.seller_family_id), `${weekLabel(w)} has been let to ${guest}. ${s.currency}${credit} has been credited to your account (the ${s.currency}${b.amount} paid, less the ${s.currency}${cost} letting cost for the maintenance fund).`, '#/account');
 }
 
 // ---------------------------------------------------------------- routes
@@ -504,7 +503,7 @@ route('GET', '/api/me', ({ user }) => {
   const unread = q1('SELECT COUNT(*) n FROM notifications WHERE user_id=? AND read=0', user.id).n;
   const years = q('SELECT DISTINCT year FROM weeks ORDER BY year').map(r => r.year);
   const pub = { site_name: s.site_name, place_line: s.place_line, hero: s.hero_version || null, currency: s.currency, rate_summer: +s.rate_summer, rate_shoulder: +s.rate_shoulder, rate_winter: +s.rate_winter, rate_school: +s.rate_school, hold_days: +s.hold_days,
-    member_rate_pct: +s.member_rate_pct, members_first_days: +s.members_first_days, enquiry_hours: +s.enquiry_hours, early_release_weeks: +s.early_release_weeks, late_release_weight: +s.late_release_weight, credits_per_share: +s.credits_per_share,
+    member_rate_pct: +s.member_rate_pct, members_first_days: +s.members_first_days, enquiry_hours: +s.enquiry_hours, early_release_weeks: +s.early_release_weeks, late_release_weight: +s.late_release_weight, letting_cost: +s.letting_cost, credits_per_share: +s.credits_per_share,
     bank: { name: s.bank_name, account_name: s.bank_account_name, sort_code: s.bank_sort_code, account_no: s.bank_account_no, iban: s.bank_iban }, allow_member_account_charge: s.allow_member_account_charge === '1' };
   const fam = user.family_id ? q1('SELECT * FROM families WHERE id=?', user.family_id) : null;
   // things waiting for this person: swap offers to answer or confirm (admins), first refusals to take or pass (any family member)
@@ -571,7 +570,7 @@ route('GET', '/api/home', ({ user }) => {
       const horizon = Math.max(...String(s.reminder_weeks || '16').split(',').map(Number).filter(n => n > 0), 0) * 7;
       const undecided = q("SELECT * FROM weeks WHERE family_id=? AND in_use=0 AND offer_friends=0 AND offer_swap=0 AND status='own_use' AND start_date >= ? AND start_date <= date(?, ?) ORDER BY start_date", fid, t, t, `+${horizon} days`);
       if (undecided.length) attention.push({ tone: 'action', title: `${undecided.length} of your weeks in the next ${horizon / 7} weeks ${undecided.length > 1 ? 'are' : 'is'} still undecided`,
-        detail: `${undecided.slice(0, 5).map(w => `week ${w.week_no} (${fmtDate(w.start_date)})`).join(', ')}${undecided.length > 5 ? '…' : ''}. Releasing ${s.early_release_weeks}+ weeks ahead earns a full share of the let-income pot.`, link: '#/weeks', cta: 'Set in My weeks' });
+        detail: `${undecided.slice(0, 5).map(w => `week ${w.week_no} (${fmtDate(w.start_date)})`).join(', ')}${undecided.length > 5 ? '…' : ''}. If you release a week and it lets, the payment, less the ${s.currency}${s.letting_cost} letting cost, is credited to your account.`, link: '#/weeks', cta: 'Set in My weeks' });
       const bal = round2(q1('SELECT COALESCE(SUM(amount),0) n FROM ledger WHERE family_id=?', fid).n);
       if (bal > 0.005) attention.push({ tone: 'action', title: `Balance to pay: ${money(bal)}`, detail: `Pay ${s.bank_account_name} using reference ${famName(fid).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10)}-SC.`, link: '#/account', cta: 'View account' });
       const invited = q("SELECT name FROM users WHERE family_id=? AND active=1 AND email IS NOT NULL AND password_hash IS NULL", fid).map(r => r.name);
@@ -592,12 +591,12 @@ route('GET', '/api/home', ({ user }) => {
     .map(v => ({ week_id: v.id, year: v.year, title: weekLabel(v), price: v.price, band: bandOf(v), family: user.role === 'friend' ? null : v.family_name }));
   const myEnquiries = fam ? q("SELECT * FROM enquiries WHERE family_id=? AND status='open' ORDER BY created_at", fid).map(e => { const w = W(e.week_id), qn = openEnquiries(w.id);
     return { title: weekLabel(w), holder: famName(w.family_id), position: qn.findIndex(x => x.id === e.id) + 1, queue: qn.length, plan: planOf(w), week_id: w.id, year: w.year }; }) : [];
-  // family snapshot: credits and the let-income pot for the current year
+  // family snapshot: credits and let income for the current year
   let family = null;
   if (fam) {
     const year = q1('SELECT 1 FROM weeks WHERE year=?', new Date().getFullYear() + (new Date().getMonth() >= 9 ? 1 : 0)) ? new Date().getFullYear() + (new Date().getMonth() >= 9 ? 1 : 0) : new Date().getFullYear();
     const c = creditSummary(year, s), r = c.rows.find(x => x.id === fid);
-    family = { name: famName(fid), year, credits: r && { value: r.value, entitlement: r.entitlement, diff: r.diff, released: r.released_weeks, points: r.release_points, pot_share: r.pot_share }, pot: c.pot.net,
+    family = { name: famName(fid), year, credits: r && { value: r.value, entitlement: r.entitlement, diff: r.diff, released: r.released_weeks, lets: r.lets, let_income: r.let_income },
       balance: admin ? round2(q1('SELECT COALESCE(SUM(amount),0) n FROM ledger WHERE family_id=?', fid).n) : null };
   }
   // site admin: syndicate-wide jobs and system health
@@ -610,7 +609,6 @@ route('GET', '/api/home', ({ user }) => {
     const noAdmin = q("SELECT name FROM families f WHERE active=1 AND NOT EXISTS (SELECT 1 FROM users u WHERE u.family_id=f.id AND u.role='family_admin' AND u.active=1)").map(r => r.name);
     if (noAdmin.length) syndicate.push({ tone: 'urgent', title: `${noAdmin.join(', ')} ${noAdmin.length > 1 ? 'have' : 'has'} no family admin`, detail: 'Nobody can manage their weeks or answer enquiries.', link: '#/admin/users', cta: 'All users' });
     for (const { year } of q('SELECT DISTINCT year FROM budget_items ORDER BY year')) { const b = budgetSummary(year); if (b.total && !b.generated) syndicate.push({ tone: 'action', title: `${b.label || year} service charges not issued yet`, detail: `Budget ${money(b.total)} at ${money(b.rate)} a share.`, link: '#/admin/budget', cta: 'Budget & charges' }); }
-    for (const { year } of q('SELECT DISTINCT year FROM weeks WHERE year < ? ORDER BY year', new Date().getFullYear())) { const c = creditSummary(year, s); if (c.pot.net > 0 && !c.pot.distributed) syndicate.push({ tone: 'action', title: `The ${year} let-income pot (${money(c.pot.net)}) hasn't been shared out`, detail: 'Distribute it to credit each family against next year’s service charge.', link: '#/admin/credits', cta: 'Credits & pot' }); }
     const ny = new Date().getFullYear() + 1; if (!q1('SELECT 1 FROM weeks WHERE year=?', ny)) syndicate.push({ tone: 'action', title: `No weeks set up for ${ny} yet`, detail: 'Create the year and import its allocation.', link: '#/admin/weeks', cta: 'Weeks & allocation' });
     const demo = q1("SELECT COUNT(*) n FROM users WHERE active=1 AND email LIKE '%@example.com'").n;
     if (demo) syndicate.push({ tone: 'urgent', title: `${demo} demo logins are still active`, detail: 'Anyone who knows the demo password can log in. Add the real family admins, then remove the demo users, before families start using the site.', link: '#/admin/users', cta: 'All users' });
@@ -638,7 +636,7 @@ route('GET', '/api/home', ({ user }) => {
     const activity = q('SELECT a.*, u.name FROM audit a LEFT JOIN users u ON u.id=a.user_id ORDER BY a.id DESC LIMIT 8');
     const counts = { families: q1('SELECT COUNT(*) n FROM families WHERE active=1').n, logins: q1('SELECT COUNT(*) n FROM users WHERE active=1').n,
       released: q1("SELECT COUNT(*) n FROM weeks WHERE year=? AND offer_friends=1", year).n, enquiries: q1("SELECT COUNT(*) n FROM enquiries WHERE status='open'").n };
-    return { admin_home: true, residence, attention: syndicate, balances: balances(), credits: { year, rows: c.rows, pot: c.pot }, activity, counts, notifications: notes,
+    return { admin_home: true, residence, attention: syndicate, balances: balances(), credits: { year, rows: c.rows, income: c.income }, activity, counts, notifications: notes,
       system: { database: DB_FILE, volume: VOLUME || null, on_railway: ON_RAILWAY, data_since: since, email: !!(process.env.RESEND_API_KEY && process.env.EMAIL_FROM) } };
   }
   return { residence, attention, upcoming: [...trips, ...upcoming].sort((a, b) => a.start.localeCompare(b.start)).slice(0, 6), available, enquiries: myEnquiries, family, syndicate, notifications: notes,
@@ -1231,18 +1229,8 @@ route('POST', '/api/admin/credits', ({ user, body }) => {
   run('INSERT INTO credit_ledger (family_id,year,amount,description,created_by) VALUES (?,?,?,?,?)', Number(body.family_id), Number(body.year), amt, body.description || 'Adjustment by site admin', user.id);
   audit(user.id, 'credits.adjust', body); return { ok: true };
 });
-route('POST', '/api/admin/pot/distribute', ({ user, body }) => {
-  needAdmin(user); const year = Number(body.year); const c = creditSummary(year); const cur = settings().currency;
-  if (!c.pot.net) fail(400, `No let income for ${year} yet`);
-  if (!c.pot.total_points) fail(400, `No family released weeks in ${year}`);
-  tx(() => {
-    run('DELETE FROM ledger WHERE pot_year=?', year);
-    for (const r of c.rows) if (r.pot_share) run("INSERT INTO ledger (family_id,year,type,description,amount,created_by,pot_year) VALUES (?,?,'rental_credit',?,?,?,?)",
-      r.id, year + 1, `${year} let-income pot: ${r.release_points} of ${c.pot.total_points} release points (pot ${cur}${c.pot.net.toLocaleString('en-GB')})`, -r.pot_share, user.id, year);
-  });
-  for (const r of c.rows) if (r.pot_share) notify(familyAdmins(r.id), `Your share of the ${year} let-income pot, ${cur}${r.pot_share.toLocaleString('en-GB')}, has been credited against your ${year + 1} service charge.`, '#/account');
-  audit(user.id, 'pot.distribute', { year, net: c.pot.net }); return { ok: true };
-});
+// The yearly pot has been replaced by crediting each let directly (see confirmBooking). Earlier distributions stay in the ledger.
+route('POST', '/api/admin/pot/distribute', () => fail(400, 'Let income is now credited to each household when the guest’s payment is confirmed'));
 route('POST', '/api/admin/ledger', ({ user, body }) => {
   needAdmin(user); const amt = Number(body.amount); if (!amt) fail(400, 'Amount required');
   const type = body.type === 'payment' ? 'payment' : 'adjustment';
@@ -1334,6 +1322,24 @@ if (!q1('SELECT 1 FROM families')) {
     ['Annual reserve towards drive', 1000, 'Regular', 'Agreed in 2022'], ['Provision for new electric heaters', 4000, '', 'Agreed for Summer 2026']];
   BUDGET_2026.forEach(([d, a, c, n], k) => run('INSERT INTO budget_items (year,category,description,amount,sort,notes) VALUES (2026,?,?,?,?,?)', c || null, d, a, k, n || null));
   run("INSERT INTO budget_years (year,label,rate_per_week) VALUES (2026,'July 2025 – June 2026',370)");
+}
+// One-off move from the yearly let-income pot to crediting each let directly: paid lets still waiting for a pot share-out
+// are credited now to the family that released the week, less the letting cost. Years already shared out stay as they were.
+if (!q1("SELECT 1 FROM settings WHERE key='income_model'")) {
+  const s = settings(); let n = 0;
+  tx(() => {
+    for (const b of q(`SELECT b.* FROM bookings b JOIN weeks w ON w.id=b.week_id WHERE b.status='confirmed'
+        AND NOT EXISTS (SELECT 1 FROM ledger l WHERE l.booking_id=b.id AND l.type='rental_credit') AND NOT EXISTS (SELECT 1 FROM ledger p WHERE p.pot_year=w.year)`)) {
+      const w = q1('SELECT * FROM weeks WHERE id=?', b.week_id), cost = round2(Math.min(b.amount, Number(s.letting_cost) || 0)), credit = round2(b.amount - cost);
+      const guest = b.guest_name || q1('SELECT name FROM users WHERE id=?', b.user_id).name;
+      run('UPDATE bookings SET letting_cost=? WHERE id=?', cost, b.id);
+      if (credit > 0) run("INSERT INTO ledger (family_id,year,type,description,amount,booking_id,created_by) VALUES (?,?,'rental_credit',?,?,?,?)",
+        b.seller_family_id, w.year, `Week ${w.week_no} ${w.year} let to ${guest}: ${s.currency}${b.amount} less ${s.currency}${cost} letting cost`, -credit, b.id, b.confirmed_by);
+      n++;
+    }
+    run("INSERT INTO settings (key,value) VALUES ('income_model','direct')");
+  });
+  if (n) console.log(`Let income: ${n} paid let(s) credited to the families that released them`);
 }
 // Until the site admin has set a password, print their set-up link on every start (visible in the host's logs).
 for (const u of q("SELECT name, invite_token FROM users WHERE is_site_admin=1 AND invite_token IS NOT NULL AND password_hash IS NULL")) console.log(`Site admin set-up link for ${u.name}: ${BASE_URL}/#/invite/${u.invite_token}`);
