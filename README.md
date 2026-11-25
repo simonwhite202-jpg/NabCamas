@@ -36,9 +36,39 @@ To go live: log in as admin@example.com and go to **Site admin**:
 
 To start completely clean, delete the `data` folder before starting the server.
 
+## Design
+
+The look is contemporary Scandinavian minimalism: white cards on warm limestone, restrained green accents, one-pixel borders instead of shadows, and **Manrope** throughout. All of it comes from design tokens at the top of `public/styles.css` (palette, status colours, type sizes, spacing, radii), used by shared components:
+- the woodland **sidebar**, which becomes a slide-in menu on tablets and phones;
+- buttons, form fields, tables, tags, drawers, modals and toasts.
+
+Icons are thin-stroke **Lucide** icons, bundled in `public/icons.js` (ISC licence), so nothing extra is downloaded.
+
+| Token | Colour | Used for |
+|---|---|---|
+| Deep woodland | `#243D32` | Sidebar, your household's weeks |
+| Fern green | `#597561` | Primary buttons, links, focus |
+| Soft sage | `#E5EBE2` | Soft fills, active menu item |
+| Limestone | `#F5F5F0` | Page background |
+| Chalk white | `#FFFFFF` | Cards |
+| Graphite | `#303833` | Text |
+| Subtle border | `#DFE4DC` | One-pixel rules |
+
+**Calendar status colours** are muted, and each one is always paired with a text label:
+
+| Colour | Status |
+|---|---|
+| Woodland | Your household's weeks |
+| Grey | Other households |
+| Fern | Available to book |
+| Sand | Requested or pending |
+| Slate | Booked |
+
+**Overview photograph.** The site admin can upload a panoramic photograph under **Settings → Overview photograph**. It's resized in the browser, stored next to the database (so it survives updates), and shown on the Overview and sign-in pages. Without one, both pages simply show the typographic header.
+
 ## Home page and navigation
 
-Everyone lands on **Home**. At the top, **Needs your attention** lists what needs doing; below it are panels with useful information and quick links. The calendar is its own tab.
+Everyone lands on the **Overview** (Home), headed *Welcome to Camas*, with who's in residence this week, who's arriving next and your next stay. At the top, **Needs your attention** lists what needs doing; below it are panels with useful information and quick links. The calendar is its own tab.
 
 | Who | Navigation | Needs your attention shows |
 |---|---|---|

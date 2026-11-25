@@ -149,7 +149,7 @@ const fail = (s, m) => { throw new HttpError(s, m); };
 const round2 = n => Math.round(n * 100) / 100;
 
 const DEFAULT_SETTINGS = {
-  site_name: 'Nab Camas', currency: '£', rate_summer: '1200', rate_shoulder: '800', rate_winter: '500',
+  site_name: 'Nab Camas', place_line: 'Loch Carron · Scottish Highlands', hero_version: '', currency: '£', rate_summer: '1200', rate_shoulder: '800', rate_winter: '500',
   commission_pct: '0', hold_days: '3', winter_changeover_day: '5', summer_changeover_day: '6', summer_changeover_from: '12', summer_changeover_to: '43',
   bank_name: 'Syndicate bank account', bank_account_name: 'Nab Camas Syndicate', bank_sort_code: '00-00-00', bank_account_no: '00000000', bank_iban: '',
   summer_months: '6,7,8', shoulder_months: '4,5,9,10', allow_member_account_charge: '1',
@@ -470,7 +470,7 @@ route('GET', '/api/me', ({ user }) => {
   need(user, true); resolveFirstRefusal(); const s = settings();
   const unread = q1('SELECT COUNT(*) n FROM notifications WHERE user_id=? AND read=0', user.id).n;
   const years = q('SELECT DISTINCT year FROM weeks ORDER BY year').map(r => r.year);
-  const pub = { site_name: s.site_name, currency: s.currency, rate_summer: +s.rate_summer, rate_shoulder: +s.rate_shoulder, rate_winter: +s.rate_winter, rate_school: +s.rate_school, hold_days: +s.hold_days,
+  const pub = { site_name: s.site_name, place_line: s.place_line, hero: s.hero_version || null, currency: s.currency, rate_summer: +s.rate_summer, rate_shoulder: +s.rate_shoulder, rate_winter: +s.rate_winter, rate_school: +s.rate_school, hold_days: +s.hold_days,
     member_rate_pct: +s.member_rate_pct, members_first_days: +s.members_first_days, enquiry_hours: +s.enquiry_hours, early_release_weeks: +s.early_release_weeks, late_release_weight: +s.late_release_weight, credits_per_share: +s.credits_per_share,
     bank: { name: s.bank_name, account_name: s.bank_account_name, sort_code: s.bank_sort_code, account_no: s.bank_account_no, iban: s.bank_iban }, allow_member_account_charge: s.allow_member_account_charge === '1' };
   const fam = user.family_id ? q1('SELECT * FROM families WHERE id=?', user.family_id) : null;
@@ -572,6 +572,18 @@ route('GET', '/api/home', ({ user }) => {
     if (!process.env.RESEND_API_KEY || !process.env.EMAIL_FROM) syndicate.push({ tone: 'info', title: 'Emails aren’t being sent', detail: 'Reminders, invitations and notifications only appear in the bell. Set RESEND_API_KEY and EMAIL_FROM on the server to send them by email.', link: '#/home', cta: '' });
   }
   const notes = q('SELECT * FROM notifications WHERE user_id=? ORDER BY id DESC LIMIT 6', user.id);
+  const stay = w => {
+    if (!w) return null;
+    const b = q1("SELECT * FROM bookings WHERE week_id=? AND status IN ('pending','confirmed')", w.id), p = planOf(w), friend = user.role === 'friend';
+    const base = { week_no: w.week_no, year: w.year, start: w.start_date, end: w.end_date, week_id: w.id, mine: fam && w.family_id === fid };
+    if (friend) return { ...base, household: b && b.user_id === user.id ? 'Your stay' : null,
+      status: b && b.user_id === user.id ? 'Your stay' : b || p !== 'released' ? 'Occupied' : 'Available' };
+    if (b) return { ...base, household: b.guest_name || q1('SELECT name FROM users WHERE id=?', b.user_id).name, detail: `Guests, via ${famName(w.family_id)}`, status: b.status === 'confirmed' ? 'Booked' : 'Reserved' };
+    if (!w.family_id) return { ...base, household: 'Syndicate week', detail: '', status: 'Syndicate' };
+    return { ...base, household: famName(w.family_id), detail: '', status: { using: 'Using it', undecided: 'Allocated', swap: 'Allocated · willing to swap', released: 'Released' }[p] };
+  };
+  const residence = { now: stay(q1('SELECT * FROM weeks WHERE start_date <= ? AND end_date > ? ORDER BY start_date DESC LIMIT 1', t, t)),
+    next: q('SELECT * FROM weeks WHERE start_date > ? ORDER BY start_date LIMIT 3', t).map(stay) };
   const since = q1('SELECT MIN(created_at) d FROM users').d;
   if (user.role === 'site_admin') {
     const year = q1('SELECT 1 FROM weeks WHERE year=?', new Date().getFullYear() + (new Date().getMonth() >= 9 ? 1 : 0)) ? new Date().getFullYear() + (new Date().getMonth() >= 9 ? 1 : 0) : new Date().getFullYear();
@@ -579,10 +591,10 @@ route('GET', '/api/home', ({ user }) => {
     const activity = q('SELECT a.*, u.name FROM audit a LEFT JOIN users u ON u.id=a.user_id ORDER BY a.id DESC LIMIT 8');
     const counts = { families: q1('SELECT COUNT(*) n FROM families WHERE active=1').n, logins: q1('SELECT COUNT(*) n FROM users WHERE active=1').n,
       released: q1("SELECT COUNT(*) n FROM weeks WHERE year=? AND offer_friends=1", year).n, enquiries: q1("SELECT COUNT(*) n FROM enquiries WHERE status='open'").n };
-    return { admin_home: true, attention: syndicate, balances: balances(), credits: { year, rows: c.rows, pot: c.pot }, activity, counts, notifications: notes,
+    return { admin_home: true, residence, attention: syndicate, balances: balances(), credits: { year, rows: c.rows, pot: c.pot }, activity, counts, notifications: notes,
       system: { database: DB_FILE, volume: VOLUME || null, on_railway: ON_RAILWAY, data_since: since, email: !!(process.env.RESEND_API_KEY && process.env.EMAIL_FROM) } };
   }
-  return { attention, upcoming: [...trips, ...upcoming].sort((a, b) => a.start.localeCompare(b.start)).slice(0, 6), available, enquiries: myEnquiries, family, syndicate, notifications: notes,
+  return { residence, attention, upcoming: [...trips, ...upcoming].sort((a, b) => a.start.localeCompare(b.start)).slice(0, 6), available, enquiries: myEnquiries, family, syndicate, notifications: notes,
     system: user.is_site_admin ? { database: DB_FILE, volume: VOLUME || null, on_railway: ON_RAILWAY, data_since: since, email: !!(process.env.RESEND_API_KEY && process.env.EMAIL_FROM) } : null };
 });
 route('GET', '/api/weeks', ({ user, query }) => {
@@ -926,6 +938,21 @@ route('POST', '/api/notifications/read', ({ user }) => { need(user, true); run('
 
 // --- site admin
 route('GET', '/api/admin/settings', ({ user }) => { needAdmin(user); return settings(); });
+// Optional panoramic photograph for the Overview and login pages. Stored next to the database (on the volume).
+const HERO_FILE = path.join(path.dirname(DB_FILE), 'hero.jpg');
+route('POST', '/api/admin/hero', ({ user, body }) => {
+  needAdmin(user);
+  const m = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/.exec(String(body.data || '')); if (!m) fail(400, 'Please choose a JPEG, PNG or WebP image');
+  const buf = Buffer.from(m[2], 'base64'); if (buf.length > 4e6) fail(413, 'That image is too large. Please use one under 4 MB.');
+  fs.writeFileSync(HERO_FILE, buf);
+  run("INSERT INTO settings VALUES ('hero_version',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", String(Date.now()));
+  audit(user.id, 'settings.photo', 'Overview photograph updated'); return { ok: true };
+});
+route('DELETE', '/api/admin/hero', ({ user }) => {
+  needAdmin(user); try { fs.unlinkSync(HERO_FILE); } catch { }
+  run("INSERT INTO settings VALUES ('hero_version','') ON CONFLICT(key) DO UPDATE SET value=excluded.value");
+  audit(user.id, 'settings.photo', 'Overview photograph removed'); return { ok: true };
+});
 route('PUT', '/api/admin/settings', ({ user, body }) => {
   needAdmin(user);
   for (const k of Object.keys(DEFAULT_SETTINGS)) if (body[k] !== undefined) run('INSERT INTO settings VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', k, String(body[k]));
@@ -1102,9 +1129,14 @@ route('POST', '/api/admin/ledger', ({ user, body }) => {
 route('GET', '/api/admin/audit', ({ user }) => { needAdmin(user); return q('SELECT a.*, u.name FROM audit a LEFT JOIN users u ON u.id=a.user_id ORDER BY a.id DESC LIMIT 200'); });
 
 // ---------------------------------------------------------------- server
-const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' };
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' };
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
+  if (url.pathname === '/media/hero') {
+    if (!fs.existsSync(HERO_FILE)) { res.writeHead(404); return res.end(); }
+    res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'public, max-age=86400' });
+    return fs.createReadStream(HERO_FILE).pipe(res);
+  }
   if (!url.pathname.startsWith('/api/')) {
     let p = path.normalize(path.join(__dirname, 'public', url.pathname === '/' ? 'index.html' : url.pathname));
     if (!p.startsWith(path.join(__dirname, 'public')) || !fs.existsSync(p) || fs.statSync(p).isDirectory()) p = path.join(__dirname, 'public', 'index.html');

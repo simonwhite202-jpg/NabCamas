@@ -24,13 +24,6 @@ const isFam = () => ['family_admin', 'family_member'].includes(S.me.user.role);
 const isFamAdmin = () => S.me.user.role === 'family_admin';
 const isSite = () => !!S.me.user.is_site_admin;
 const formData = f => Object.fromEntries([...new FormData(f).entries()]);
-const icon = {
-  bell: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>',
-  out: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>',
-  x: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>',
-  mark: '<svg width="18" height="18" viewBox="0 0 32 32"><path d="M5 24 L16 8 L27 24 Z" fill="#fff7ee"/><circle cx="23" cy="9" r="3" fill="#fff7ee"/></svg>',
-};
-
 // ------------------------------------------------------------ boot / routing
 async function boot() {
   const hash = location.hash;
@@ -53,24 +46,26 @@ async function route() {
 }
 
 // ------------------------------------------------------------ login / invite
+function loginLayout(inner) {
+  $('#app').innerHTML = `<div class="login"><div class="login-art" id="loginArt"><span class="wordmark">Nab Camas</span>
+    <div><h2>A private retreat on Loch Carron</h2><p>The owners’ portal for the households of Nab Camas and their trusted friends.</p></div></div>
+    <div class="login-form">${inner}</div></div>`;
+  const img = new Image(); img.onload = () => { const a = $('#loginArt'); if (a) a.style.backgroundImage = 'url(/media/hero)'; }; img.src = '/media/hero';
+}
 function renderLogin(msg) {
-  $('#app').innerHTML = `<div class="login"><form class="card" id="lf">
-    <div class="row" style="margin-bottom:18px"><div class="brand-mark" style="width:40px;height:40px">${icon.mark}</div>
-    <div><h1 style="margin:0;font-size:24px">Nab Camas</h1><div class="muted small">Syndicate owners’ portal</div></div></div>
-    ${msg ? `<div class="notice" style="margin-bottom:14px">${esc(msg)}</div>` : ''}
-    <div class="field"><label>Email</label><input name="email" type="email" autocomplete="username" required autofocus></div>
-    <div class="field"><label>Password</label><input name="password" type="password" autocomplete="current-password" required></div>
-    <button class="btn primary block">Log in</button>
-    <p class="muted small" style="margin:16px 0 0">New here? Your family admin will send you an invitation link. Forgotten your password? Ask your family admin to resend your invitation.</p>
-  </form></div>`;
+  loginLayout(`<form id="lf"><span class="eyebrow">Owners’ portal</span><h1>Sign in</h1><p class="muted" style="margin:0 0 24px">Welcome back. Sign in with the email address your invitation was sent to.</p>
+    ${msg ? `<div class="notice" style="margin-bottom:16px">${esc(msg)}</div>` : ''}
+    <div class="field"><label for="lf-email">Email</label><input id="lf-email" name="email" type="email" autocomplete="username" required autofocus></div>
+    <div class="field"><label for="lf-pw">Password</label><input id="lf-pw" name="password" type="password" autocomplete="current-password" required></div>
+    <button class="btn primary block" style="margin-top:8px">Sign in</button>
+    <p class="muted small" style="margin:24px 0 0">New here? Your household’s admin will send you an invitation. Forgotten your password? Ask them to send a new link.</p></form>`);
   $('#lf').onsubmit = guard(async e => { e.preventDefault(); await api('/login', { body: formData(e.target) }); location.hash = '#/home'; boot(); });
 }
 async function renderInvite(tok) {
   let inv; try { inv = await api('/invite/' + tok); } catch (e) { return renderLogin(e.message); }
-  $('#app').innerHTML = `<div class="login"><form class="card" id="inf">
-    <h1>Welcome, ${esc(inv.name.split(' ')[0])}</h1><p class="muted">Choose a password to finish setting up your login for <b>${esc(inv.email)}</b>.</p>
-    <div class="field"><label>New password (8+ characters)</label><input name="password" type="password" minlength="8" autocomplete="new-password" required></div>
-    <button class="btn primary block">Set password &amp; continue</button></form></div>`;
+  loginLayout(`<form id="inf"><span class="eyebrow">Welcome</span><h1>Hello, ${esc(inv.name.split(' ')[0])}</h1><p class="muted" style="margin:0 0 24px">Choose a password to finish setting up your login for <b>${esc(inv.email)}</b>.</p>
+    <div class="field"><label for="inf-pw">New password (8 or more characters)</label><input id="inf-pw" name="password" type="password" minlength="8" autocomplete="new-password" required></div>
+    <button class="btn primary block" style="margin-top:8px">Set password and continue</button></form>`);
   $('#inf').onsubmit = guard(async e => { e.preventDefault(); await api('/invite/' + tok, { body: formData(e.target) }); location.hash = '#/home'; boot(); });
 }
 
@@ -88,40 +83,43 @@ function navOn(k, tab) {
 //   site admin     → a separate login with no family: Home, Calendar and the admin pages
 const ADMIN_PAGES = [['admin/overview', 'Payments'], ['admin/budget', 'Budget'], ['admin/weeks', 'Weeks'], ['admin/credits', 'Credits & pot'], ['admin/families', 'Families'], ['admin/users', 'Users'], ['admin/settings', 'Settings'], ['admin/audit', 'Activity']];
 const isSiteRole = () => S.me.user.role === 'site_admin';
+const NAV_ICON = { home: 'house', calendar: 'calendar-days', weeks: 'calendar-range', enquiries: 'messages-square', bookings: 'bed-double', account: 'wallet', people: 'users', admin: 'settings',
+  'admin/overview': 'banknote', 'admin/budget': 'calculator', 'admin/weeks': 'calendar-range', 'admin/credits': 'coins', 'admin/families': 'users-round', 'admin/users': 'user-cog', 'admin/settings': 'settings', 'admin/audit': 'history' };
 function navTabs() {
-  if (isSiteRole()) return [['home', 'Home'], ['calendar', 'Calendar'], ...ADMIN_PAGES];
-  const friend = S.me.user.role === 'friend', fam = isFam(), n = S.me.pendingSwaps ? `<span class="dot-count">${S.me.pendingSwaps}</span>` : '';
-  return [['home', 'Home'], ['calendar', friend ? 'Available weeks' : 'Calendar'], fam && ['weeks', 'My weeks'], fam && ['enquiries', `Enquiries${n}`],
+  if (isSiteRole()) return [['home', 'Overview'], ['calendar', 'Calendar'], ...ADMIN_PAGES];
+  const friend = S.me.user.role === 'friend', fam = isFam();
+  return [['home', 'Overview'], ['calendar', friend ? 'Available weeks' : 'Calendar'], fam && ['weeks', 'My weeks'], fam && ['enquiries', 'Enquiries', S.me.pendingSwaps],
     ['bookings', friend ? 'My bookings' : 'Bookings'], isFamAdmin() && ['account', 'Account'], ['people', friend ? 'My details' : 'Family & friends'], isSite() && ['admin', 'Site admin']].filter(Boolean);
 }
 function renderShell(tab) {
-  const u = S.me.user; const fam = S.me.family;
-  const tabs = navTabs();
-  if (!$('main')) $('#app').innerHTML = '<header class="topbar"><div class="topbar-inner"></div></header><main></main>';
-  $('.topbar').classList.toggle('many', tabs.length > 6);
-  $('.topbar-inner').innerHTML = `
-    <a class="brand" href="#/home"><span class="brand-mark">${icon.mark}</span>${esc(S.me.settings.site_name)}</a>
-    <nav class="tabs">${tabs.map(([k, l]) => `<a href="#/${k}" class="${navOn(k, tab) ? 'on' : ''}">${l}</a>`).join('')}</nav>
-    <button class="iconbtn" id="bell" title="Notifications">${icon.bell}${S.me.unread ? `<span class="dot-count">${S.me.unread}</span>` : ''}</button>
-    <div class="user-chip"><span class="avatar">${esc((u.name.match(/\b[A-Za-z]/g) || ['?']).join('').slice(0, 2).toUpperCase())}</span>
-      <span class="uname"><b style="color:var(--ink)">${esc(u.name)}</b><br>${roleName(u.role)}${fam ? ' · ' + esc(fam.name) : ''}</span></div>
-    <button class="iconbtn" id="logout" title="Log out">${icon.out}</button>`;
-  $('#logout').onclick = guard(async () => { await api('/logout', { body: {} }); S.me = null; $('#app').innerHTML = ''; renderLogin(); });
-  $('#bell').onclick = guard(showNotifications);
+  const u = S.me.user, fam = S.me.family, tabs = navTabs(), site = esc(S.me.settings.site_name);
+  if (!$('main')) $('#app').innerHTML = '<div class="shell"><aside class="sidebar" aria-label="Main menu"></aside><div class="menu-scrim"></div><header class="mobilebar"></header><main id="main"></main></div>';
+  const initials = esc((u.name.match(/\b[A-Za-z]/g) || ['?']).join('').slice(0, 2).toUpperCase());
+  const unread = S.me.unread ? `<span class="count">${S.me.unread}</span>` : '';
+  $('.sidebar').innerHTML = `<a class="wordmark" href="#/home">${site}</a><span class="place">${esc(S.me.settings.place_line || '')}</span>
+    <nav class="side-nav">${tabs.map(([k, l, n]) => { const on = navOn(k, tab); return `<a href="#/${k}" class="${on ? 'on' : ''}" ${on ? 'aria-current="page"' : ''}>${icon(NAV_ICON[k] || 'chevron-right')}<span>${l}</span>${n ? `<span class="count">${n}</span>` : ''}</a>`; }).join('')}</nav>
+    <div class="side-foot"><div class="side-user"><span class="avatar">${initials}</span><span class="who"><b>${esc(u.name)}</b><span>${roleName(u.role)}${fam ? ' · ' + esc(fam.name) : ''}</span></span></div>
+      <div class="side-actions"><button class="side-btn" data-notes>${icon('bell')}Notices${unread}</button><button class="side-btn" data-logout>${icon('log-out')}Sign out</button></div></div>`;
+  $('.mobilebar').innerHTML = `<button class="iconbtn" data-menu aria-label="Open menu">${icon('menu')}</button><a class="wordmark" href="#/home">${site}</a><button class="iconbtn" data-notes aria-label="Notifications">${icon('bell')}${unread}</button>`;
+  document.querySelectorAll('[data-notes]').forEach(b => b.onclick = guard(showNotifications));
+  $('[data-logout]').onclick = guard(async () => { await api('/logout', { body: {} }); S.me = null; document.body.classList.remove('menu-open'); $('#app').innerHTML = ''; renderLogin(); });
+  $('[data-menu]').onclick = () => document.body.classList.toggle('menu-open');
+  $('.menu-scrim').onclick = () => document.body.classList.remove('menu-open');
+  $('.sidebar').querySelectorAll('a').forEach(a => a.addEventListener('click', () => document.body.classList.remove('menu-open')));
 }
 async function showNotifications() {
-  if ($('.notif-pop')) return $('.notif-pop').remove();
+  document.body.classList.remove('menu-open');
   const list = await api('/notifications');
-  const pop = document.createElement('div'); pop.className = 'notif-pop';
-  pop.innerHTML = list.length ? list.map(n => `<a href="${esc(n.link || '#/calendar')}" class="${n.read ? '' : 'unread'}">${esc(n.text)}<div class="tiny muted">${new Date(n.created_at + 'Z').toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}</div></a>`).join('') : '<div class="empty small">No notifications yet</div>';
-  $('.topbar').append(pop); pop.onclick = () => pop.remove();
-  if (S.me.unread) { await api('/notifications/read', { body: {} }); S.me.unread = 0; $('#bell .dot-count')?.remove(); }
+  const body = openDrawer('<h2 style="margin:0">Notices</h2>', 'Updates about your weeks, enquiries and bookings',
+    list.length ? `<div class="note-list">${list.map(n => `<a href="${esc(n.link || '#/home')}" class="${n.read ? '' : 'unread'}">${esc(n.text)}<div class="tiny muted" style="margin-top:4px">${new Date(n.created_at + 'Z').toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}</div></a>`).join('')}</div>` : '<p class="muted">Nothing yet. Notices about your weeks, enquiries and bookings will appear here.</p>');
+  body.querySelectorAll('a').forEach(a => a.addEventListener('click', closeOverlay));
+  if (S.me.unread) { await api('/notifications/read', { body: {} }); S.me.unread = 0; renderShell(currentTab()); }
 }
 
 // ------------------------------------------------------------ overlays
 function closeOverlay() { $('#drawer-root').innerHTML = ''; }
 function openDrawer(title, sub, bodyHtml) {
-  $('#drawer-root').innerHTML = `<div class="scrim"></div><aside class="drawer" role="dialog"><header><div class="grow">${title}${sub ? `<div class="muted small">${sub}</div>` : ''}</div><button class="iconbtn" data-close>${icon.x}</button></header><div class="body">${bodyHtml}</div></aside>`;
+  $('#drawer-root').innerHTML = `<div class="scrim"></div><aside class="drawer" role="dialog"><header><div class="grow">${title}${sub ? `<div class="muted small">${sub}</div>` : ''}</div><button class="iconbtn" data-close aria-label="Close">${icon('x')}</button></header><div class="body">${bodyHtml}</div></aside>`;
   $('.scrim').onclick = closeOverlay; $('[data-close]').onclick = closeOverlay; return $('.drawer .body');
 }
 function openModal(html, wide) {
@@ -130,63 +128,74 @@ function openModal(html, wide) {
 }
 
 // ------------------------------------------------------------ home
+// shared overview pieces
+const ATT_ICON = { urgent: 'circle-alert', action: 'clock', info: 'info' };
+const todoItem = a => `<div class="todo ${a.tone}"><span class="todo-ico">${icon(ATT_ICON[a.tone] || 'info')}</span><div class="grow" style="min-width:0"><div class="todo-title">${esc(a.title)}</div><div class="small muted">${esc(a.detail)}</div></div>${a.cta ? `<a class="btn sm ${a.tone === 'urgent' ? 'primary' : ''}" href="${a.link}">${esc(a.cta)}</a>` : ''}</div>`;
+const panelCard = (ico, title, body, foot) => `<div class="card panel"><h3>${icon(ico)}${title}</h3>${body}${foot ? `<div class="panel-foot">${foot}</div>` : ''}</div>`;
+const quiet = t => `<p class="small muted" style="margin:0">${t}</p>`;
+const stamp = t => new Date(t.replace(' ', 'T') + (t.length > 10 ? 'Z' : '')).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
+function welcomeHeader(greet) {
+  const s = S.me.settings, u = S.me.user;
+  return `<header class="welcome"><span class="eyebrow">${esc(s.place_line || '')}</span><h1>Welcome to Camas</h1>
+      <p>${greet}, ${esc(u.name.split(' ')[0])}. It’s ${dfmt(todayStr(), { weekday: 'long', day: 'numeric', month: 'long' })}.</p></header>
+    ${s.hero ? `<img class="hero-img" src="/media/hero?v=${esc(s.hero)}" alt="Nab Camas on Loch Carron">` : ''}`;
+}
+const STAY_TAG = { 'Booked': 'booked', 'Your stay': 'booked', 'Reserved': 'pending', 'Released': 'available', 'Available': 'available', 'Using it': 'yours' };
+function residenceStrip(h, nextStay) {
+  const r = h.residence || {};
+  const show = (label, x, none) => `<div class="card"><span class="eyebrow">${label}</span>${x ? `<div class="who">${esc(x.mine ? `${x.household} (you)` : x.household || x.status)}</div>
+      <div class="when">${dfmt(x.start)} – ${dfmt(x.end)} · week ${x.week_no}${x.detail ? ` · ${esc(x.detail)}` : ''}</div><span class="tag ${x.mine ? 'yours' : STAY_TAG[x.status] || ''}">${esc(x.status)}</span>` : `<div class="when">${none}</div>`}</div>`;
+  const arriving = (r.next || []).find(Boolean);
+  return `<section class="residence">${show('In residence this week', r.now, 'No week is set up for today.')}${show('Arriving next', arriving, 'No arrivals set up yet.')}
+    ${nextStay !== undefined ? `<div class="card"><span class="eyebrow">Your next stay</span>${nextStay ? `<div class="who">${esc(nextStay.title)}</div><div class="when">${esc(nextStay.detail || '')}</div>` : '<div class="when">Nothing booked yet. Browse the calendar to plan a stay.</div>'}</div>` : ''}</section>`;
+}
 async function viewHome(main) {
   const h = await api('/home'), u = S.me.user, friend = u.role === 'friend', hr = new Date().getHours();
   const greet = hr < 12 ? 'Good morning' : hr < 18 ? 'Good afternoon' : 'Good evening';
   if (h.admin_home) return adminHome(main, h, greet);
-  const todo = a => `<div class="todo ${a.tone}"><div class="grow" style="min-width:0"><div class="todo-title">${esc(a.title)}</div><div class="small muted">${esc(a.detail)}</div></div>${a.cta ? `<a class="btn sm ${a.tone === 'urgent' ? 'primary' : ''}" href="${a.link}">${esc(a.cta)}</a>` : ''}</div>`;
   const weekRow = (x, right) => `<button class="list-row" data-open-week="${x.week_id}" data-year="${x.year}"><span class="grow" style="min-width:0"><b>${esc(x.title)}</b><div class="tiny muted">${esc(x.detail || '')}</div></span>${right || ''}</button>`;
-  const panel = (title, body, foot) => `<div class="card panel"><h3>${title}</h3>${body}${foot ? `<div class="panel-foot">${foot}</div>` : ''}</div>`;
-  const empty = t => `<p class="small muted" style="margin:0">${t}</p>`;
   const links = friend ? [['#/calendar', 'Browse available weeks'], ['#/bookings', 'My bookings'], ['#/people', 'Update my details']]
-    : [['#/calendar', 'Browse the calendar'], ['#/weeks', isFamAdmin() ? 'Set my family’s weeks' : 'See my family’s weeks'], ['#/enquiries', 'Enquiries'], ['#/people', isFamAdmin() ? 'Add family or friends' : 'Add a trusted friend'],
-      ...(isFamAdmin() ? [['#/account', 'Family account']] : []), ...(isSite() ? [['#/admin/overview', 'Payments & balances'], ['#/admin/budget', 'Budget & charges'], ['#/admin/credits', 'Credits & pot']] : [])];
+    : [['#/calendar', 'Browse the calendar'], ['#/weeks', isFamAdmin() ? 'Set your household’s weeks' : 'Your household’s weeks'], ['#/enquiries', 'Enquiries'], ['#/people', isFamAdmin() ? 'Add family or friends' : 'Add a trusted friend'], ...(isFamAdmin() ? [['#/account', 'Household account']] : [])];
   const f = h.family, c = f && f.credits;
-  main.innerHTML = `<h1 style="margin-bottom:2px">${greet}, ${esc(u.name.split(' ')[0])}</h1>
-    <p class="muted" style="margin-top:0">${roleName(u.role)}${S.me.family ? ' · ' + esc(S.me.family.name) : ''}${u.is_site_admin ? ' · Site admin' : ''}</p>
-    <section class="stack" style="margin-bottom:28px"><h2 style="margin-bottom:0">Needs your attention</h2>
-      ${h.attention.length ? h.attention.map(todo).join('') : `<div class="todo info"><div class="grow"><div class="todo-title">All clear</div><div class="small muted">Nothing needs your attention right now.</div></div></div>`}</section>
+  const going = h.upcoming.find(x => ['using', 'booked', 'reserved'].includes(x.plan)) || null;
+  const upTag = x => x.plan === 'using' || x.plan === 'booked' ? '<span class="tag booked">Going</span>' : x.plan === 'reserved' ? '<span class="tag pending">Awaiting payment</span>' : x.plan === 'let' ? '<span class="tag booked">Let</span>' : x.plan === 'released' ? '<span class="tag available">Released</span>' : x.plan === 'swap' ? '<span class="tag outline">Will swap</span>' : '<span class="tag">Undecided</span>';
+  main.innerHTML = `${welcomeHeader(greet)}${residenceStrip(h, going)}
+    <section class="stack" style="margin-bottom:var(--sp-6)"><div class="section-title"><h2>Outstanding actions</h2>${h.attention.length ? `<span class="muted small">${h.attention.length} to look at</span>` : ''}</div>
+      ${h.attention.length ? h.attention.map(todoItem).join('') : todoItem({ tone: 'info', title: 'All clear', detail: 'Nothing needs your attention right now.' })}</section>
     <div class="home-grid">
-      ${panel('Coming up', h.upcoming.length ? h.upcoming.map(x => weekRow(x, x.plan === 'using' || x.plan === 'booked' ? '<span class="badge green">Going</span>' : x.plan === 'reserved' ? '<span class="badge amber">Awaiting payment</span>' : x.plan === 'let' ? '<span class="badge blue">Let</span>' : x.plan === 'released' ? '<span class="badge">Released</span>' : x.plan === 'swap' ? '<span class="badge blue">Swap</span>' : '<span class="badge">Undecided</span>')).join('')
-        : empty(friend ? 'You have no upcoming stays. Book a week below.' : 'Nothing coming up.'), friend ? '' : '<a href="#/weeks">All my family’s weeks →</a>')}
-      ${panel(friend ? 'Weeks you can book' : 'Released weeks you can book', h.available.length ? h.available.map(x => weekRow({ ...x, detail: x.family ? `From ${x.family}` : '' }, `<span class="badge green">${money(x.price)}</span>`)).join('')
-        : empty('Nothing is available right now. You’ll get a notification when a week is released.'), `<a href="#/calendar">${friend ? 'All available weeks' : 'Open the calendar'} →</a>`)}
-      ${friend ? '' : panel('Your enquiries', h.enquiries.length ? h.enquiries.map(x => weekRow({ ...x, detail: `${x.holder} · ${PLAN[x.plan] ? PLAN[x.plan].label : ''}` }, `<span class="badge blue">${ordinal(x.position)} of ${x.queue}</span>`)).join('')
-        : empty('Click any other family’s week on the calendar to enquire about it. If they release it, you get first refusal.'), '<a href="#/enquiries">All enquiries →</a>')}
-      ${f ? panel(`${esc(f.name)} at a glance · ${f.year}`, `<dl class="kv" style="grid-template-columns:1fr auto">
+      ${panelCard('calendar-clock', 'Upcoming stays', h.upcoming.length ? h.upcoming.map(x => weekRow(x, upTag(x))).join('') : quiet(friend ? 'You have no upcoming stays yet.' : 'Nothing coming up.'), friend ? '' : '<a href="#/weeks">All your household’s weeks →</a>')}
+      ${panelCard('key-round', friend ? 'Weeks you can book' : 'Weeks available to book', h.available.length ? h.available.map(x => weekRow({ ...x, detail: x.family ? `From ${x.family}` : '' }, `<span class="tag available">${money(x.price)}</span>`)).join('')
+        : quiet('Nothing is available right now. You’ll get a notice when a week is released.'), `<a href="#/calendar">${friend ? 'All available weeks' : 'Open the calendar'} →</a>`)}
+      ${friend ? '' : panelCard('messages-square', 'Your enquiries', h.enquiries.length ? h.enquiries.map(x => weekRow({ ...x, detail: `${x.holder} · ${PLAN[x.plan] ? PLAN[x.plan].label : ''}` }, `<span class="tag pending">${ordinal(x.position)} of ${x.queue}</span>`)).join('')
+        : quiet('Open any other household’s week on the calendar to enquire about it. If they release it, you get first refusal.'), '<a href="#/enquiries">All enquiries →</a>')}
+      ${f ? panelCard('coins', `${esc(f.name)} at a glance · ${f.year}`, `<dl class="kv" style="grid-template-columns:1fr auto">
           ${c ? `<dt>Credit value of your weeks</dt><dd class="num">${c.value.toLocaleString('en-GB')} of ${c.entitlement.toLocaleString('en-GB')} <span class="muted small">(${c.diff > 0 ? '+' : ''}${c.diff})</span></dd>
           <dt>Weeks released</dt><dd class="num">${c.released} <span class="muted small">(${c.points} points)</span></dd>
-          <dt>Your share of the let-income pot</dt><dd class="num">${money(c.pot_share, 2)}</dd>` : ''}
-          ${f.balance != null ? `<dt>Account balance</dt><dd class="num">${f.balance > 0.005 ? money(f.balance, 2) + ' to pay' : f.balance < -0.005 ? money(-f.balance, 2) + ' in credit' : 'Settled'}</dd>` : ''}</dl>`, '<a href="#/weeks">Credits for all families →</a>') : ''}
-      ${panel('What’s new', h.notifications.length ? h.notifications.map(n => `<a class="list-row ${n.read ? '' : 'unread'}" href="${esc(n.link || '#/home')}"><span class="grow small">${esc(n.text)}<div class="tiny muted">${new Date(n.created_at + 'Z').toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}</div></span></a>`).join('') : empty('No news yet.'))}
-      ${panel('Quick links', `<div class="quick">${links.map(([href, l]) => `<a class="btn sm" href="${href}">${l}</a>`).join('')}</div>`)}
-    </div>
-    ${h.syndicate && u.is_site_admin ? `<section class="stack" style="margin-top:32px"><h2 style="margin-bottom:0">Syndicate admin</h2>
-      ${h.syndicate.length ? h.syndicate.map(todo).join('') : '<div class="todo info"><div class="grow"><div class="todo-title">All clear</div><div class="small muted">No syndicate jobs waiting.</div></div></div>'}
-      <p class="tiny muted">Database: ${esc(h.system.database)}${h.system.volume ? ` · storage volume: ${esc(h.system.volume)}` : h.system.on_railway ? ' · no storage volume' : ''} · data since ${h.system.data_since ? dfmt(h.system.data_since.slice(0, 10), { day: 'numeric', month: 'short', year: 'numeric' }) : '—'} · email ${h.system.email ? 'on' : 'off'}</p></section>` : ''}`;
+          <dt>Share of the let-income pot</dt><dd class="num">${money(c.pot_share, 2)}</dd>` : ''}
+          ${f.balance != null ? `<dt>Account balance</dt><dd class="num">${f.balance > 0.005 ? money(f.balance, 2) + ' to pay' : f.balance < -0.005 ? money(-f.balance, 2) + ' in credit' : 'Settled'}</dd>` : ''}</dl>`, '<a href="#/weeks">Credits for every household →</a>') : ''}
+      ${panelCard('bell', 'Recent notices', h.notifications.length ? h.notifications.map(n => `<a class="list-row ${n.read ? '' : 'unread'}" href="${esc(n.link || '#/home')}"><span class="grow small">${esc(n.text)}<div class="tiny muted">${stamp(n.created_at)}</div></span></a>`).join('') : quiet('No notices yet.'))}
+      ${panelCard('arrow-right', 'Quick links', `<div class="quick">${links.map(([href, l]) => `<a class="btn sm" href="${href}">${l}</a>`).join('')}</div>`)}
+    </div>`;
   main.querySelectorAll('[data-open-week]').forEach(b => b.onclick = () => { S.year = Number(b.dataset.year); S.openWeek = Number(b.dataset.openWeek); location.hash = '#/calendar'; });
 }
 
 function adminHome(main, h, greet) {
-  const u = S.me.user;
-  const todo = a => `<div class="todo ${a.tone}"><div class="grow" style="min-width:0"><div class="todo-title">${esc(a.title)}</div><div class="small muted">${esc(a.detail)}</div></div>${a.cta ? `<a class="btn sm ${a.tone === 'urgent' ? 'primary' : ''}" href="${a.link}">${esc(a.cta)}</a>` : ''}</div>`;
-  const panel = (title, body, foot) => `<div class="card panel"><h3>${title}</h3>${body}${foot ? `<div class="panel-foot">${foot}</div>` : ''}</div>`;
   const owing = h.balances.filter(b => Math.abs(b.balance) > 0.005);
-  main.innerHTML = `<h1 style="margin-bottom:2px">${greet}, ${esc(u.name.split(' ')[0])}</h1><p class="muted" style="margin-top:0">Site admin</p>
-    <div class="grid-3" style="margin-bottom:24px">
-      <div class="card"><div class="muted small">Families · logins</div><div class="stat num">${h.counts.families} <span class="small muted" style="font-family:Inter">· ${h.counts.logins}</span></div></div>
-      <div class="card"><div class="muted small">Weeks released in ${h.credits.year}</div><div class="stat num">${h.counts.released}</div><div class="small muted" style="margin-top:4px">${h.counts.enquiries} open enquir${h.counts.enquiries === 1 ? 'y' : 'ies'}</div></div>
-      <div class="card"><div class="muted small">${h.credits.year} let-income pot</div><div class="stat num credit">${money(h.credits.pot.net, 2)}</div><div class="small muted" style="margin-top:4px">${h.credits.pot.lets} let${h.credits.pot.lets === 1 ? '' : 's'}${h.credits.pot.distributed ? ' · distributed' : ''}</div></div></div>
-    <section class="stack" style="margin-bottom:28px"><h2 style="margin-bottom:0">Needs your attention</h2>
-      ${h.attention.length ? h.attention.map(todo).join('') : '<div class="todo info"><div class="grow"><div class="todo-title">All clear</div><div class="small muted">No syndicate jobs waiting.</div></div></div>'}</section>
+  main.innerHTML = `${welcomeHeader(greet)}${residenceStrip(h)}
+    <div class="grid-3" style="margin-bottom:var(--sp-6)">
+      <div class="card"><span class="eyebrow">Households · logins</span><div class="stat num">${h.counts.families} <span class="small muted">· ${h.counts.logins}</span></div></div>
+      <div class="card"><span class="eyebrow">Weeks released in ${h.credits.year}</span><div class="stat num">${h.counts.released}</div><div class="small muted">${h.counts.enquiries} open enquir${h.counts.enquiries === 1 ? 'y' : 'ies'}</div></div>
+      <div class="card"><span class="eyebrow">${h.credits.year} let-income pot</span><div class="stat num credit">${money(h.credits.pot.net, 2)}</div><div class="small muted">${h.credits.pot.lets} let${h.credits.pot.lets === 1 ? '' : 's'}${h.credits.pot.distributed ? ' · distributed' : ''}</div></div></div>
+    <section class="stack" style="margin-bottom:var(--sp-6)"><div class="section-title"><h2>Outstanding actions</h2>${h.attention.length ? `<span class="muted small">${h.attention.length} to look at</span>` : ''}</div>
+      ${h.attention.length ? h.attention.map(todoItem).join('') : todoItem({ tone: 'info', title: 'All clear', detail: 'No syndicate jobs waiting.' })}</section>
     <div class="home-grid">
-      ${panel('Family balances', owing.length ? `<table><tbody>${owing.map(b => `<tr><td><i class="swatch" style="background:${b.color}"></i> <a href="#/admin/account-${b.id}">${esc(b.name)}</a></td><td class="r num">${b.balance > 0 ? money(b.balance, 2) + ' owed' : money(-b.balance, 2) + ' credit'}</td></tr>`).join('')}</tbody></table>` : '<p class="small muted" style="margin:0">Every family is settled.</p>', '<a href="#/admin/overview">Payments &amp; balances →</a>')}
-      ${panel(`Credits ${h.credits.year}`, `<table><tbody>${h.credits.rows.map(r => `<tr><td><i class="swatch" style="background:${r.color}"></i> ${esc(r.name)}</td><td class="r num">${r.value.toLocaleString('en-GB')} / ${r.entitlement.toLocaleString('en-GB')}</td><td class="r num" style="color:${Math.abs(r.diff) < 50 ? 'inherit' : r.diff > 0 ? 'var(--amber)' : 'var(--blue)'}">${r.diff > 0 ? '+' : ''}${r.diff}</td></tr>`).join('')}</tbody></table>`, '<a href="#/admin/credits">Credits &amp; pot →</a>')}
-      ${panel('Recent activity', h.activity.length ? h.activity.map(a => `<div class="list-row" style="cursor:default"><span class="grow small"><b>${esc(a.name || 'System')}</b> ${esc(a.action.replace('.', ' '))}<div class="tiny muted">${new Date(a.created_at + 'Z').toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}</div></span></div>`).join('') : '<p class="small muted" style="margin:0">Nothing yet.</p>', '<a href="#/admin/audit">Activity log →</a>')}
-      ${panel('What’s new', h.notifications.length ? h.notifications.map(n => `<a class="list-row ${n.read ? '' : 'unread'}" href="${esc(n.link || '#/home')}"><span class="grow small">${esc(n.text)}<div class="tiny muted">${new Date(n.created_at + 'Z').toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}</div></span></a>`).join('') : '<p class="small muted" style="margin:0">No news yet.</p>')}
-      ${panel('Quick links', `<div class="quick">${ADMIN_PAGES.map(([k, l]) => `<a class="btn sm" href="#/${k}">${l}</a>`).join('')}<a class="btn sm" href="#/calendar">Calendar</a></div>`)}
+      ${panelCard('wallet', 'Household balances', owing.length ? `<table><tbody>${owing.map(b => `<tr><td><a href="#/admin/account-${b.id}">${esc(b.name)}</a></td><td class="r num">${b.balance > 0 ? money(b.balance, 2) + ' owed' : money(-b.balance, 2) + ' credit'}</td></tr>`).join('')}</tbody></table>` : quiet('Every household is settled.'), '<a href="#/admin/overview">Payments and balances →</a>')}
+      ${panelCard('coins', `Credits ${h.credits.year}`, `<table><tbody>${h.credits.rows.map(r => `<tr><td>${esc(r.name)}</td><td class="r num">${r.value.toLocaleString('en-GB')} / ${r.entitlement.toLocaleString('en-GB')}</td><td class="r num" style="color:${Math.abs(r.diff) < 50 ? 'inherit' : r.diff > 0 ? 'var(--amber)' : 'var(--blue)'}">${r.diff > 0 ? '+' : ''}${r.diff}</td></tr>`).join('')}</tbody></table>`, '<a href="#/admin/credits">Credits and pot →</a>')}
+      ${panelCard('history', 'Recent activity', h.activity.length ? h.activity.map(a => `<div class="list-row" style="cursor:default"><span class="grow small"><b>${esc(a.name || 'System')}</b> ${esc(a.action.replace('.', ' '))}<div class="tiny muted">${stamp(a.created_at)}</div></span></div>`).join('') : quiet('Nothing yet.'), '<a href="#/admin/audit">Activity log →</a>')}
+      ${panelCard('bell', 'Recent notices', h.notifications.length ? h.notifications.map(n => `<a class="list-row ${n.read ? '' : 'unread'}" href="${esc(n.link || '#/home')}"><span class="grow small">${esc(n.text)}<div class="tiny muted">${stamp(n.created_at)}</div></span></a>`).join('') : quiet('No notices yet.'))}
+      ${panelCard('arrow-right', 'Quick links', `<div class="quick">${ADMIN_PAGES.map(([k, l]) => `<a class="btn sm" href="#/${k}">${l}</a>`).join('')}<a class="btn sm" href="#/calendar">Calendar</a></div>`)}
     </div>
-    <p class="tiny muted" style="margin-top:24px">Database: ${esc(h.system.database)}${h.system.volume ? ` · storage volume: ${esc(h.system.volume)}` : h.system.on_railway ? ' · no storage volume' : ''} · data since ${h.system.data_since ? dfmt(h.system.data_since.slice(0, 10), { day: 'numeric', month: 'short', year: 'numeric' }) : '—'} · email ${h.system.email ? 'on' : 'off'}</p>`;
+    <p class="tiny muted" style="margin-top:var(--sp-6)">Database: ${esc(h.system.database)}${h.system.volume ? ` · storage volume: ${esc(h.system.volume)}` : h.system.on_railway ? ' · no storage volume' : ''} · data since ${h.system.data_since ? dfmt(h.system.data_since.slice(0, 10), { day: 'numeric', month: 'short', year: 'numeric' }) : '—'} · email ${h.system.email ? 'on' : 'off'}</p>`;
 }
 
 // ------------------------------------------------------------ calendar
@@ -210,6 +219,23 @@ function statusBadge(w) {
   if (w.plan === 'swap') b.push('<span class="badge blue">Swap</span>');
   return b.join(' ');
 }
+// What a week means to the person looking: one of five muted states, always with a text label.
+function weekState(w) {
+  const friend = S.me.user.role === 'friend', fam = esc(w.family_name);
+  if (w.booking?.mine) return w.booking.status === 'confirmed' ? { k: 'booked', who: 'Your booking', label: 'Booked' } : { k: 'pending', who: 'Your booking', label: 'Awaiting payment' };
+  if (friend) return w.can_book ? { k: 'available', who: 'Available', label: `Available · ${money(w.price)}` } : { k: 'other', who: 'Not available', label: 'Not available' };
+  if (w.status === 'syndicate') return { k: 'other', who: 'Syndicate', label: 'Syndicate week' };
+  if (w.status === 'booked') return { k: 'booked', who: w.is_mine ? 'Your week' : fam, label: w.is_mine ? 'Let to guests' : 'Booked' };
+  if (w.status === 'pending') return { k: 'pending', who: w.is_mine ? 'Your week' : fam, label: 'Reserved' };
+  if (w.my_enquiry) return { k: 'pending', who: fam, label: w.first_refusal_until ? 'First refusal' : `Requested · ${ordinal(w.my_enquiry.position)}` };
+  if (w.is_mine) return { k: 'yours', who: 'Your week', label: { using: 'Yours · using', released: 'Yours · released', swap: 'Yours · will swap' }[w.plan] || 'Yours · undecided' };
+  if (w.can_book) return { k: 'available', who: fam, label: `Available · ${money(w.price)}` };
+  if (w.plan === 'released' || w.first_refusal_until) return { k: 'available', who: fam, label: 'Released' };
+  if (w.plan === 'using') return { k: 'other', who: fam, label: 'In use' };
+  if (w.plan === 'swap') return { k: 'other', who: fam, label: 'Would swap' };
+  return { k: 'other', who: fam, label: 'Allocated' };
+}
+const STATUS_KEY = [['yours', 'Your household’s weeks'], ['other', 'Other households'], ['available', 'Available to book'], ['pending', 'Requested or pending'], ['booked', 'Booked']];
 function filterMatch(w) {
   switch (S.filter) {
     case 'book': return w.can_book;
@@ -224,27 +250,27 @@ async function viewCalendar(main) {
   if (!years.length) { main.innerHTML = '<div class="card empty">No weeks have been set up yet. The site admin can create a year under Site admin → Weeks.</div>'; return; }
   S.weeks = await api('/weeks?year=' + S.year);
   const role = S.me.user.role;
-  const filters = [['all', 'All weeks'], ['book', role === 'friend' ? 'Available to book' : 'Available to buy'], isFam() && ['swap', 'Open to enquiries'], isFam() && ['mine', 'My family’s weeks'], role === 'friend' && ['mine', 'My bookings']].filter(Boolean);
-  const intro = isSiteRole() ? 'Every family’s weeks. Click a week to see it, or to change its settings on the family’s behalf.' : role === 'friend' ? 'Weeks that syndicate families have made available to trusted friends are shown in green. Pick one to book.'
-    : 'Click any other family’s week to enquire about it (unless it’s <b>In use</b>), or to book it if it has a price. <b>Swap</b> marks weeks their family would swap. Set your own family’s weeks under <a href="#/weeks">My weeks</a>.';
+  const filters = [['all', 'All weeks'], ['book', role === 'friend' ? 'Available to book' : 'Available to buy'], isFam() && ['swap', 'Open to enquiries'], isFam() && ['mine', 'Your household’s weeks'], role === 'friend' && ['mine', 'My bookings']].filter(Boolean);
+  const intro = isSiteRole() ? 'Every household’s weeks. Open a week to see it, or to change its settings on the household’s behalf.' : role === 'friend' ? 'Weeks the households have made available to trusted friends. Open one to book it.'
+    : 'Open any other household’s week to enquire about it, or to book it if it’s available. Set your own household’s weeks under <a href="#/weeks">My weeks</a>.';
   const byMonth = {};
   for (const w of S.weeks) (byMonth[w.start_date.slice(0, 7)] ||= []).push(w);
-  const fams = [...new Map(S.weeks.filter(w => w.family_id).map(w => [w.family_id, [w.family_name, w.family_color]])).values()].sort((a, b) => a[0].localeCompare(b[0]));
   const visible = S.weeks.filter(filterMatch).length;
+  const key = role === 'friend' ? [['available', 'Available to book'], ['booked', 'Your bookings'], ['other', 'Not available']] : isSiteRole() ? STATUS_KEY.slice(1) : STATUS_KEY;
+  const band = w => w.school_holiday ? 'School holidays' : { summer: 'Summer', shoulder: 'Shoulder', winter: 'Winter' }[w.season];
+  const st = S.me.settings, price = n => money(isFam() ? Math.round(n * st.member_rate_pct / 100) : n);
   main.innerHTML = `
-    <div class="row between" style="margin-bottom:6px"><h1 style="margin:0">Availability ${S.year}</h1>
-      <div class="seg">${years.map(y => `<button data-year="${y}" class="${y === S.year ? 'on' : ''}">${y}</button>`).join('')}</div></div>
-    <p class="muted" style="margin-top:0">${intro}</p>
-    <div class="cal-toolbar"><div class="seg">${filters.map(([k, l]) => `<button data-filter="${k}" class="${S.filter === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+    <div class="page-head row between" style="align-items:flex-end"><div class="grow" style="min-width:280px"><h1>${role === 'friend' ? 'Available weeks' : 'Calendar'} ${S.year}</h1><p>${intro}</p></div>
+      <div class="seg" aria-label="Year">${years.map(y => `<button data-year="${y}" class="${y === S.year ? 'on' : ''}">${y}</button>`).join('')}</div></div>
+    <div class="cal-toolbar"><div class="seg" aria-label="Show">${filters.map(([k, l]) => `<button data-filter="${k}" class="${S.filter === k ? 'on' : ''}">${l}</button>`).join('')}</div>
       <span class="muted small">${visible} week${visible === 1 ? '' : 's'}</span></div>
-    <div class="legend">${role === 'friend' ? '' : fams.map(([n, c]) => `<span><i class="swatch" style="background:${c}"></i>${esc(n)}</span>`).join('')}
-      ${(() => { const st = S.me.settings, f = n => money(isFam() ? Math.round(n * st.member_rate_pct / 100) : n); return `<span><i class="season school"></i>School hols ${f(st.rate_school)}</span><span><i class="season summer"></i>Summer ${f(st.rate_summer)}</span><span><i class="season shoulder"></i>Shoulder ${f(st.rate_shoulder)}</span><span><i class="season winter"></i>Winter ${f(st.rate_winter)}</span>${isFam() ? '<span class="muted">(member prices)</span>' : ''}`; })()}</div>
+    <div class="status-key">${key.map(([k, l]) => `<span><i style="background:var(--st-${k})"></i>${l}</span>`).join('')}
+      <span class="muted" style="margin-left:auto">${isFam() ? 'Member' : 'Weekly'} prices: school holidays ${price(st.rate_school)} · summer ${price(st.rate_summer)} · shoulder ${price(st.rate_shoulder)} · winter ${price(st.rate_winter)}</span></div>
     <div class="months">${Object.entries(byMonth).map(([m, ws]) => `<section class="month"><h3>${dfmt(m + '-01', { month: 'long' })}<span class="tiny muted">${m.slice(0, 4) != S.year ? m.slice(0, 4) : ''}</span></h3>
-      ${ws.map(w => `<button class="week ${filterMatch(w) ? '' : 'dim'} ${w.is_mine ? 'mine' : ''} ${w.start_date < todayStr() ? 'past' : ''}" data-week="${w.id}">
-        <span class="bar" style="background:${role === 'friend' && !w.can_book && !w.booking?.mine ? 'var(--line)' : w.family_color}"></span>
-        <span class="no">Wk ${w.week_no}</span>
-        <span style="min-width:0"><div class="who">${role === 'friend' ? (w.can_book ? 'Available' : w.booking?.mine ? 'Your booking' : 'Not available') : esc(w.family_name)}</div><div class="when"><i class="season ${w.school_holiday ? 'school' : w.season}"></i> ${range(w)}${w.enquiries ? ` · ${w.enquiries} enquir${w.enquiries > 1 ? 'ies' : 'y'}` : ''}</div>${w.comment ? `<div class="cmt">${esc(w.comment)}</div>` : ''}</span>
-        <span>${statusBadge(w)}</span></button>`).join('')}</section>`).join('')}</div>`;
+      ${ws.map(w => { const x = weekState(w); return `<button class="week st-${x.k} ${filterMatch(w) ? '' : 'dim'} ${w.start_date < todayStr() ? 'past' : ''}" data-week="${w.id}" aria-label="Week ${w.week_no}, ${range(w)}: ${x.who}, ${x.label}">
+        <span class="no">Week<b>${w.week_no}</b></span>
+        <span style="min-width:0"><div class="who">${x.who}</div><div class="when">${range(w)} · ${band(w)}${w.enquiries && !w.my_enquiry ? ` · ${w.enquiries} enquir${w.enquiries > 1 ? 'ies' : 'y'}` : ''}</div>${w.comment ? `<div class="cmt">${esc(w.comment)}</div>` : ''}</span>
+        <span class="tag ${x.k}">${x.label}</span></button>`; }).join('')}</section>`).join('')}</div>`;
   main.querySelectorAll('[data-year]').forEach(b => b.onclick = () => { S.year = Number(b.dataset.year); viewCalendar(main); });
   main.querySelectorAll('[data-filter]').forEach(b => b.onclick = () => { S.filter = b.dataset.filter; viewCalendar(main); });
   main.querySelectorAll('[data-week]').forEach(b => b.onclick = () => openWeek(S.weeks.find(w => w.id == b.dataset.week)));
@@ -296,7 +322,8 @@ async function openWeek(w) {
   if (w.booking?.mine && w.booking.status === 'pending') html += `<div class="section">${payBox(w.booking.reference, w.price)}</div>`;
   if (role === 'friend' && !w.can_book && !w.booking?.mine) html += '<div class="section muted small">This week isn’t available to book.</div>';
 
-  const body = openDrawer(`<h2 style="margin:0">Week ${w.week_no}</h2>`, `${range(w)} ${w.year}`, html);
+  const x = weekState(w);
+  const body = openDrawer(`<span class="eyebrow">${w.year}</span><h2 style="margin:2px 0 6px">Week ${w.week_no} · ${range(w)}</h2><span class="tag ${x.k}">${x.label}</span>`, '', html);
   const of = $('#offerForm', body);
   if (of) {
     bindPlanFields(of);
@@ -355,9 +382,9 @@ async function viewMyWeeks(main) {
     <p class="muted" style="margin-top:0">${admin ? 'Set what your family plans for each week. Changes save straight away.' : 'Your family admin sets these. Ask them if something needs changing.'}
       Other families can ask to swap for any week that isn’t <b>Using it</b>. When your family asks for someone else’s week, they choose from your <b>Willing to swap</b> or <b>Released</b> weeks.</p>
     <div class="grid-3" style="margin-bottom:18px">
-      <div class="card"><div class="muted small">Credit value of your ${year} weeks</div><div class="stat num">${me.value.toLocaleString('en-GB')} <span class="small muted" style="font-family:Inter">credits</span></div>
+      <div class="card"><div class="muted small">Credit value of your ${year} weeks</div><div class="stat num">${me.value.toLocaleString('en-GB')} <span class="small muted">credits</span></div>
         <div class="small muted" style="margin-top:6px">Entitlement ${me.entitlement.toLocaleString('en-GB')} (${S.me.family.share_units} shares × ${cs.per}${me.carried ? `, ${me.carried > 0 ? '+' : ''}${me.carried} carried` : ''}) · <b style="color:var(--ink)">${me.diff > 0 ? '+' : ''}${me.diff}</b></div></div>
-      <div class="card"><div class="muted small">Released this year</div><div class="stat num">${me.released_weeks} <span class="small muted" style="font-family:Inter">week${me.released_weeks === 1 ? '' : 's'}</span></div>
+      <div class="card"><div class="muted small">Released this year</div><div class="stat num">${me.released_weeks} <span class="small muted">week${me.released_weeks === 1 ? '' : 's'}</span></div>
         <div class="small muted" style="margin-top:6px">${me.release_points} release points of ${cs.pot.total_points}. Releasing ${s.early_release_weeks}+ weeks ahead counts in full, later ${s.late_release_weight * 100}%.</div></div>
       <div class="card"><div class="muted small">Your share of the ${year} let-income pot so far</div><div class="stat num credit">${money(me.pot_share, 2)}</div>
         <div class="small muted" style="margin-top:6px">Pot ${money(cs.pot.net, 2)} from ${cs.pot.lets} let${cs.pot.lets === 1 ? '' : 's'}${cs.pot.distributed ? ', already credited to accounts' : '. Credited against next year’s service charge'}.</div></div></div>
@@ -405,7 +432,7 @@ function enquiryStatus(e) {
   if (e.status === 'won') return `<span class="badge green">${e.mine ? 'Your family got it' : 'Got it'}</span>`;
   if (e.status === 'withdrawn') return '<span class="badge">Withdrawn</span>';
   if (e.status === 'closed') return `<span class="badge">${CLOSED[e.close_reason] || 'Closed'}</span>`;
-  return e.week.first_refusal_until ? `<span class="badge amber">First refusal until ${whenTime(e.week.first_refusal_until)}</span>` : `<span class="badge blue">${ordinal(e.position)} of ${e.queue} in the queue</span>`;
+  return e.week.first_refusal_until ? `<span class="badge amber">First refusal until ${whenTime(e.week.first_refusal_until)}</span>` : `<span class="badge amber">${ordinal(e.position)} of ${e.queue} in the queue</span>`;
 }
 // the claim form for a family with first refusal (week panel and Enquiries page)
 function claimForm(id, price, claim, until) {
@@ -526,7 +553,7 @@ async function viewAccount(main, familyId) {
     <div class="grid-3" style="margin-bottom:24px">
       <div class="card"><div class="muted small">${owes ? 'Balance to pay' : a.balance < -0.005 ? 'In credit' : 'Balance'}</div><div class="stat ${owes ? 'owes' : a.balance < -0.005 ? 'credit' : ''} num">${money(Math.abs(a.balance), 2)}</div>
         ${owes ? `<div class="small muted" style="margin-top:6px">Pay to ${esc(S.me.settings.bank.account_name)} using reference <b>${esc(a.family.name.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10))}-SC</b></div>` : ''}</div>
-      <div class="card"><div class="muted small">Ownership share</div><div class="stat num">${a.family.share_units} <span class="small muted" style="font-family:Inter">weeks</span></div>
+      <div class="card"><div class="muted small">Ownership share</div><div class="stat num">${a.family.share_units} <span class="small muted">weeks</span></div>
         <div class="small muted" style="margin-top:6px">${a.weeks.map(w => `${w.n} weeks held in ${w.year}`).join(' · ')}</div></div>
       <div class="card"><div class="muted small">By year</div>${a.byYear.map(y => `<div class="row between small"><span>${y.year}</span><span class="num">${Math.abs(y.total) < 0.005 ? 'Settled' : y.total > 0 ? money(y.total, 2) + ' due' : money(-y.total, 2) + ' credit'}</span></div>`).join('') || '<div class="small muted">No entries yet</div>'}</div></div>
     ${!familyId ? `<div id="acctSwaps"></div>` : ''}
@@ -658,7 +685,7 @@ async function admBudget(el, year) {
     <div class="row" style="margin-bottom:14px"><div class="field" style="margin:0;min-width:260px"><label>Budget period for ${year}</label><input id="blabel" value="${esc(b.label)}" placeholder="e.g. July ${year - 1} – June ${year}"></div></div>
     <div class="grid-2" style="grid-template-columns: minmax(0,3fr) minmax(300px,2fr); align-items:start">
     <section class="stack"><div class="table-wrap"><table style="table-layout:fixed;min-width:620px"><colgroup><col style="width:34%"><col style="width:112px"><col style="width:112px"><col><col style="width:44px"></colgroup><thead><tr><th>Item</th><th class="r">Estimate (${cur})</th><th>Type</th><th>Commentary</th><th></th></tr></thead><tbody>
-      ${b.items.map(i => `<tr data-id="${i.id}"><td><input name="description" value="${esc(i.description)}"></td><td class="r"><input name="amount" type="number" step="0.01" value="${i.amount}" style="text-align:right"></td><td><input name="category" value="${esc(i.category || '')}" list="cats"></td><td><input name="notes" value="${esc(i.notes || '')}"></td><td><button class="iconbtn" data-del="${i.id}" title="Remove">${icon.x}</button></td></tr>`).join('')}
+      ${b.items.map(i => `<tr data-id="${i.id}"><td><input name="description" value="${esc(i.description)}"></td><td class="r"><input name="amount" type="number" step="0.01" value="${i.amount}" style="text-align:right"></td><td><input name="category" value="${esc(i.category || '')}" list="cats"></td><td><input name="notes" value="${esc(i.notes || '')}"></td><td><button class="iconbtn" data-del="${i.id}" title="Remove">${icon('trash-2')}</button></td></tr>`).join('')}
       <tr id="newrow"><td><input name="description" placeholder="New item…"></td><td class="r"><input name="amount" type="number" step="0.01" placeholder="0" style="text-align:right"></td><td><input name="category" placeholder="Type" list="cats"></td><td><input name="notes" placeholder="Commentary"></td><td><button class="btn sm primary" id="addi">Add</button></td></tr>
       </tbody><tfoot><tr><td>Estimated funding need</td><td class="r num">${money(b.total, 2)}</td><td colspan="3"></td></tr></tfoot></table></div>
       <datalist id="cats">${['Regular', 'Postpone', 'Provision', 'One-off', ...cats].filter((v, i, a) => a.indexOf(v) === i).map(c => `<option value="${esc(c)}">`).join('')}</datalist><p class="tiny muted">Changes save when you leave a field.</p></section>
@@ -740,7 +767,11 @@ async function admSettings(el) {
   const s = await api('/admin/settings');
   const daySel = (k, l) => `<div class="field"><label>${l}</label><select name="${k}">${['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((d, i) => `<option value="${i}" ${String(i) === s[k] ? 'selected' : ''}>${d}</option>`).join('')}</select></div>`;
   const f = (k, l, type = 'text', extra = '') => `<div class="field"><label>${l}</label><input name="${k}" type="${type}" value="${esc(s[k])}" ${extra}></div>`;
-  el.innerHTML = `<form id="sf" class="grid-2" style="align-items:start">
+  el.innerHTML = `<div class="card" style="margin-bottom:var(--sp-5)"><div class="row" style="align-items:flex-start;gap:var(--sp-5)">
+      <div class="grow" style="min-width:260px"><h3>${icon('image')} Overview photograph</h3><p class="small muted" style="margin:0 0 var(--sp-4)">An optional panoramic photograph of the house or Loch Carron, shown on the Overview and sign-in pages. A wide landscape image works best; it’s resized before uploading.</p>
+        <div class="row"><label class="btn sm" style="margin:0">${icon('upload')} ${s.hero_version ? 'Replace photograph' : 'Upload photograph'}<input type="file" id="heroFile" accept="image/jpeg,image/png,image/webp" hidden></label>${s.hero_version ? '<button type="button" class="btn sm danger" id="heroRm">Remove</button>' : ''}</div></div>
+      ${s.hero_version ? `<img src="/media/hero?v=${esc(s.hero_version)}" alt="" style="width:min(360px,100%);aspect-ratio:3/1;object-fit:cover;border-radius:var(--r-md);border:1px solid var(--line)">` : ''}</div></div>
+    <form id="sf" class="grid-2" style="align-items:start">
     <div class="card"><h3>Trusted-friend prices (per week)</h3><p class="small muted" style="margin-top:0">Used for any released week unless the family sets its own price. Members pay a percentage of these.</p>
       <div class="grid-2" style="gap:12px">${f('rate_school', '<i class="season school"></i> School holidays', 'number', 'min=0')}${f('rate_summer', '<i class="season summer"></i> Summer', 'number', 'min=0')}${f('rate_shoulder', '<i class="season shoulder"></i> Shoulder', 'number', 'min=0')}${f('rate_winter', '<i class="season winter"></i> Winter', 'number', 'min=0')}</div>
       <div class="grid-2" style="gap:12px">${f('member_rate_pct', 'Members pay (% of friend price)', 'number', 'min=0 max=100')}${f('members_first_days', 'Members-only days after release', 'number', 'min=0')}${f('enquiry_hours', 'Hours of first refusal for enquirers', 'number', 'min=0')}</div>
@@ -755,11 +786,19 @@ async function admSettings(el) {
       <label class="check"><input type="checkbox" name="allow_member_account_charge" ${s.allow_member_account_charge === '1' ? 'checked' : ''}><span><b>Family members can charge weeks to their family account</b>If off, only family admins can; members pay by bank transfer.</span></label></div>
     <div class="card"><h3>Syndicate bank account</h3><p class="small muted" style="margin-top:0">Shown to people when they book a week.</p>
       ${f('bank_account_name', 'Account name')}${f('bank_name', 'Bank')}<div class="grid-2" style="gap:12px">${f('bank_sort_code', 'Sort code')}${f('bank_account_no', 'Account number')}</div>${f('bank_iban', 'IBAN (optional)')}
-      <h3 style="margin-top:8px">General</h3><div class="grid-2" style="gap:12px">${f('site_name', 'Site name')}${f('currency', 'Currency symbol')}</div>
+      <h3 style="margin-top:8px">General</h3><div class="grid-2" style="gap:12px">${f('site_name', 'Site name')}${f('currency', 'Currency symbol')}${f('place_line', 'Place line (under the name)')}</div>
       <h3 style="margin-top:8px">Changeover days</h3><p class="small muted" style="margin-top:0">Used when a new year’s weeks are created. Week 1 starts on the first winter changeover day on or after 26 December, so some years have 53 weeks.</p>
       <div class="grid-2" style="gap:12px">${daySel('winter_changeover_day', 'Winter changeover')}${daySel('summer_changeover_day', 'Summer changeover')}
       ${f('summer_changeover_from', 'Summer changeover from week', 'number', 'min=1 max=53')}${f('summer_changeover_to', '…to week (inclusive)', 'number', 'min=1 max=53')}</div></div>
     <div><button class="btn primary">Save settings</button></div></form>`;
+  $('#heroFile', el).onchange = guard(async e => {
+    const file = e.target.files[0]; if (!file) return;
+    const img = await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => no(new Error('That file isn’t an image the browser can read')); i.src = URL.createObjectURL(file); });
+    const scale = Math.min(1, 2400 / img.naturalWidth), c = document.createElement('canvas');
+    c.width = Math.round(img.naturalWidth * scale); c.height = Math.round(img.naturalHeight * scale); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    await api('/admin/hero', { body: { data: c.toDataURL('image/jpeg', 0.84) } }); toast('Photograph saved'); await refreshMe(); admSettings(el);
+  });
+  $('#heroRm', el) && ($('#heroRm', el).onclick = guard(async () => { if (!confirm('Remove the Overview photograph?')) return; await api('/admin/hero', { method: 'DELETE' }); toast('Photograph removed'); await refreshMe(); admSettings(el); }));
   $('#sf', el).onsubmit = guard(async e => { e.preventDefault(); const d = formData(e.target); d.allow_member_account_charge = e.target.allow_member_account_charge.checked ? '1' : '0'; await api('/admin/settings', { method: 'PUT', body: d }); toast('Settings saved'); refreshMe(); });
 }
 async function admCredits(el, year) {
