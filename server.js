@@ -118,6 +118,9 @@ try {
 try { db.exec('ALTER TABLE weeks ADD COLUMN released_at TEXT'); db.exec("UPDATE weeks SET released_at=datetime('now') WHERE offer_friends=1"); } catch { }
 try { db.exec('ALTER TABLE weeks ADD COLUMN reminded INTEGER NOT NULL DEFAULT 0'); } catch { }
 try { db.exec('ALTER TABLE ledger ADD COLUMN pot_year INTEGER'); } catch { }
+// each family's shares (= weeks) for a year; the service charge for that year is charged per share. A year without its
+// own row uses families.share_units (the current figure).
+db.exec(`CREATE TABLE IF NOT EXISTS family_shares (family_id INTEGER NOT NULL REFERENCES families(id), year INTEGER NOT NULL, units REAL NOT NULL, PRIMARY KEY (family_id, year));`);
 // the date a payment actually arrived (the line's created_at is when it was recorded)
 try { db.exec('ALTER TABLE ledger ADD COLUMN entry_date TEXT'); } catch { }
 // the syndicate's bank balance as the site admin reads it from the bank, by date
@@ -343,6 +346,11 @@ const today = () => new Date().toISOString().slice(0, 10);
 // A week can be asked for (or offered) in a swap if a family holds it, it isn't let/reserved, its family hasn't marked it in use, and it's in the future.
 const swappable = w => w.family_id != null && !w.in_use && !['pending', 'booked', 'syndicate'].includes(w.status) && w.start_date >= today();
 const thisYear = () => new Date().getFullYear();
+const sharesFor = (fid, year) => { const r = q1('SELECT units FROM family_shares WHERE family_id=? AND year=?', fid, year); return r ? r.units : (q1('SELECT share_units FROM families WHERE id=?', fid) || {}).share_units || 0; };
+function setShares(fid, year, units) {
+  run('INSERT INTO family_shares (family_id,year,units) VALUES (?,?,?) ON CONFLICT(family_id,year) DO UPDATE SET units=excluded.units', fid, year, units);
+  if (year >= thisYear()) run('UPDATE families SET share_units=? WHERE id=?', units, fid);   // the newest decision becomes the default for later years
+}
 // A year's allocation is a draft until the site admin signs it off (this year and earlier always count as signed off).
 const signedOff = year => year <= thisYear() || !!q1('SELECT 1 FROM year_status WHERE year=? AND signed_off_at IS NOT NULL', year);
 const openYears = () => q('SELECT DISTINCT year FROM weeks ORDER BY year').map(r => r.year).filter(y => !signedOff(y));
@@ -390,12 +398,12 @@ function creditSummary(year, s = settings()) {
   const rows = q('SELECT * FROM families WHERE active=1 ORDER BY name').map(f => {
     const held = weeks.filter(w => w.family_id === f.id);
     const carried = q1('SELECT COALESCE(SUM(amount),0) n FROM credit_ledger WHERE family_id=? AND year=?', f.id, year).n;
-    const value = held.reduce((a, w) => a + creditValue(w, s), 0), entitlement = f.share_units * per + carried;
+    const shares = sharesFor(f.id, year), value = held.reduce((a, w) => a + creditValue(w, s), 0), entitlement = shares * per + carried;
     // differences from this year's uneven swaps are already settled by credits carried into next year
     const settled = q1(`SELECT COALESCE(SUM(c.amount),0) n FROM credit_ledger c JOIN swaps sw ON sw.id=c.swap_id JOIN weeks t ON t.id=sw.target_week_id
       WHERE c.family_id=? AND c.year=? AND t.year=?`, f.id, year + 1, year).n;
     const lets = q1(`SELECT COUNT(*) c, COALESCE(SUM(b.amount - COALESCE(b.letting_cost,0) - COALESCE(b.fund_extra,0)),0) n FROM bookings b JOIN weeks w ON w.id=b.week_id WHERE b.status='confirmed' AND w.year=? AND b.seller_family_id=?`, year, f.id);
-    return { id: f.id, name: f.name, color: f.color, shares: f.share_units, carried, entitlement, weeks: held.length, value, settled, diff: value - entitlement + settled,
+    return { id: f.id, name: f.name, color: f.color, shares, carried, entitlement, weeks: held.length, value, settled, diff: value - entitlement + settled,
       school_weeks: held.filter(w => w.school_holiday).length, released_weeks: held.filter(w => w.offer_friends && w.released_at).length, lets: lets.c, let_income: round2(lets.n) };
   });
   const bands = Object.fromEntries(['school', 'summer', 'shoulder', 'winter'].map(b => [b, { credits: Math.round(Number(s['credit_' + b]) * yearScale(year, s)), weeks: weeks.filter(w => bandOf(w) === b).length }]));
@@ -1242,9 +1250,9 @@ route('GET', '/api/admin/overview', ({ user }) => {
   const topups = q("SELECT t.*, u.name person FROM topups t JOIN users u ON u.id=t.user_id WHERE t.status='pending' ORDER BY t.id").map(t => ({ ...t, family: famName(t.family_id) }));
   return { balances: balances(), pending, topups };
 });
-route('GET', '/api/admin/families', ({ user }) => {
-  needAdmin(user);
-  return q('SELECT * FROM families ORDER BY name').map(f => ({ ...f, weeks: Object.fromEntries(q('SELECT year, COUNT(*) n FROM weeks WHERE original_family_id=? GROUP BY year', f.id).map(r => [r.year, r.n])),
+route('GET', '/api/admin/families', ({ user, query }) => {
+  needAdmin(user); const year = Number(query.year) || null;
+  return q('SELECT * FROM families ORDER BY name').map(f => ({ ...f, shares: year ? sharesFor(f.id, year) : f.share_units, allocated: year ? q1('SELECT COUNT(*) n FROM weeks WHERE year=? AND original_family_id=?', year, f.id).n : null, weeks: Object.fromEntries(q('SELECT year, COUNT(*) n FROM weeks WHERE original_family_id=? GROUP BY year', f.id).map(r => [r.year, r.n])),
     admins: q("SELECT name FROM users WHERE family_id=? AND role='family_admin' AND active=1", f.id).map(r => r.name) }));
 });
 route('POST', '/api/admin/families', ({ user, body }) => {
@@ -1254,6 +1262,10 @@ route('POST', '/api/admin/families', ({ user, body }) => {
 });
 route('PUT', '/api/admin/families/:id', ({ user, params, body }) => {
   needAdmin(user); const f = q1('SELECT * FROM families WHERE id=?', params.id) || fail(404, 'Not found');
+  if (body.year && body.share_units != null) {   // shares for one year
+    const units = Number(body.share_units); if (!(units >= 0)) fail(400, 'Shares must be a number');
+    setShares(f.id, Number(body.year), units); audit(user.id, 'family.shares', { family: f.name, year: Number(body.year), units }); return { ok: true };
+  }
   run('UPDATE families SET name=?, share_units=?, color=?, active=? WHERE id=?', body.name ?? f.name, body.share_units != null ? Number(body.share_units) : f.share_units, body.color ?? f.color, body.active != null ? (body.active ? 1 : 0) : f.active, f.id);
   return { ok: true };
 });
@@ -1261,7 +1273,7 @@ route('POST', '/api/admin/families/shares-from-weeks', ({ user, body }) => {
   needAdmin(user); const y = Number(body.year);
   const rows = q('SELECT original_family_id fid, COUNT(*) n FROM weeks WHERE year=? AND original_family_id IS NOT NULL GROUP BY original_family_id', y);
   if (!rows.length) fail(400, `No week allocation for ${y}`);
-  tx(() => { for (const r of rows) run('UPDATE families SET share_units=? WHERE id=?', r.n, r.fid); }); return { ok: true };
+  tx(() => { for (const r of rows) setShares(r.fid, y, r.n); }); audit(user.id, 'family.shares_from_weeks', { year: y }); return { ok: true };
 });
 route('POST', '/api/admin/years', ({ user, body }) => { needAdmin(user); return { weeks: generateYear(Number(body.year)) }; });
 route('PUT', '/api/admin/weeks/:id', ({ user, params, body }) => {
@@ -1318,7 +1330,7 @@ route('POST', '/api/admin/allocation/rotate', ({ user, body }) => {
 function budgetSummary(year) {
   const items = q('SELECT * FROM budget_items WHERE year=? ORDER BY sort, id', year);
   const total = round2(items.reduce((a, b) => a + b.amount, 0));
-  const fams = q('SELECT * FROM families WHERE active=1 ORDER BY name'); const units = fams.reduce((a, f) => a + f.share_units, 0) || 1;
+  const fams = q('SELECT * FROM families WHERE active=1 ORDER BY name').map(f => ({ ...f, share_units: sharesFor(f.id, year) })); const units = fams.reduce((a, f) => a + f.share_units, 0) || 1;
   const by = q1('SELECT * FROM budget_years WHERE year=?', year) || {};
   const calc = round2(total / units); const rate = by.rate_per_week != null ? by.rate_per_week : calc;
   const charged = Object.fromEntries(q("SELECT family_id, SUM(amount) a FROM ledger WHERE year=? AND type='service_charge' GROUP BY family_id", year).map(r => [r.family_id, round2(r.a)]));
@@ -1407,7 +1419,7 @@ route('GET', '/api/admin/charges', ({ user, query }) => {
   const rows = q('SELECT * FROM families WHERE active=1 ORDER BY name').map(f => {
     const charge = by(f.id, "type='service_charge'"), paid = -by(f.id, "type='payment'"), other = by(f.id, "type NOT IN ('service_charge','payment')");
     const last = q1("SELECT COALESCE(entry_date, date(created_at)) d, -amount a FROM ledger WHERE family_id=? AND year=? AND type='payment' ORDER BY COALESCE(entry_date, created_at) DESC, id DESC LIMIT 1", f.id, year);
-    return { id: f.id, name: f.name, color: f.color, shares: f.share_units, charge, paid, other, outstanding: round2(charge - paid + other), last_payment: last || null,
+    return { id: f.id, name: f.name, color: f.color, shares: sharesFor(f.id, year), charge, paid, other, outstanding: round2(charge - paid + other), last_payment: last || null,
       balance: familyBalance(f.id) };
   });
   const by_year = q1('SELECT * FROM budget_years WHERE year=?', year);
@@ -1556,6 +1568,12 @@ if (!q1("SELECT 1 FROM settings WHERE key='change_requests_removed'")) tx(() => 
     notify(familyAdmins(r.family_id), `Allocation changes are now arranged directly with the site admin, so your request to change ${weekLabel(g)} has been closed. Please contact the site admin if you’d still like it.`, '#/calendar');
   }
   run("INSERT INTO settings (key,value) VALUES ('change_requests_removed','1')");
+});
+// One-off: shares become per year. Every existing year is pinned to today's figure, so changing one year leaves the others alone.
+if (!q1("SELECT 1 FROM settings WHERE key='shares_per_year'")) tx(() => {
+  const years = q('SELECT DISTINCT year FROM weeks UNION SELECT year FROM budget_years UNION SELECT DISTINCT year FROM budget_items').map(r => r.year);
+  for (const f of q('SELECT id, share_units FROM families')) for (const y of years) run('INSERT OR IGNORE INTO family_shares (family_id,year,units) VALUES (?,?,?)', f.id, y, f.share_units);
+  run("INSERT INTO settings (key,value) VALUES ('shares_per_year','1')");
 });
 // One-off: in-year swaps are retired. Willing to swap becomes Undecided; open swap offers lapse (the enquiries stay in the queue).
 if (!q1("SELECT 1 FROM settings WHERE key='in_year_swaps'")) tx(() => {

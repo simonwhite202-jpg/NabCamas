@@ -179,6 +179,10 @@ Opening a page you don't have access to takes you back to Home.
 - Each budget year has a **period label** (e.g. July 2025 – June 2026), and each line has a **type** (Regular, Postpone, …) and **commentary**, as on the spreadsheet.
 - **Budget years** can be copied from the previous year with an inflation uplift, edited line by line, or imported from Excel or CSV. The importer lets you pick the columns and previews the result first. It also handles a sheet with the budget on the left and families and weeks on the right.
 
+**Families and shares (site admin)**
+- Shares are set **per year**: pick the year at the top of **Families** and edit each family's shares for that year (one share = one week). That year's service charges are charged per share, so changing 2026 never changes 2027. **Set {year} shares from the {year} allocation** fills them from the week allocation, and a note shows where a family's shares differ from the weeks allocated to it.
+- A year without its own figures uses the most recent figure set for this year or later.
+
 **Payments page (site admin)**
 - **Service charges by year:** for each household, the year's charge, payments, other credits for that year (let income, purchases, adjustments), what's **outstanding**, a status (*Unpaid*, *Part paid*, *Paid*, *In credit*) and the **balance now** across every year. Pick the year at the top.
 - **Recording payments:** **Paid in full** records the outstanding amount as received today. **Record…** takes a full or part amount, the date it arrived and a note (or an adjustment). Statements show the date the money arrived, and the family admins get a thank-you notice.
