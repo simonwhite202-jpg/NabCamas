@@ -171,7 +171,7 @@ const stamp = t => new Date(t.replace(' ', 'T') + (t.length > 10 ? 'Z' : '')).to
 function welcomeHeader(greet) {
   const s = S.me.settings, me = whoAmI();
   return `<header class="welcome"><span class="eyebrow">${esc(s.place_line || '')}</span><h1>Welcome to Camas</h1>
-      <p>${greet}, ${me.name}${me.nameIsRole ? '' : ` · ${me.role}${me.house ? ', ' + me.house : ''}`}. It’s ${dfmt(todayStr(), { weekday: 'long', day: 'numeric', month: 'long' })}.</p></header>
+      <p>${greet}, ${isFam() && me.house ? me.house : me.name}. It’s ${dfmt(todayStr(), { weekday: 'long', day: 'numeric', month: 'long' })}.</p></header>
     ${s.hero ? `<img class="hero-img" src="/media/hero?v=${esc(s.hero)}" alt="Nab Camas on Loch Carron">` : ''}`;
 }
 const STAY_TAG = { 'Booked': 'booked', 'Your stay': 'booked', 'Reserved': 'pending', 'Released': 'available', 'Available': 'available', 'Using it': 'yours' };
