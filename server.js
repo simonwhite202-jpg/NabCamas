@@ -312,7 +312,8 @@ function weekView(w, u, s) {
   const b = q1("SELECT * FROM bookings WHERE week_id=? AND status IN ('pending','confirmed') ORDER BY id DESC", w.id);
   if (b) {
     const seeGuest = u.is_site_admin || b.user_id === u.id || (isFamily(u) && (u.family_id === w.family_id || u.family_id === b.buyer_family_id));
-    v.booking = { id: b.id, status: b.status, mine: b.user_id === u.id, guest: seeGuest ? (b.guest_name || q1('SELECT name FROM users WHERE id=?', b.user_id).name) : null, reference: seeGuest ? b.reference : null, expires_at: b.expires_at };
+    v.booking = { id: b.id, status: b.status, mine: b.user_id === u.id, guest: seeGuest ? (b.guest_name || q1('SELECT name FROM users WHERE id=?', b.user_id).name) : null, reference: seeGuest ? b.reference : null, expires_at: b.expires_at,
+      ...(u.is_site_admin ? { amount: b.amount, method: b.method, seller: famName(b.seller_family_id), buyer: b.buyer_family_id ? famName(b.buyer_family_id) : null } : {}) };
   }
   // what this user can do
   const friendVisible = w.offer_friends && (w.sale_to === 'all' || (w.sale_to === 'own' && u.family_id === w.family_id)) && (friendsFrom(w, s) || '9') <= today();
@@ -797,9 +798,9 @@ route('GET', '/api/bookings', ({ user, query }) => {
     isFamily(user) ? q('SELECT * FROM bookings WHERE user_id=? OR seller_family_id=? OR buyer_family_id=? ORDER BY id DESC', user.id, user.family_id, user.family_id)
       : q('SELECT * FROM bookings WHERE user_id=? ORDER BY id DESC', user.id);
   return rows.map(b => { const w = q1('SELECT * FROM weeks WHERE id=?', b.week_id); const bu = q1('SELECT name,email,phone FROM users WHERE id=?', b.user_id);
-    return { ...b, week: { year: w.year, week_no: w.week_no, start_date: w.start_date, season: w.season }, seller: famName(b.seller_family_id), booker: bu.name, booker_contact: (user.is_site_admin || canManageFamily(user, b.seller_family_id)) ? bu : null, mine: b.user_id === user.id }; });
+    return { ...b, week: { year: w.year, week_no: w.week_no, start_date: w.start_date, season: w.season }, seller: famName(b.seller_family_id), buyer: b.buyer_family_id ? famName(b.buyer_family_id) : null, booker: bu.name, booker_contact: (user.is_site_admin || canManageFamily(user, b.seller_family_id)) ? bu : null, mine: b.user_id === user.id }; });
 });
-route('POST', '/api/bookings/:id/cancel', ({ user, params }) => {
+route('POST', '/api/bookings/:id/cancel', ({ user, params, body }) => {
   need(user, true); const b = q1('SELECT * FROM bookings WHERE id=?', params.id) || fail(404, 'Not found');
   const w = q1('SELECT * FROM weeks WHERE id=?', b.week_id);
   if (b.status === 'pending') need(user, b.user_id === user.id || user.is_site_admin || canManageFamily(user, b.seller_family_id));
@@ -813,8 +814,12 @@ route('POST', '/api/bookings/:id/cancel', ({ user, params }) => {
     run("UPDATE bookings SET status='cancelled' WHERE id=?", b.id);
     run("UPDATE weeks SET status='offered' WHERE id=?", w.id);
   });
-  notify([b.user_id, ...familyAdmins(b.seller_family_id)].filter(i => i !== user.id), `Booking ${b.reference} for ${weekLabel(w)} was cancelled by ${user.name}.`, '#/bookings');
-  audit(user.id, 'booking.cancel', { booking: b.id }); return { ok: true };
+  const reason = String((body && body.reason) || '').trim().slice(0, 500), s = settings();
+  const refundNote = b.status !== 'confirmed' ? '' : b.method === 'account' ? ` The ${s.currency}${b.amount} has gone back on ${famName(b.buyer_family_id)}’s account.` : ' Any refund is arranged with the site admin.';
+  const msg = `Booking ${b.reference} for ${weekLabel(w)} was cancelled by ${user.name}.${reason ? ` Reason: ${reason}${/[.!?]$/.test(reason) ? '' : '.'}` : ''}`;
+  notify([b.user_id].filter(i => i !== user.id), msg + refundNote, '#/bookings');
+  notify(familyAdmins(b.seller_family_id).filter(i => i !== user.id && i !== b.user_id), msg + (b.status === 'confirmed' ? ' The let income credited for it has been reversed and the week is available again.' : ' The week is available again.'), '#/calendar');
+  audit(user.id, 'booking.cancel', { booking: b.id, was: b.status, reason: reason || undefined }); return { ok: true };
 });
 route('POST', '/api/admin/bookings/:id/confirm', ({ user, params }) => {
   needAdmin(user); const b = q1("SELECT * FROM bookings WHERE id=? AND status='pending'", params.id) || fail(404, 'No pending booking');

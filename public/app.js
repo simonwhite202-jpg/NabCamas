@@ -159,6 +159,22 @@ function openModal(html, wide) {
   $('#drawer-root').innerHTML = `<div class="scrim"></div><div class="modal ${wide ? 'wide' : ''}" role="dialog">${html}</div>`;
   $('.scrim').onclick = closeOverlay; $('#drawer-root').querySelectorAll('[data-close]').forEach(b => b.onclick = closeOverlay); return $('.modal');
 }
+// Site admin: cancel a booking (awaiting payment or paid). b = {id, status, method, amount, reference, guest, label, seller, buyer}
+function cancelBookingModal(b, done) {
+  const paid = b.status === 'confirmed';
+  const what = paid
+    ? [`The let income <b>${esc(b.seller)}</b> was credited for it (${money(b.amount, 2)} less the letting cost) comes back off their account.`,
+       b.method === 'account' ? `The ${money(b.amount, 2)} goes back on <b>${esc(b.buyer || 'the buyer')}</b>’s account.` : `The guest paid by bank transfer: refund them from the syndicate account yourself (the portal doesn’t move money).`]
+    : ['No payment has been confirmed, so no money moves.'];
+  what.push(`The week goes back on offer as released by ${esc(b.seller)}. Open it on the calendar if it should be Undecided or Using it instead.`);
+  const m = openModal(`<h2>Cancel booking ${esc(b.reference || '')}?</h2>
+    <p style="margin-top:0">${esc(b.label)} · ${esc(b.guest || '')} · <span class="badge ${paid ? 'blue' : 'amber'}">${paid ? 'Paid' : 'Awaiting payment'}</span></p>
+    <ul class="small" style="padding-left:18px;margin:0 0 14px">${what.map(t => `<li style="margin-bottom:4px">${t}</li>`).join('')}</ul>
+    <form id="cbf"><div class="field"><label>Message to the guest and household (optional)</label><textarea name="reason" rows="2" maxlength="500" placeholder="e.g. The house is closed for repairs that week"></textarea></div>
+    <div class="row" style="justify-content:flex-end;gap:8px"><button type="button" class="btn" data-close>Keep booking</button><button class="btn danger">Cancel booking</button></div></form>`);
+  $('#cbf', m).onsubmit = guard(async e => { e.preventDefault();
+    await api(`/bookings/${b.id}/cancel`, { body: formData($('#cbf', m)) }); closeOverlay(); toast('Booking cancelled. The guest and household have been told'); done && done(); });
+}
 
 // ------------------------------------------------------------ home
 // shared overview pieces
@@ -332,7 +348,7 @@ async function openWeek(w) {
       : `<dt>Price</dt><dd><b>${money(w.member_price)}</b> for members · ${money(w.friend_price)} for trusted friends${w.price_override != null ? ' <span class="muted small">(set by family)</span>' : ''}
         <div class="tiny muted">${w.sale_to === 'members' ? 'Members only' : (w.friends_from > todayStr() ? `Members only until ${dfmt(w.friends_from)}, then ` : 'Open to ') + (w.sale_to === 'own' ? `${esc(w.family_name)}’s trusted friends` : 'trusted friends')}</div></dd>`) : ''}
     ${w.note && role !== 'friend' ? `<dt>Note</dt><dd>${esc(w.note)}</dd>` : ''}
-    ${w.booking?.guest ? `<dt>Booking</dt><dd>${esc(w.booking.guest)} · <span class="badge ${w.booking.status === 'confirmed' ? 'blue' : 'amber'}">${w.booking.status === 'confirmed' ? 'Paid' : 'Awaiting payment'}</span><div class="tiny muted">Ref ${esc(w.booking.reference)}</div></dd>` : ''}</dl>`;
+    ${w.booking?.guest ? `<dt>Booking</dt><dd>${esc(w.booking.guest)} · <span class="badge ${w.booking.status === 'confirmed' ? 'blue' : 'amber'}">${w.booking.status === 'confirmed' ? 'Paid' : 'Awaiting payment'}</span><div class="tiny muted">Ref ${esc(w.booking.reference)}${w.booking.amount != null ? ` · ${money(w.booking.amount, 2)} by ${w.booking.method === 'account' ? `${esc(w.booking.buyer || '')} account` : 'bank transfer'}` : ''}</div>${isSiteRole() ? `<button class="btn sm danger" data-admin-cancel style="margin-top:8px">${icon('x')}Cancel booking</button>` : ''}</dd>` : ''}</dl>`;
   const past = w.start_date < todayStr();
   if (w.status === 'syndicate') html += '<div class="section notice">This week is held by the syndicate (e.g. maintenance or the extra 53rd week) and isn’t allocated to a family.</div>';
 
@@ -392,6 +408,9 @@ async function openWeek(w) {
     if (b.status === 'confirmed') { toast('Booked and charged to your family account'); closeOverlay(); }
     else openModal(`<h2>Week reserved</h2><p>Please pay within <b>${s.hold_days} days</b> to secure the week. You’ll be notified when the payment is confirmed.</p>${payBox(b.reference, b.amount)}<div class="row" style="margin-top:18px;justify-content:flex-end"><button class="btn primary" data-close>Done</button></div>`);
     viewCalendar($('main')); await refreshMe(); });
+  const ac = $('[data-admin-cancel]', body);
+  if (ac) ac.onclick = () => cancelBookingModal({ ...w.booking, label: `Week ${w.week_no} · ${dfmt(w.start_date, { day: 'numeric', month: 'short', year: 'numeric' })}`, seller: w.booking.seller || w.family_name },
+    () => { viewCalendar($('main')); refreshMe(); });
   const ff = $('#feForm', body);
   if (ff) ff.onsubmit = guard(async e => { e.preventDefault(); await api('/friend-enquiries', { body: { ...formData(ff), week_id: w.id } }); toast('Enquiry sent. The household will let you know'); closeOverlay(); viewCalendar($('main')); });
   const fw = $('[data-fe-withdraw]', body);
@@ -939,14 +958,26 @@ async function admSettings(el) {
 }
 async function admCredits(el, year) {
   year = year || S.creditYear || S.year; S.creditYear = year;
-  const c = await api('/credits?year=' + year);
+  const [c, all] = await Promise.all([api('/credits?year=' + year), api('/bookings?all=1')]);
+  const bks = all.filter(b => b.week.year === year).sort((x, y) => x.week.start_date.localeCompare(y.week.start_date) || y.id - x.id);
+  const bState = { pending: ['amber', 'Awaiting payment'], confirmed: ['blue', 'Paid'], cancelled: ['', 'Cancelled'], expired: ['', 'Expired'] };
+  const bRow = b => { const [tone, label] = bState[b.status] || ['', b.status], live = ['pending', 'confirmed'].includes(b.status);
+    return `<tr class="${live ? '' : 'muted'}"><td>${b.week.week_no} <span class="muted small">${dfmt(b.week.start_date)}</span></td>
+      <td>${esc(b.guest_name || b.booker)}${b.guest_name && b.guest_name !== b.booker ? `<div class="tiny muted">booked by ${esc(b.booker)}</div>` : ''}</td>
+      <td>${esc(b.seller)}</td><td class="r num">${money(b.amount, 2)}</td><td class="small">${b.method === 'account' ? 'Account' : 'Bank'}</td>
+      <td class="small"><code>${esc(b.reference)}</code></td><td><span class="badge ${tone}">${label}</span></td>
+      <td class="r">${live ? `<button class="btn sm danger" data-bcancel="${b.id}">Cancel</button>` : ''}</td></tr>`; };
   el.innerHTML = `<div class="row between" style="margin-bottom:14px"><div class="seg">${S.me.years.map(y => `<button data-y="${y}" class="${y === year ? 'on' : ''}">${y}</button>`).join('')}</div></div>
     <div class="table-wrap"><table><thead><tr><th>Household</th><th class="r">Shares</th><th class="r">Weeks held</th><th class="r">Released</th><th class="r">Lets</th><th class="r">Let income credited</th></tr></thead><tbody>
     ${c.rows.map(r => `<tr><td>${esc(r.name)}</td><td class="r num">${r.shares}</td><td class="r num">${r.weeks}</td><td class="r num">${r.released_weeks}</td><td class="r num">${r.lets}</td><td class="r num">${money(r.let_income, 2)}</td></tr>`).join('')}</tbody>
     <tfoot><tr><td>Total</td><td class="r">${c.rows.reduce((a, r) => a + r.shares, 0)}</td><td class="r">${c.rows.reduce((a, r) => a + r.weeks, 0)}</td><td class="r">${c.rows.reduce((a, r) => a + r.released_weeks, 0)}</td><td class="r">${c.income.lets}</td><td class="r">${money(c.income.credited, 2)}</td></tr></tfoot></table></div>
     <div class="card" style="margin-top:20px;max-width:760px"><h3>Let income</h3><p class="small" style="margin:0">When a released ${year} week lets and the payment is confirmed, the household that released it is credited with the payment less the ${money(S.me.settings.letting_cost || 0)} letting cost, which goes to the maintenance fund.
-      So far: ${money(c.income.gross, 2)} from ${c.income.lets} let${c.income.lets === 1 ? '' : 's'}, of which <b>${money(c.income.fund, 2)}</b> to the maintenance fund. Credit comes off the household’s service charge and any extra carries forward.</p></div>`;
+      So far: ${money(c.income.gross, 2)} from ${c.income.lets} let${c.income.lets === 1 ? '' : 's'}, of which <b>${money(c.income.fund, 2)}</b> to the maintenance fund. Credit comes off the household’s service charge and any extra carries forward.</p></div>
+    <section class="stack" style="margin-top:28px"><h2>Bookings ${year}</h2><p class="muted small" style="margin:0">Every booking of a ${year} week. You can cancel one that is awaiting payment or paid: the guest and the household are told, any let income credited is reversed and the week goes back on offer.</p>
+    ${bks.length ? `<div class="table-wrap"><table><thead><tr><th>Week</th><th>Guest</th><th>Household</th><th class="r">Amount</th><th>Paid by</th><th>Ref</th><th>Status</th><th></th></tr></thead><tbody>${bks.map(bRow).join('')}</tbody></table></div>` : `<div class="card flat empty small">No bookings for ${year} yet</div>`}</section>`;
   el.querySelectorAll('[data-y]').forEach(b => b.onclick = () => admCredits(el, Number(b.dataset.y)));
+  el.querySelectorAll('[data-bcancel]').forEach(btn => btn.onclick = () => { const b = bks.find(x => x.id == btn.dataset.bcancel);
+    cancelBookingModal({ ...b, guest: b.guest_name || b.booker, label: `Week ${b.week.week_no} · ${dfmt(b.week.start_date, { day: 'numeric', month: 'short', year: 'numeric' })}` }, () => { admCredits(el, year); refreshMe(); }); });
 }
 async function admAudit(el) {
   const rows = await api('/admin/audit');

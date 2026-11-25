@@ -128,7 +128,15 @@ Opening a page you don't have access to takes you back to Home.
 - **Family members buying from another family** can pay by bank transfer like a friend, or from their household's credit if it covers the price (confirmed instantly).
 - **Friend scope.** A family can let a week to *any* family's trusted friends, or only *their own*. Friends never see family contact details, other families' activity or weeks that aren't offered to them.
 - **Price.** The default comes from the site-wide season rate. A family admin can override it for any one week.
-- **Cancellations.** The booker or the family can cancel an unpaid hold. A paid booking can only be cancelled by the site admin, and the ledger entries are reversed automatically. The refund itself is handled outside the site, under whatever cancellation policy you agree.
+- **Cancellations.** The booker or the family can cancel an unpaid hold. Only the site admin can cancel a paid booking. They can cancel any booking, paid or not, in two places:
+  - **Site admin → Lets**, which lists every booking for the year with a Cancel button;
+  - **Cancel booking** in the week's panel on the calendar.
+
+  The dialog says what will happen and takes an optional message, which is sent to the guest and to the household.
+  - The let income credited to the household is reversed automatically.
+  - A member who paid from their account gets the amount back on it.
+  - The week goes back on offer. The admin can then open it and set it to Undecided or Using it.
+  - A guest who paid by bank transfer is refunded outside the site, under whatever cancellation policy you agree.
 
 **Credits (switched off for now)**
 - Week credits are hidden from every screen for now, and every season counts the same in the background. The code is kept for when the syndicate decides how to value weeks (see the four-frameworks paper).
