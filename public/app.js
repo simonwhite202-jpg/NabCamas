@@ -42,7 +42,7 @@ async function route() {
   const allowed = new Set(navTabs().map(t => t[0].split('/')[0])); if (allowed.has('enquiries')) allowed.add('swaps');
   if (!allowed.has(tab)) { if (location.hash !== '#/home') location.hash = '#/home'; else renderShell('home'); return; }
   renderShell(tab); const main = $('main');
-  const views = { home: viewHome, calendar: viewCalendar, enquiries: viewEnquiries, swaps: viewEnquiries, bookings: viewBookings, account: viewAccount, people: viewPeople, admin: viewAdmin };
+  const views = { home: viewHome, calendar: viewCalendar, enquiries: viewEnquiries, swaps: viewEnquiries, bookings: viewBookings, account: viewAccount, expenditure: viewExpenditure, people: viewPeople, admin: viewAdmin };
   try { await (views[tab] || viewHome)(main); } catch (e) { main.innerHTML = `<div class="card empty">${esc(e.message)}</div>`; }
 }
 
@@ -82,7 +82,7 @@ function navOn(k, tab) {
 //   family member  → Home, Calendar, Enquiries, Bookings, Family & friends
 //   family admin   → the same plus Account (and setting plans for the family's weeks from the calendar, managing people)
 //   site admin     → a separate login with no family: Home, Calendar and the admin pages
-const ADMIN_PAGES = [['admin/overview', 'Payments'], ['admin/budget', 'Budget'], ['admin/weeks', 'Weeks'], ['admin/credits', 'Lets'], ['admin/families', 'Families'], ['admin/users', 'Users'], ['admin/settings', 'Settings'], ['admin/audit', 'Activity']];
+const ADMIN_PAGES = [['admin/overview', 'Payments'], ['admin/budget', 'Expenditure'], ['admin/weeks', 'Weeks'], ['admin/credits', 'Lets'], ['admin/families', 'Families'], ['admin/users', 'Users'], ['admin/settings', 'Settings'], ['admin/audit', 'Activity']];
 const isSiteRole = () => S.me.user.role === 'site_admin';
 // Who is logged in: name, role and household (site admins have no household). Escaped, ready for HTML.
 function whoAmI() {
@@ -92,12 +92,12 @@ function whoAmI() {
   return { name: esc(u.name), role: esc(role), house: esc(house), nameIsRole };
 }
 const NAV_ICON = { home: 'house', calendar: 'calendar-days', weeks: 'calendar-range', enquiries: 'messages-square', bookings: 'bed-double', account: 'wallet', people: 'users', admin: 'settings',
-  'admin/overview': 'banknote', 'admin/budget': 'calculator', 'admin/weeks': 'calendar-range', 'admin/credits': 'coins', 'admin/families': 'users-round', 'admin/users': 'user-cog', 'admin/settings': 'settings', 'admin/audit': 'history' };
+  'admin/overview': 'banknote', 'admin/budget': 'receipt', expenditure: 'receipt', 'admin/weeks': 'calendar-range', 'admin/credits': 'coins', 'admin/families': 'users-round', 'admin/users': 'user-cog', 'admin/settings': 'settings', 'admin/audit': 'history' };
 function navTabs() {
   if (isSiteRole()) return [['home', 'Overview'], ['calendar', 'Calendar'], ...ADMIN_PAGES];
   const friend = S.me.user.role === 'friend', fam = isFam();
   return [['home', 'Overview'], ['calendar', friend ? 'Available weeks' : 'Calendar'], fam && ['enquiries', 'Enquiries', S.me.pendingSwaps],
-    ['bookings', friend ? 'My bookings' : 'Bookings'], isFamAdmin() && ['account', 'Account'], ['people', friend ? 'My details' : 'Family & friends'], isSite() && ['admin', 'Site admin']].filter(Boolean);
+    ['bookings', friend ? 'My bookings' : 'Bookings'], isFamAdmin() && ['account', 'Account'], isFamAdmin() && ['expenditure', 'Expenditure'], ['people', friend ? 'My details' : 'Family & friends'], isSite() && ['admin', 'Site admin']].filter(Boolean);
 }
 function renderShell(tab) {
   const u = S.me.user, tabs = navTabs(), site = esc(S.me.settings.site_name);
@@ -725,10 +725,78 @@ function bindProfile(main) {
   $('#pw', main).onsubmit = guard(async e => { e.preventDefault(); await api('/me', { method: 'PUT', body: formData(e.target) }); e.target.reset(); toast('Password changed'); });
 }
 
+// ------------------------------------------------------------ proposed expenditure
+const FUNDING = { budget: 'added to the budget', levy: 'charged to households by shares', reserves: 'paid from the bank balance', reassign: 'moved from another budget line' };
+function proposalCard(p, admin) {
+  const st = { proposed: '<span class="badge amber">Waiting for a decision</span>', accepted: '<span class="badge green">Accepted</span>', rejected: '<span class="badge">Not accepted</span>', withdrawn: '<span class="badge">Withdrawn</span>' }[p.status];
+  const decided = p.status === 'accepted' ? `Accepted at ${esc(p.meeting)}: ${FUNDING[p.funding] || 'added to the budget'}${p.funding === 'budget' || p.funding === 'reassign' ? ` for ${p.year}` : ''}${p.funding_detail ? ` (${esc(p.funding_detail)})` : ''}.`
+    : p.status === 'rejected' ? `Not accepted at ${esc(p.meeting)}.` : p.status === 'withdrawn' ? `Withdrawn on ${asked(p.decided_at)}.` : '';
+  return `<div class="card flat" style="padding:16px"><div class="row between" style="align-items:flex-start;gap:12px"><div><b>${esc(p.title)}</b> <span class="num">· ${money(p.amount, 2)}</span>
+      <div class="tiny muted" style="margin-top:2px">For the ${p.year} budget · proposed by ${esc(p.by)}${p.family_id ? `, ${esc(p.family)} family,` : ''} on ${asked(p.created_at)}</div></div>${st}</div>
+    ${p.details ? `<div class="small" style="margin-top:8px;white-space:pre-line">${esc(p.details)}</div>` : ''}
+    ${decided ? `<div class="small" style="margin-top:8px">${decided}${p.decision_note ? ` <span class="muted">${esc(p.decision_note)}</span>` : ''}</div>` : ''}
+    ${admin && p.status === 'proposed' ? `<div class="row" style="margin-top:10px;gap:8px"><button class="btn sm green" data-accept-out="${p.id}">Accept…</button><button class="btn sm" data-reject-out="${p.id}">Reject…</button></div>`
+      : p.can_withdraw ? `<div class="row" style="margin-top:10px"><button class="btn sm danger" data-withdraw-out="${p.id}">Withdraw</button></div>` : ''}</div>`;
+}
+async function viewExpenditure(main, year) {
+  const d = await api('/expenditure' + (year ? '?year=' + year : '')), b = d.budget, open = d.proposals.filter(p => p.status === 'proposed'), done = d.proposals.filter(p => p.status !== 'proposed');
+  main.innerHTML = `<h1>Expenditure</h1><p class="muted" style="max-width:75ch">Propose expenditure for a coming year’s budget: a new fridge, say, or a quote for maintenance work that’s been discussed. The syndicate approves or rejects proposals at the AGM or a board meeting. Approved expenditure is added to the budget, charged to households by shares, paid from the bank balance, or moved from another budget line.</p>
+    <div class="grid-2" style="align-items:start">
+    <section class="stack">${d.can_propose ? `<form class="card" id="opf"><h3>Propose expenditure</h3>
+        <div class="field"><label>What is it for?</label><input name="title" required maxlength="200" placeholder="e.g. New fridge-freezer"></div>
+        <div class="grid-2" style="gap:12px"><div class="field"><label>Estimated cost (£)</label><input name="amount" type="number" min="0" step="0.01" required></div>
+          <div class="field"><label>For the budget of</label><select name="year">${d.years.filter(y => y >= d.default_year).map(y => `<option value="${y}" ${y === d.default_year ? 'selected' : ''}>${y}</option>`).join('')}</select></div></div>
+        <div class="field"><label>Details (optional)</label><textarea name="details" rows="3" placeholder="Why it’s needed, who quoted, how long the quote is valid…"></textarea></div>
+        <button class="btn primary">Propose</button></form>` : ''}
+      <h2 style="margin:8px 0 0">Waiting for a decision</h2>${open.map(p => proposalCard(p)).join('') || '<div class="card flat empty small">Nothing waiting</div>'}
+      ${done.length ? `<h2 style="margin:8px 0 0">Decided</h2>${done.map(p => proposalCard(p)).join('')}` : ''}</section>
+    <section class="stack"><div class="row between"><h2 style="margin:0">Agreed expenditure ${b.year}</h2><div class="seg">${d.years.filter(y => y >= d.default_year - 1).map(y => `<button data-oy="${y}" class="${y === b.year ? 'on' : ''}">${y}</button>`).join('')}</div></div>
+      ${b.items.length ? `<div class="table-wrap"><table><thead><tr><th>Item</th><th>Type</th><th class="r">Amount</th></tr></thead><tbody>${b.items.map(i => `<tr><td>${esc(i.description)}${i.notes ? `<div class="tiny muted">${esc(i.notes)}</div>` : ''}</td><td class="small muted">${esc(i.category || '')}</td><td class="r num">${money(i.amount, 2)}</td></tr>`).join('')}</tbody>
+        <tfoot><tr><td colspan="2">Total</td><td class="r num">${money(b.total, 2)}</td></tr></tfoot></table></div>
+        <p class="small muted" style="margin:0">Service charge ${money(b.rate, 2)} per share${b.generated ? ', issued' : ', not issued yet'}.</p>` : `<div class="card flat empty small">No expenditure agreed for ${b.year} yet</div>`}</section></div>`;
+  const reload = () => viewExpenditure(main, b.year);
+  main.querySelectorAll('[data-oy]').forEach(x => x.onclick = () => viewExpenditure(main, Number(x.dataset.oy)));
+  const f = $('#opf', main); if (f) f.onsubmit = guard(async e => { e.preventDefault(); await api('/expenditure', { body: formData(f) }); toast('Proposed. The site admin has been told'); reload(); });
+  bindProposals(main, reload);
+}
+function bindProposals(root, reload) {
+  root.querySelectorAll('[data-withdraw-out]').forEach(x => x.onclick = guard(async () => { if (!confirm('Withdraw this proposal?')) return; await api(`/expenditure/${x.dataset.withdrawOut}/withdraw`, { body: {} }); toast('Withdrawn'); reload(); }));
+  const decide = (id, accept) => async () => {
+    const d = await api('/expenditure'), p = d.proposals.find(x => x.id == id), years = [...new Set([p.year, ...d.years.filter(y => y >= d.default_year)])].sort();
+    const m = openModal(`<form id="dcf"><h2>${accept ? 'Accept' : 'Reject'} “${esc(p.title)}”</h2>
+      <p class="small muted" style="margin-top:0">${money(p.amount, 2)} proposed by ${esc(p.by)}${p.family_id ? `, ${esc(p.family)} family,` : ''} for the ${p.year} budget.</p>
+      <div class="field"><label>Decided at</label><input name="meeting" required placeholder="e.g. AGM, 12 June 2027"></div>
+      ${accept ? `<div class="grid-2" style="gap:12px"><div class="field"><label>Agreed amount (£)</label><input name="amount" type="number" min="0" step="0.01" value="${p.amount}" required></div>
+        <div class="field"><label>Budget year</label><select name="year">${years.map(y => `<option value="${y}" ${y === p.year ? 'selected' : ''}>${y}</option>`).join('')}</select></div></div>
+      <div class="field"><label>How it’s paid for</label><select name="funding">
+        <option value="budget">Add it to the year’s budget (the service charge goes up)</option>
+        <option value="levy">Charge households now, split by shares</option>
+        <option value="reserves">Pay it from the bank balance (nothing charged)</option>
+        <option value="reassign">Move it from another budget line (service charge unchanged)</option></select></div>
+      <div class="field" id="fromf" style="display:none"><label>Take it from</label><select name="from_item_id"></select></div>
+      <p class="tiny muted" id="fundhint" style="margin:-4px 0 12px"></p>` : ''}
+      <div class="field"><label>Note (optional)</label><input name="note" placeholder="${accept ? 'e.g. Ben to order it before Easter' : 'e.g. Revisit next year'}"></div>
+      <div class="row" style="justify-content:flex-end;gap:8px"><button type="button" class="btn" data-close>Cancel</button><button class="btn ${accept ? 'primary' : 'danger'}">${accept ? 'Accept' : 'Reject'}</button></div></form>`);
+    const form = $('#dcf', m);
+    if (accept) {
+      const sync = async () => { const v = form.funding.value, y = form.year.value; $('#fromf', m).style.display = v === 'reassign' ? '' : 'none';
+        $('#fundhint', m).textContent = { budget: `A new line in the ${y} budget. If the ${y} charges are already issued, you’ll be asked whether to re-issue them.`, levy: 'Each household’s share goes on its account now, as a one-off charge, and its admins are told.', reserves: 'Recorded as agreed. Nothing goes on any household’s account.', reassign: 'A new line in the budget, with the same amount taken off the line you choose.' }[v];
+        if (v === 'reassign') { const items = (await api('/admin/budget?year=' + y)).items; form.from_item_id.innerHTML = items.map(i => `<option value="${i.id}">${esc(i.description)} · ${money(i.amount, 2)}</option>`).join('') || '<option value="">No budget lines for that year</option>'; } };
+      form.funding.onchange = sync; form.year.onchange = sync; sync();
+    }
+    form.onsubmit = guard(async e => { e.preventDefault(); const r = await api(`/admin/expenditure/${id}/decide`, { body: { ...formData(form), accept } }); closeOverlay();
+      toast(accept ? 'Accepted' : 'Rejected. The family has been told');
+      if (r.reissue && confirm(`Added to the ${r.reissue} budget. The ${r.reissue} service charges are already issued. Re-issue them now so households are charged for it?`)) { await api('/admin/budget/generate', { body: { year: r.reissue } }); toast(`${r.reissue} service charges re-issued`); }
+      reload(); });
+  };
+  root.querySelectorAll('[data-accept-out]').forEach(x => x.onclick = guard(decide(x.dataset.acceptOut, true)));
+  root.querySelectorAll('[data-reject-out]').forEach(x => x.onclick = guard(decide(x.dataset.rejectOut, false)));
+}
+
 // ------------------------------------------------------------ site admin
 async function viewAdmin(main) {
   const sub = location.hash.split('/')[2] || 'overview';
-  const tabs = [['overview', 'Payments & balances'], ['budget', 'Budget & charges'], ['weeks', 'Weeks & allocation'], ['credits', 'Lets'], ['families', 'Families'], ['users', 'All users'], ['settings', 'Settings & rates'], ['audit', 'Activity log']];
+  const tabs = [['overview', 'Payments & balances'], ['budget', 'Expenditure'], ['weeks', 'Weeks & allocation'], ['credits', 'Lets'], ['families', 'Families'], ['users', 'All users'], ['settings', 'Settings & rates'], ['audit', 'Activity log']];
   main.innerHTML = isSiteRole() ? `<h1>${(tabs.find(t => t[0] === sub) || tabs[0])[1]}</h1><div id="adm"></div>`
     : `<h1>Site admin</h1><div class="subtabs">${tabs.map(([k, l]) => `<a href="#/admin/${k}" class="${k === sub ? 'on' : ''}">${l}</a>`).join('')}</div><div id="adm"></div>`;
   const el = $('#adm', main);
@@ -763,7 +831,7 @@ async function admOverview(el, year) {
       <td class="r"><button class="btn sm green" data-tuconf="${t.id}" data-amt="${t.amount}">Arrived</button> <button class="btn sm danger" data-tucan="${t.id}">Cancel</button></td></tr>`).join('')}</tbody></table></div></section>` : ''}
     <section class="stack"><div class="row between"><h2 style="margin:0">Service charges ${c.year}</h2><div class="seg">${c.years.map(y => `<button data-cy="${y}" class="${y === c.year ? 'on' : ''}">${y}</button>`).join('')}</div></div>
       <div class="card"><div class="row" style="gap:28px;flex-wrap:wrap;align-items:flex-end">
-        <div><div class="muted small">Budget ${esc(b.label || String(c.year))}</div><div class="num" style="font-size:20px">${money(b.total, 2)}</div></div>
+        <div><div class="muted small">Expenditure ${esc(b.label || String(c.year))}</div><div class="num" style="font-size:20px">${money(b.total, 2)}</div></div>
         <div><div class="muted small">÷ ${b.units} weeks</div><div class="num" style="font-size:20px">${money(b.rate_calc, 2)}<span class="small muted"> / week</span></div></div>
         <div class="field" style="margin:0"><label>Charge per week</label><div class="row" style="flex-wrap:nowrap;gap:6px"><input id="rate" type="number" step="0.01" min="0" value="${b.rate_per_week ?? ''}" placeholder="${b.rate_calc}" style="max-width:120px">
           <button class="btn sm" data-round="5">Round to ${cur}5</button><button class="btn sm" data-round="10">${cur}10</button></div></div>
@@ -776,11 +844,11 @@ async function admOverview(el, year) {
         return `<tr><td><a href="#/admin/account-${r.id}">${esc(r.name)}</a><div class="tiny muted">${r.shares} share${r.shares === 1 ? '' : 's'} × ${money(b.rate, 2)}${r.last_payment ? ` · last paid ${money(r.last_payment.a, 2)} on ${dfmt(r.last_payment.d)}` : ''}</div></td>
         <td class="r num">${on ? money(r.charge, 2) + (pl && Math.abs(pl.charge - r.charge) > 0.01 ? `<div class="tiny" style="color:var(--amber)">budget now ${money(pl.charge, 2)}</div>` : '') : `<span class="muted">${money(pl ? pl.charge : 0, 2)}</span><div class="tiny muted">not issued</div>`}</td>
         <td class="r num">${signed(r.paid)}</td>
-        <td class="r num">${on ? `<b>${r.outstanding > 0.005 ? money(r.outstanding, 2) : r.outstanding < -0.005 ? money(-r.outstanding, 2) + ' credit' : money(0, 2)}</b>${Math.abs(r.other) > 0.005 ? `<div class="tiny muted">${r.other < 0 ? 'after' : 'plus'} ${money(Math.abs(r.other), 2)} ${r.other < 0 ? 'let income' : 'purchases'}</div>` : ''}` : '<span class="muted">—</span>'}</td>
+        <td class="r num">${on ? `<b>${r.outstanding > 0.005 ? money(r.outstanding, 2) : r.outstanding < -0.005 ? money(-r.outstanding, 2) + ' credit' : money(0, 2)}</b>${Math.abs(r.other) > 0.005 ? `<div class="tiny muted">${r.other < 0 ? 'after' : 'plus'} ${money(Math.abs(r.other), 2)} other ${r.other < 0 ? 'credits' : 'charges'}</div>` : ''}` : '<span class="muted">—</span>'}</td>
         <td>${status(r)}</td>
         <td class="r" style="white-space:nowrap">${on && r.outstanding > 0.005 ? `<button class="btn sm green" data-full="${r.id}">Paid in full</button> ` : ''}<button class="btn sm" data-pay="${r.id}">Record payment</button></td></tr>`; }).join('')}</tbody>
       <tfoot><tr><td>Total</td><td class="r">${b.generated ? signed(c.totals.charge) : money(b.raised, 2)}</td><td class="r">${signed(c.totals.paid)}</td><td class="r">${b.generated ? money(Math.max(0, c.totals.outstanding), 2) : '—'}</td><td></td><td></td></tr></tfoot></table></div>
-      <p class="tiny muted" style="margin:0">Outstanding is the year’s charge less payments, after any let income or purchases on the household’s account for that year. In total across all years, households owe ${money(owedAll, 2)}.</p></section>`;
+      <p class="tiny muted" style="margin:0">Outstanding is the year’s charge less payments, after anything else on the household’s account for that year: let income, purchases, one-off charges. In total across all years, households owe ${money(owedAll, 2)}.</p></section>`;
   const reload = () => admOverview(el, c.year);
   el.querySelectorAll('[data-cy]').forEach(x => x.onclick = () => admOverview(el, Number(x.dataset.cy)));
   const saveRate = guard(async v => { await api('/admin/budget-year/' + c.year, { method: 'PUT', body: { rate_per_week: v } }); reload(); });
@@ -815,12 +883,14 @@ async function admOverview(el, year) {
 }
 async function admBudget(el, year) {
   year = year || S.budgetYear || Math.max(...S.me.years.filter(y => y <= new Date().getFullYear()), new Date().getFullYear() - 1); S.budgetYear = year;
-  const b = await api('/admin/budget?year=' + year);
+  const [b, od] = await Promise.all([api('/admin/budget?year=' + year), api('/expenditure')]);
   const years = [...new Set([...b.years, year, year + 1])].sort();
+  const openP = od.proposals.filter(p => p.status === 'proposed'), doneP = od.proposals.filter(p => p.status !== 'proposed' && p.year === year);
   const cats = [...new Set(b.items.map(i => i.category).filter(Boolean))];
   const cur = S.me.settings.currency;
   el.innerHTML = `<div class="row between" style="margin-bottom:14px"><div class="seg">${years.map(y => `<button data-y="${y}" class="${y === year ? 'on' : ''}">${y}</button>`).join('')}</div>
     <div class="row"><button class="btn" id="imp">Import from spreadsheet</button><button class="btn" id="copy">Copy from ${year - 1}…</button></div></div>
+    ${openP.length ? `<section class="stack" style="margin-bottom:24px"><h2 style="margin:0">Expenditure proposals to decide</h2><p class="muted small" style="margin:0">Proposed by family admins. Record the decision from the AGM or a board meeting, and how it’s paid for.</p>${openP.map(p => proposalCard(p, true)).join('')}</section>` : ''}
     <div class="row" style="margin-bottom:14px"><div class="field" style="margin:0;min-width:260px"><label>Budget period for ${year}</label><input id="blabel" value="${esc(b.label)}" placeholder="e.g. July ${year - 1} – June ${year}"></div></div>
     <div class="grid-2" style="grid-template-columns: minmax(0,3fr) minmax(300px,2fr); align-items:start">
     <section class="stack"><div class="table-wrap"><table style="table-layout:fixed;min-width:620px"><colgroup><col style="width:34%"><col style="width:112px"><col style="width:112px"><col><col style="width:44px"></colgroup><thead><tr><th>Item</th><th class="r">Estimate (${cur})</th><th>Type</th><th>Commentary</th><th></th></tr></thead><tbody>
@@ -831,7 +901,8 @@ async function admBudget(el, year) {
     <section class="stack"><div class="card"><h3>Service charges ${esc(b.label || year)}</h3>
       <dl class="kv" style="grid-template-columns:1fr auto"><dt>Funding need</dt><dd class="num r">${money(b.total, 2)}</dd><dt>÷ ${b.units} weeks</dt><dd class="num">${money(b.rate_calc, 2)} / week</dd>
         <dt>Charge per week</dt><dd class="num">${money(b.rate, 2)}</dd><dt>Status</dt><dd>${b.generated ? '<span class="badge green">Issued</span>' : '<span class="badge amber">Not issued</span>'}</dd></dl>
-      <a class="btn block" href="#/admin/overview" id="toPay" style="margin-top:14px">Set the charge, issue and record payments on Payments →</a></div></section></div>`;
+      <a class="btn block" href="#/admin/overview" id="toPay" style="margin-top:14px">Issue and record payments →</a></div>
+      ${doneP.length ? `<h3 style="margin:8px 0 0">Proposals decided for ${year}</h3>${doneP.map(p => proposalCard(p, true)).join('')}` : ''}</section></div>`;
   const reload = () => admBudget(el, year);
   el.querySelectorAll('[data-y]').forEach(x => x.onclick = () => admBudget(el, Number(x.dataset.y)));
   el.querySelectorAll('tr[data-id] input').forEach(inp => inp.onchange = guard(async () => { await api('/admin/budget/' + inp.closest('tr').dataset.id, { method: 'PUT', body: { [inp.name]: inp.value } }); reload(); }));
@@ -840,6 +911,7 @@ async function admBudget(el, year) {
   const saveYear = guard(async body => { await api('/admin/budget-year/' + year, { method: 'PUT', body }); reload(); });
   $('#blabel', el).onchange = e => saveYear({ label: e.target.value });
   $('#toPay', el).onclick = () => { S.chargeYear = year; };
+  bindProposals(el, reload);
   $('#copy', el).onclick = () => { const m = openModal(`<form id="cf"><h2>Start ${year} from ${year - 1}</h2><div class="field"><label>Inflation uplift %</label><input name="uplift_pct" type="number" step="0.1" value="3"></div><div class="row" style="justify-content:flex-end"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Copy</button></div></form>`);
     $('#cf', m).onsubmit = guard(async e => { e.preventDefault(); await api('/admin/budget/copy', { body: { from: year - 1, to: year, ...formData(e.target) } }); closeOverlay(); reload(); }); };
   $('#imp', el).onclick = () => importDialog('budget', year, reload);

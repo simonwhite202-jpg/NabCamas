@@ -16,7 +16,7 @@ On first run the site loads your real data:
 - **Families and shares:** Bonar 8, Ekserdjian 10, Howarth 11, Lunt/Hall 9, Mackay 12, White 2. Shares equal weeks.
 - **2026 allocation:** the 2025 document's week-by-week pattern, on 2026 dates. 2026 has 53 weeks, and **week 53 (25 Dec – 1 Jan) is Lunt/Hall's**.
 - **2027 allocation:** from *Draft allocation 2027 draft 1A*, including its calendar notes.
-- **2026 budget:** from *Nab Camas 2026 Budget.xlsx*. Period July 2025 – June 2026, £19,332 funding need, charged at **£370 per week**. The service charges are **not issued yet**: press *Issue* on the Budget page, then record the payments already received under Payments & balances.
+- **2026 budget:** from *Nab Camas 2026 Budget.xlsx*. Period July 2025 – June 2026, £19,332 funding need, charged at **£370 per week**. The service charges are **not issued yet**: press *Issue 2026 service charges* on the Payments page, then record the payments already received there.
 
 It also adds **demo logins** (password `demo1234`) and a few demo week offers in 2027:
 
@@ -29,7 +29,7 @@ It also adds **demo logins** (password `demo1234`) and a few demo week offers in
 | bonar@, ekserdjian@, howarth@, lunthall@, mackay@example.com | Each other family's admin |
 
 To go live: log in as admin@example.com and go to **Site admin**:
-1. **Budget & charges**: check 2026, **Issue** the charges, and record payments already made. For next year, use *Copy from 2026* (with an uplift) or *Import from spreadsheet*.
+1. **Expenditure** (the budget): check 2026. For next year, use *Copy from 2026* (with an uplift) or *Import from spreadsheet*. Then on **Payments**, set the charge per week, **Issue** the charges and record payments already made.
 2. **Weeks & allocation**: add future years with **+ Year** and import their allocation (Word, Excel or CSV).
 3. **Settings & rates**: add the bank details and the summer, shoulder and winter rates.
 4. **Users**: add each family's real admin, change your own email and password, and remove the demo users. The site admin login has no family, so if you also run a family, give yourself a second login as that family's admin, with a different email address (for example a `+family` alias of your usual address). In the calendar, untick the demo offers.
@@ -81,7 +81,7 @@ Everyone lands on the **Overview** (Home), headed *Welcome to Camas*, with who's
 | Trusted friend | Home, Available weeks, My bookings, My details | Bookings to pay for |
 | Family member | Home, Calendar, Enquiries, Bookings, Family & friends | Bookings to pay for, and first refusals to take or pass |
 | Family admin | The same, plus Account | Also: enquiries to answer (release, using it or not sure yet), friends' booking enquiries, undecided weeks in the next 16 weeks, the balance to pay, and people who haven't set up their login |
-| Site admin | A separate login with no family: Home, Calendar, Payments, Budget, Weeks, Lets, Families, Users, Settings, Activity | Syndicate jobs: payments to confirm, families owing money, families with no admin, service charges not issued, let-income pots not shared out, next year's weeks not set up, demo logins still active, email not switched on, and storage problems. Home also shows balances, credits, the pot and recent activity. |
+| Site admin | A separate login with no family: Home, Calendar, Payments, Expenditure, Weeks, Lets, Families, Users, Settings, Activity | Syndicate jobs: payments to confirm, families owing money, families with no admin, service charges not issued, let-income pots not shared out, next year's weeks not set up, demo logins still active, email not switched on, and storage problems. Home also shows balances, credits, the pot and recent activity. |
 
 The panels are:
 - **Coming up:** the family's next weeks, or a friend's bookings.
@@ -110,6 +110,7 @@ Opening a page you don't have access to takes you back to Home.
 | Add family members, change roles | — | — | ✓ | ✓ |
 | See own family account | — | ✓ | ✓ | All families |
 | Budget, rates, allocation, confirm payments | — | — | — | ✓ |
+| Propose expenditure | — | — | ✓ | ✓ |
 
 ## Gaps in the brief and how they're handled
 
@@ -199,6 +200,16 @@ Opening a page you don't have access to takes you back to Home.
 - Each account is a running **ledger**: charges are positive, credits and payments negative. The site admin records payments received and can make adjustments with a note.
 - Each budget year has a **period label** (e.g. July 2025 – June 2026), and each line has a **type** (Regular, Postpone, …) and **commentary**, as on the spreadsheet.
 - **Budget years** can be copied from the previous year with an inflation uplift, edited line by line, or imported from Excel or CSV. The importer lets you pick the columns and previews the result first. It also handles a sheet with the budget on the left and families and weeks on the right.
+
+**Expenditure (the budget, and proposals)**
+- The site admin's **Budget** page is now called **Expenditure**. It holds each year's budget lines. The service charge card has moved to **Payments**.
+- **Proposing expenditure:** every family admin has an **Expenditure** page. There they can propose something for a coming year's budget, such as a new fridge or a quote for maintenance work: what it's for, the estimated cost, which year's budget, and details. They can withdraw it while it's waiting. The page also shows the agreed expenditure for each year, read-only.
+- **Deciding:** the site admin sees the proposals waiting on the Expenditure page and on Overview. After the AGM or a board meeting, they **Accept** or **Reject** each one, recording where it was decided, the agreed amount and a note. An accepted proposal is paid for in one of four ways:
+  - **Added to the year's budget:** a new line, so the service charge goes up. If that year's charges are already issued, the portal offers to re-issue them.
+  - **Charged to households now:** split by shares as a one-off charge on each account; re-issuing the service charges leaves it alone. Each household's admins are told their share.
+  - **Paid from the bank balance:** recorded, and nothing is charged.
+  - **Moved from another budget line:** a new line, with the same amount taken off the line chosen, so the service charge is unchanged.
+- The proposing family's admins are told the outcome.
 
 **Families and shares (site admin)**
 - Shares are set **per year**: pick the year at the top of **Families**, edit each family's shares for that year (one share = one week), then press **Save**. Save only works when the active families' shares total **52**; a running total shows how far off you are. That year's service charges are charged per share, so changing 2026 never changes 2027. **Fill in from the {year} allocation** copies the week allocation into the boxes (nothing is saved until you press Save). Names, colours and Active are saved with the same button.

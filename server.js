@@ -124,6 +124,15 @@ db.exec(`CREATE TABLE IF NOT EXISTS family_shares (family_id INTEGER NOT NULL RE
 // the date a payment actually arrived (the line's created_at is when it was recorded)
 try { db.exec('ALTER TABLE ledger ADD COLUMN entry_date TEXT'); } catch { }
 // the syndicate's bank balance as the site admin reads it from the bank, by date
+// expenditure a family admin proposes for a coming year's budget (a new fridge, a quote for maintenance work). The syndicate
+// accepts or rejects them at the AGM or a board meeting; an accepted one becomes a line in that year's budget.
+db.exec(`CREATE TABLE IF NOT EXISTS outgoing_proposals (id INTEGER PRIMARY KEY, family_id INTEGER, user_id INTEGER NOT NULL, year INTEGER NOT NULL,
+  title TEXT NOT NULL, amount REAL NOT NULL DEFAULT 0, details TEXT, status TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN ('proposed','accepted','rejected','withdrawn')),
+  decided_at TEXT, decided_by INTEGER, meeting TEXT, decision_note TEXT, budget_item_id INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP);`);
+// how accepted expenditure is paid for: budget (a new line, so the service charge changes), levy (a one-off charge to each
+// household now, by shares), reserves (from the bank balance, nothing charged) or reassign (moved from another budget line)
+try { db.exec('ALTER TABLE outgoing_proposals ADD COLUMN funding TEXT'); } catch { }
+try { db.exec('ALTER TABLE outgoing_proposals ADD COLUMN funding_detail TEXT'); } catch { }
 db.exec(`CREATE TABLE IF NOT EXISTS bank_balances (id INTEGER PRIMARY KEY, as_of TEXT NOT NULL, amount REAL NOT NULL, note TEXT, created_by INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP);`);
 // "View as": while the site admin views the portal as another login, the session keeps the admin's id here
 try { db.exec('ALTER TABLE sessions ADD COLUMN viewer_id INTEGER'); } catch { }
@@ -685,7 +694,9 @@ route('GET', '/api/home', ({ user }) => {
     if (owing.length) syndicate.push({ tone: 'info', title: `${owing.length} famil${owing.length > 1 ? 'ies owe' : 'y owes'} ${money(owing.reduce((a, b) => a + b.balance, 0))} in total`, detail: owing.map(b => `${b.name} ${money(b.balance)}`).join(' · '), link: '#/admin/overview', cta: 'Balances' });
     const noAdmin = q("SELECT name FROM families f WHERE active=1 AND NOT EXISTS (SELECT 1 FROM users u WHERE u.family_id=f.id AND u.role='family_admin' AND u.active=1)").map(r => r.name);
     if (noAdmin.length) syndicate.push({ tone: 'urgent', title: `${noAdmin.join(', ')} ${noAdmin.length > 1 ? 'have' : 'has'} no family admin`, detail: 'Nobody can manage their weeks or answer enquiries.', link: '#/admin/users', cta: 'All users' });
-    for (const { year } of q('SELECT DISTINCT year FROM budget_items ORDER BY year')) { const b = budgetSummary(year); if (b.total && !b.generated) syndicate.push({ tone: 'action', title: `${b.label || year} service charges not issued yet`, detail: `Budget ${money(b.total)} at ${money(b.rate)} a share.`, link: '#/admin/budget', cta: 'Budget & charges' }); }
+    for (const { year } of q('SELECT DISTINCT year FROM budget_items ORDER BY year')) { const b = budgetSummary(year); if (b.total && !b.generated) syndicate.push({ tone: 'action', title: `${b.label || year} service charges not issued yet`, detail: `Expenditure ${money(b.total)} at ${money(b.rate)} a share.`, link: '#/admin/overview', cta: 'Payments' }); }
+    const props = q("SELECT * FROM outgoing_proposals WHERE status='proposed'");
+    if (props.length) syndicate.push({ tone: 'action', title: `${props.length} expenditure proposal${props.length > 1 ? 's' : ''} to decide (${money(props.reduce((a, p) => a + p.amount, 0))})`, detail: 'Accept or reject them after the AGM or a board meeting.', link: '#/admin/budget', cta: 'Expenditure' });
     const ny = new Date().getFullYear() + 1; if (!q1('SELECT 1 FROM weeks WHERE year=?', ny)) syndicate.push({ tone: 'action', title: `No weeks set up for ${ny} yet`, detail: 'Create the year and import its allocation.', link: '#/admin/weeks', cta: 'Weeks & allocation' });
     const demo = q1("SELECT COUNT(*) n FROM users WHERE active=1 AND email LIKE '%@example.com'").n;
     if (demo) syndicate.push({ tone: 'urgent', title: `${demo} demo logins are still active`, detail: 'Anyone who knows the demo password can log in. Add the real family admins, then remove the demo users, before families start using the site.', link: '#/admin/users', cta: 'All users' });
@@ -1448,6 +1459,74 @@ route('POST', '/api/admin/budget/generate', ({ user, body }) => {
   });
   for (const f of b.split) notify(familyAdmins(f.id), `${b.label || year} service charges have been issued. View your family account for details.`, '#/account');
   audit(user.id, 'budget.generate', { year, total: b.total, rate: b.rate }); return { ok: true };
+});
+// --- proposed expenditure
+// the budget year a proposal is for by default: the first year from now whose service charges haven't been issued
+const proposalYear = () => { for (let y = thisYear(); y < thisYear() + 5; y++) if (!q1("SELECT 1 FROM ledger WHERE year=? AND type='service_charge'", y)) return y; return thisYear() + 1; };
+const proposalView = (p, user) => ({ ...p, family: p.family_id ? famName(p.family_id) : 'Site admin', by: (q1('SELECT name FROM users WHERE id=?', p.user_id) || {}).name || '',
+  decided_by_name: p.decided_by ? (q1('SELECT name FROM users WHERE id=?', p.decided_by) || {}).name : null,
+  can_withdraw: p.status === 'proposed' && (user.is_site_admin || (isFamily(user) && user.family_id === p.family_id && user.role === 'family_admin')) });
+route('GET', '/api/expenditure', ({ user, query }) => {
+  need(user, isFamily(user) || user.is_site_admin, 'Expenditure is for syndicate families');
+  const years = q('SELECT DISTINCT year FROM budget_items UNION SELECT year FROM budget_years ORDER BY 1').map(r => r.year);
+  const def = proposalYear(), year = Number(query.year) || (years.includes(def) ? def : years[years.length - 1] || def);
+  const b = budgetSummary(year);
+  return { year, years: [...new Set([...years, def, def + 1])].sort(), default_year: def, can_propose: user.is_site_admin || user.role === 'family_admin',
+    budget: { year, label: b.label, total: b.total, rate: b.rate, generated: b.generated, items: b.items.map(i => ({ description: i.description, amount: i.amount, category: i.category, notes: i.notes })) },
+    proposals: q("SELECT * FROM outgoing_proposals WHERE status='proposed' OR year >= ? ORDER BY status<>'proposed', created_at DESC, id DESC", thisYear() - 1).map(p => proposalView(p, user)) };
+});
+route('POST', '/api/expenditure', ({ user, body }) => {
+  need(user, user.is_site_admin || (isFamily(user) && user.role === 'family_admin'), 'Only a family admin can propose expenditure');
+  const title = String(body.title || '').trim(), amount = Number(body.amount), year = Number(body.year) || proposalYear();
+  if (!title) fail(400, 'Say what the expenditure is for'); if (body.amount === '' || body.amount == null || isNaN(amount) || amount < 0) fail(400, 'Enter an estimated cost');
+  if (year < thisYear() || year > thisYear() + 5) fail(400, 'Choose a coming budget year');
+  const id = run('INSERT INTO outgoing_proposals (family_id,user_id,year,title,amount,details) VALUES (?,?,?,?,?,?)', isFamily(user) ? user.family_id : null, user.id, year, title.slice(0, 200), round2(amount), String(body.details || '').trim().slice(0, 2000) || null).lastInsertRowid;
+  notify(siteAdmins().filter(i => i !== user.id), `${user.name}${isFamily(user) ? ` (${famName(user.family_id)})` : ''} proposed expenditure for the ${year} budget: ${title} (${settings().currency}${round2(amount)}). Accept or reject it after the AGM or a board meeting.`, '#/admin/budget');
+  audit(user.id, 'expenditure.propose', { id, year, title, amount }); return { id: Number(id) };
+});
+route('POST', '/api/expenditure/:id/withdraw', ({ user, params }) => {
+  const p = q1("SELECT * FROM outgoing_proposals WHERE id=? AND status='proposed'", params.id) || fail(404, 'This proposal is no longer open');
+  need(user, proposalView(p, user).can_withdraw, 'Only the family that proposed it can withdraw it');
+  run("UPDATE outgoing_proposals SET status='withdrawn', decided_at=datetime('now'), decided_by=? WHERE id=?", user.id, p.id);
+  audit(user.id, 'expenditure.withdraw', { id: p.id }); return { ok: true };
+});
+// the site admin records the decision made at the AGM or a board meeting, and how accepted expenditure is paid for
+const FUNDING = { budget: 'added to the budget', levy: 'charged to households now, by shares', reserves: 'paid from the bank balance', reassign: 'reassigned from another budget line' };
+route('POST', '/api/admin/expenditure/:id/decide', ({ user, params, body }) => {
+  needAdmin(user); const p = q1("SELECT * FROM outgoing_proposals WHERE id=? AND status='proposed'", params.id) || fail(404, 'This proposal has already been decided');
+  const meeting = String(body.meeting || '').trim().slice(0, 120), note = String(body.note || '').trim().slice(0, 500) || null, cur = settings().currency;
+  if (!meeting) fail(400, 'Say where it was decided, e.g. "AGM, 12 June 2027"');
+  const accept = !!body.accept, year = Number(body.year) || p.year, amount = body.amount !== undefined && body.amount !== '' ? round2(Number(body.amount)) : p.amount;
+  const funding = accept ? (FUNDING[body.funding] ? body.funding : 'budget') : null;
+  if (accept && (isNaN(amount) || amount <= 0)) fail(400, 'Enter the agreed amount');
+  const from = funding === 'reassign' ? q1('SELECT * FROM budget_items WHERE id=? AND year=?', body.from_item_id, year) || fail(400, `Choose the ${year} budget line it comes from`) : null;
+  if (from && from.amount + 0.005 < amount) fail(400, `“${from.description}” only has ${cur}${from.amount} in the ${year} budget`);
+  const who = p.family_id ? famName(p.family_id) : 'the site admin', src = `Proposed by ${who}; accepted at ${meeting}${note ? `. ${note}` : ''}`;
+  let detail = null, item = null, shares = [];
+  tx(() => {
+    if (funding === 'budget' || funding === 'reassign') {
+      const sort = ((q1('SELECT MAX(sort) m FROM budget_items WHERE year=?', year) || {}).m || 0) + 1;
+      item = Number(run('INSERT INTO budget_items (year,category,description,amount,sort,notes) VALUES (?,?,?,?,?,?)', year, 'One-off', p.title, amount, sort,
+        from ? `${src}. Moved from “${from.description}”.` : src).lastInsertRowid);
+      if (from) { run('UPDATE budget_items SET amount=?, notes=? WHERE id=?', round2(from.amount - amount), [from.notes, `${cur}${amount} moved to “${p.title}” (${meeting})`].filter(Boolean).join('. '), from.id); detail = `from “${from.description}”`; }
+    }
+    if (funding === 'levy') {
+      const fams = q('SELECT id, name FROM families WHERE active=1').map(f => ({ ...f, units: sharesFor(f.id, year) })).filter(f => f.units > 0), total = fams.reduce((a, f) => a + f.units, 0) || 1;
+      let left = amount;
+      fams.forEach((f, k) => { const part = k === fams.length - 1 ? round2(left) : round2(amount * f.units / total); left = round2(left - part); shares.push({ ...f, part });
+        run("INSERT INTO ledger (family_id,year,type,description,amount,created_by,entry_date) VALUES (?,?,'adjustment',?,?,?,date('now'))", f.id, year,
+          `One-off charge: ${p.title} (agreed at ${meeting}), ${f.units} share${f.units > 1 ? 's' : ''} of ${cur}${amount}`, part, user.id); });
+      detail = `${fams.length} households, by shares`;
+    }
+    run("UPDATE outgoing_proposals SET status=?, year=?, amount=?, meeting=?, decision_note=?, decided_at=datetime('now'), decided_by=?, budget_item_id=?, funding=?, funding_detail=? WHERE id=?",
+      accept ? 'accepted' : 'rejected', year, accept ? amount : p.amount, meeting, note, user.id, item, funding, detail, p.id);
+  });
+  if (p.family_id) notify(familyAdmins(p.family_id), accept ? `Your expenditure proposal “${p.title}” was accepted at ${meeting} (${cur}${amount}), ${FUNDING[funding]}${funding === 'budget' ? ` for ${year}` : ''}.${note ? ` ${note}` : ''}`
+    : `Your expenditure proposal “${p.title}” was not accepted at ${meeting}.${note ? ` ${note}` : ''}`, '#/expenditure');
+  for (const f of shares) notify(familyAdmins(f.id), `A one-off charge for “${p.title}”, agreed at ${meeting}, has been added to your account: ${cur}${f.part} (${f.units} share${f.units > 1 ? 's' : ''} of ${cur}${amount}).`, '#/account');
+  const issued = !!q1("SELECT 1 FROM ledger WHERE year=? AND type='service_charge'", year);
+  audit(user.id, accept ? 'expenditure.accept' : 'expenditure.reject', { id: p.id, meeting, year, amount, funding });
+  return { ok: true, reissue: funding === 'budget' && issued ? year : null };
 });
 route('GET', '/api/credits', ({ user, query }) => {
   need(user, isFamily(user) || user.is_site_admin, 'Credits are for syndicate families');
