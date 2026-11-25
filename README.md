@@ -68,6 +68,8 @@ Icons are thin-stroke **Lucide** icons, bundled in `public/icons.js` (ISC licenc
 
 ## Home page and navigation
 
+Every page shows who is **logged in**: name, role (site admin, family admin, family member or trusted friend) and household. This appears at the top of the sidebar, or in a strip under the header on tablets and phones. The Overview greeting uses the same details.
+
 Everyone lands on the **Overview** (Home), headed *Welcome to Camas*, with who's in residence this week, who's arriving next and your next stay. At the top, **Needs your attention** lists what needs doing; below it are panels with useful information and quick links. The calendar is its own tab.
 
 | Who | Navigation | Needs your attention shows |

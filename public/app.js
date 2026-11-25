@@ -83,6 +83,13 @@ function navOn(k, tab) {
 //   site admin     → a separate login with no family: Home, Calendar and the admin pages
 const ADMIN_PAGES = [['admin/overview', 'Payments'], ['admin/budget', 'Budget'], ['admin/weeks', 'Weeks'], ['admin/credits', 'Credits & pot'], ['admin/families', 'Families'], ['admin/users', 'Users'], ['admin/settings', 'Settings'], ['admin/audit', 'Activity']];
 const isSiteRole = () => S.me.user.role === 'site_admin';
+// Who is logged in: name, role and household (site admins have no household). Escaped, ready for HTML.
+function whoAmI() {
+  const u = S.me.user, fam = S.me.family, role = roleName(u.role);
+  const house = u.role !== 'site_admin' && fam ? fam.name + ' family' : '';
+  const nameIsRole = u.name.replace(/\s*\(.*?\)\s*/g, '').trim().toLowerCase() === role.toLowerCase();
+  return { name: esc(u.name), role: esc(role), house: esc(house), nameIsRole };
+}
 const NAV_ICON = { home: 'house', calendar: 'calendar-days', weeks: 'calendar-range', enquiries: 'messages-square', bookings: 'bed-double', account: 'wallet', people: 'users', admin: 'settings',
   'admin/overview': 'banknote', 'admin/budget': 'calculator', 'admin/weeks': 'calendar-range', 'admin/credits': 'coins', 'admin/families': 'users-round', 'admin/users': 'user-cog', 'admin/settings': 'settings', 'admin/audit': 'history' };
 function navTabs() {
@@ -92,15 +99,19 @@ function navTabs() {
     ['bookings', friend ? 'My bookings' : 'Bookings'], isFamAdmin() && ['account', 'Account'], ['people', friend ? 'My details' : 'Family & friends'], isSite() && ['admin', 'Site admin']].filter(Boolean);
 }
 function renderShell(tab) {
-  const u = S.me.user, fam = S.me.family, tabs = navTabs(), site = esc(S.me.settings.site_name);
+  const u = S.me.user, tabs = navTabs(), site = esc(S.me.settings.site_name);
   if (!$('main')) $('#app').innerHTML = '<div class="shell"><aside class="sidebar" aria-label="Main menu"></aside><div class="menu-scrim"></div><header class="mobilebar"></header><main id="main"></main></div>';
   const initials = esc((u.name.match(/\b[A-Za-z]/g) || ['?']).join('').slice(0, 2).toUpperCase());
   const unread = S.me.unread ? `<span class="count">${S.me.unread}</span>` : '';
+  const { role, house } = whoAmI();
   $('.sidebar').innerHTML = `<a class="wordmark" href="#/home">${site}</a><span class="place">${esc(S.me.settings.place_line || '')}</span>
+    <div class="whoami" role="status" aria-label="Logged in as ${esc(u.name)}, ${role}${house ? ', ' + house : ''}"><span class="whoami-label">Logged in as</span>
+      <div class="whoami-row"><span class="avatar">${initials}</span><span class="who"><b>${esc(u.name)}</b><span class="role-pill">${role}</span>${house ? `<span class="house">${house}</span>` : ''}</span></div></div>
     <nav class="side-nav">${tabs.map(([k, l, n]) => { const on = navOn(k, tab); return `<a href="#/${k}" class="${on ? 'on' : ''}" ${on ? 'aria-current="page"' : ''}>${icon(NAV_ICON[k] || 'chevron-right')}<span>${l}</span>${n ? `<span class="count">${n}</span>` : ''}</a>`; }).join('')}</nav>
-    <div class="side-foot"><div class="side-user"><span class="avatar">${initials}</span><span class="who"><b>${esc(u.name)}</b><span>${roleName(u.role)}${fam ? ' · ' + esc(fam.name) : ''}</span></span></div>
+    <div class="side-foot">
       <div class="side-actions"><button class="side-btn" data-notes>${icon('bell')}Notices${unread}</button><button class="side-btn" data-logout>${icon('log-out')}Sign out</button></div></div>`;
-  $('.mobilebar').innerHTML = `<button class="iconbtn" data-menu aria-label="Open menu">${icon('menu')}</button><a class="wordmark" href="#/home">${site}</a><button class="iconbtn" data-notes aria-label="Notifications">${icon('bell')}${unread}</button>`;
+  $('.mobilebar').innerHTML = `<div class="mb-row"><button class="iconbtn" data-menu aria-label="Open menu">${icon('menu')}</button><a class="wordmark" href="#/home">${site}</a><button class="iconbtn" data-notes aria-label="Notifications">${icon('bell')}${unread}</button></div>
+    <div class="mb-who">Logged in as <b>${esc(u.name)}</b> · <span>${role}</span>${house ? ` · <span>${house}</span>` : ''}</div>`;
   document.querySelectorAll('[data-notes]').forEach(b => b.onclick = guard(showNotifications));
   $('[data-logout]').onclick = guard(async () => { await api('/logout', { body: {} }); S.me = null; document.body.classList.remove('menu-open'); $('#app').innerHTML = ''; renderLogin(); });
   $('[data-menu]').onclick = () => document.body.classList.toggle('menu-open');
@@ -135,9 +146,9 @@ const panelCard = (ico, title, body, foot) => `<div class="card panel"><h3>${ico
 const quiet = t => `<p class="small muted" style="margin:0">${t}</p>`;
 const stamp = t => new Date(t.replace(' ', 'T') + (t.length > 10 ? 'Z' : '')).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
 function welcomeHeader(greet) {
-  const s = S.me.settings, u = S.me.user;
+  const s = S.me.settings, me = whoAmI();
   return `<header class="welcome"><span class="eyebrow">${esc(s.place_line || '')}</span><h1>Welcome to Camas</h1>
-      <p>${greet}, ${esc(u.name.split(' ')[0])}. It’s ${dfmt(todayStr(), { weekday: 'long', day: 'numeric', month: 'long' })}.</p></header>
+      <p>${greet}, ${me.name}${me.nameIsRole ? '' : ` · ${me.role}${me.house ? ', ' + me.house : ''}`}. It’s ${dfmt(todayStr(), { weekday: 'long', day: 'numeric', month: 'long' })}.</p></header>
     ${s.hero ? `<img class="hero-img" src="/media/hero?v=${esc(s.hero)}" alt="Nab Camas on Loch Carron">` : ''}`;
 }
 const STAY_TAG = { 'Booked': 'booked', 'Your stay': 'booked', 'Reserved': 'pending', 'Released': 'available', 'Available': 'available', 'Using it': 'yours' };
