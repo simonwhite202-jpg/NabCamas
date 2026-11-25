@@ -1322,7 +1322,7 @@ route('GET', '/api/admin/families', ({ user, query }) => {
 });
 route('POST', '/api/admin/families', ({ user, body }) => {
   needAdmin(user); if (!body.name) fail(400, 'Name required');
-  const id = Number(run('INSERT INTO families (name,share_units,color) VALUES (?,?,?)', body.name.trim(), Number(body.share_units) || 1, body.color || '#6b8f71').lastInsertRowid);
+  const id = Number(run('INSERT INTO families (name,share_units,color) VALUES (?,?,?)', body.name.trim(), Math.max(0, Math.round(Number(body.share_units) || 0)), body.color || '#6b8f71').lastInsertRowid);
   return { id };
 });
 route('PUT', '/api/admin/families/:id', ({ user, params, body }) => {
@@ -1339,15 +1339,16 @@ const TOTAL_SHARES = 52;
 route('POST', '/api/admin/families/save', ({ user, body }) => {
   needAdmin(user); const year = Number(body.year), rows = Array.isArray(body.rows) ? body.rows : [];
   if (!year) fail(400, 'Year required');
-  const clean = rows.map(r => ({ id: Number(r.id), name: String(r.name || '').trim(), color: r.color, active: !!r.active, units: Number(r.share_units) }));
+  const clean = rows.map(r => ({ id: Number(r.id), name: String(r.name || '').trim(), color: r.color, units: Number(r.share_units) }))
+    .filter(r => (q1('SELECT active FROM families WHERE id=?', r.id) || {}).active);   // the page lists the syndicate's (active) families
   if (clean.some(r => !r.name)) fail(400, 'Every family needs a name');
   if (clean.some(r => !(r.units >= 0) || !Number.isInteger(r.units))) fail(400, 'Shares must be whole numbers');
-  const total = clean.filter(r => r.active).reduce((a, r) => a + r.units, 0);
-  if (total !== TOTAL_SHARES) fail(400, `The ${year} shares of active families must total ${TOTAL_SHARES} (they total ${total})`);
+  const total = clean.reduce((a, r) => a + r.units, 0);
+  if (total !== TOTAL_SHARES) fail(400, `The ${year} shares must total ${TOTAL_SHARES} (they total ${total})`);
   tx(() => {
     for (const r of clean) {
       const f = q1('SELECT * FROM families WHERE id=?', r.id) || fail(404, 'Family not found');
-      run('UPDATE families SET name=?, color=?, active=? WHERE id=?', r.name, r.color || f.color, r.active ? 1 : 0, f.id);
+      run('UPDATE families SET name=?, color=? WHERE id=?', r.name, r.color || f.color, f.id);
       setShares(f.id, year, r.units);
     }
   });

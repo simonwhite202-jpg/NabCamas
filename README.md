@@ -217,7 +217,7 @@ Opening a page you don't have access to takes you back to Home.
 - The proposing family's admins are told the outcome.
 
 **Families and shares (site admin)**
-- Shares are set **per year**: pick the year at the top of **Families**, edit each family's shares for that year (one share = one week), then press **Save**. Save only works when the active families' shares total **52**; a running total shows how far off you are. That year's service charges are charged per share, so changing 2026 never changes 2027. **Fill in from the {year} allocation** copies the week allocation into the boxes (nothing is saved until you press Save). Names, colours and Active are saved with the same button.
+- Shares are set **per year**: pick the year at the top of **Families**, edit each family's shares for that year (one share = one week), then press **Save**. The shares must total **52**: a running total shows how far off you are. Save becomes clickable as soon as you change something, and if the total isn't 52 it says so and saves nothing. That year's service charges are charged per share, so changing 2026 never changes 2027. **Fill in from the {year} allocation** copies the week allocation into the boxes (nothing is saved until you press Save). Names and colours are saved with the same button. **Add family** starts a new family on 0 shares.
 - A year without its own figures uses the most recent figure set for this year or later.
 
 **Payments page (site admin)**
