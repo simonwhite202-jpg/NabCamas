@@ -383,9 +383,11 @@ async function openWeek(w) {
       <button class="btn green">Reserve week</button></form>`;
   }
 
-  if (isFam() && S.me.settings.member_requests && !w.is_mine && !past && w.family_id) html += await enquirySection(w, s);
-  else if (isFam() && !w.is_mine && !past && w.plan === 'undecided' && w.holder_contact) html += `<div class="section"><h3>Ask about this week</h3>
-    <p class="muted small" style="margin-top:0">${esc(w.family_name)} haven’t decided about this week yet. If you’d like it, ask them directly${w.holder_contact.name ? ` (${esc(w.holder_contact.name)})` : ''}.</p>${contactButtons(w.holder_contact)}</div>`;
+  if (isFam() && !w.is_mine && w.family_id) {
+    const enq = S.me.settings.member_requests && !past;
+    if (enq) html += await enquirySection(w, s);
+    html += questionsBlock(w, !!w.can_ask && !(enq && w.can_enquire));
+  }
   if (w.booking?.mine && w.booking.status === 'pending') html += `<div class="section">${payBox(w.booking.reference, w.price)}</div>`;
   if (role === 'friend' && !w.can_book && !w.booking?.mine) {
     if (w.my_friend_enquiry) html += `<div class="section"><h3>You’ve enquired about this week</h3><p class="small" style="margin:0">Sent on ${asked(w.my_friend_enquiry.created_at)}. The household that holds it will let you know. If they agree, it’s reserved for you at ${money(w.price)}.</p>
@@ -422,8 +424,15 @@ async function openWeek(w) {
   const fw = $('[data-fe-withdraw]', body);
   if (fw) fw.onclick = guard(async () => { if (!confirm('Withdraw your enquiry about this week?')) return; await api(`/friend-enquiries/${fw.dataset.feWithdraw}/withdraw`, { body: {} }); toast('Enquiry withdrawn'); closeOverlay(); viewCalendar($('main')); });
   const ef = $('#enqForm', body);
-  if (ef) ef.onsubmit = guard(async e => { e.preventDefault();
-    const r = await api('/enquiries', { body: { ...formData(ef), week_id: w.id } }); toast(`Enquiry sent. You’re ${ordinal(r.position)} in the queue`); closeOverlay(); viewCalendar($('main')); });
+  if (ef) {
+    ef.querySelectorAll('[name=kind]').forEach(r => r.onchange = () => { const qn = ef.kind.value === 'question'; ef.message.required = qn; $('.enq-opt', ef).style.display = qn ? 'none' : '';
+      ef.message.placeholder = qn ? 'e.g. What time are you leaving on Saturday? Could we arrive a day early?' : 'e.g. We’d love this week if your plans change.'; $('button.primary', ef).textContent = qn ? 'Send question' : 'Enquire'; });
+    ef.onsubmit = guard(async e => { e.preventDefault(); const d = formData(ef);
+      if (d.kind === 'question') { await api('/questions', { body: { week_id: w.id, message: d.message } }); toast(`Question sent to ${w.family_name}`); closeOverlay(); viewCalendar($('main')); return; }
+      const r = await api('/enquiries', { body: { message: d.message, week_id: w.id } }); toast(`Enquiry sent. You’re ${ordinal(r.position)} in the queue`); closeOverlay(); viewCalendar($('main')); });
+  }
+  const af = $('#askForm', body);
+  if (af) af.onsubmit = guard(async e => { e.preventDefault(); await api('/questions', { body: { week_id: w.id, message: af.message.value } }); toast(`Question sent to ${w.family_name}`); closeOverlay(); viewCalendar($('main')); });
   bindEnquiryActions(body, () => { closeOverlay(); viewCalendar($('main')); refreshMe(); });
 }
 // your family's future weeks for this year and later
@@ -486,6 +495,18 @@ function claimForm(id, price, claim, until) {
     ${acct ? `<div class="field" style="margin:10px 0 0"><label>Pay by</label><select name="method"><option value="bank">Bank transfer within ${s.hold_days} days</option><option value="account" ${(S.me.family.credit_available || 0) + 0.005 < price ? 'disabled' : ''}>Pay from ${esc(S.me.family.name)}’s credit (${money(S.me.family.credit_available || 0, 2)} available)</option></select></div>` : '<input type="hidden" name="method" value="bank">'}
     <div class="row" style="margin-top:10px"><button class="btn green sm" data-take="${id}">Take it · ${money(price)}</button><button class="btn sm" data-pass="${id}">Not this time</button></div></div>`;
 }
+// questions about another family's week (what time are you leaving? could we arrive a day early?): any week, Using it
+// included. Not a request for the week, so no queue. withForm: show the form to ask (otherwise just past questions).
+function questionsBlock(w, withForm) {
+  const list = (w.my_questions || []).map(x => `<div class="offer"><div class="small"><b>${esc(x.by)}</b> <span class="muted">asked ${asked(x.created_at)}</span></div><div class="small" style="margin-top:4px">“${esc(x.message)}”</div>
+    ${x.reply ? `<div class="small" style="margin-top:6px"><b>${esc(w.family_name)}</b>${x.replied_by ? ` <span class="muted">(${esc(x.replied_by)})</span>` : ''}: ${esc(x.reply)}</div>` : '<div class="tiny muted" style="margin-top:4px">Waiting for a reply</div>'}</div>`).join('');
+  if (!withForm) return list ? `<div class="section"><h3>Your questions about this week</h3>${list}</div>` : '';
+  return `<form class="section" id="askForm"><h3>Ask ${esc(w.family_name)} about this week</h3>
+    <p class="muted small" style="margin-top:0">${w.in_use ? `${esc(w.family_name)} are using this week. ` : ''}Ask anything: what time they’re leaving, whether you could arrive a day early. It isn’t a request for the week. They reply on their Enquiries page.</p>
+    ${list}<div class="field" style="margin-top:${list ? 12 : 0}px"><label>Your question</label><textarea name="message" rows="2" required placeholder="e.g. What time are you leaving on Saturday? Could we arrive a day early?"></textarea></div>
+    <button class="btn primary">Send question</button>
+    ${w.holder_contact ? `<p class="tiny muted" style="margin:14px 0 6px">Or ask ${w.holder_contact.name ? esc(w.holder_contact.name) : 'them'} directly:</p>${contactButtons(w.holder_contact)}` : ''}</form>`;
+}
 async function enquirySection(w, s) {
   const q = w.enquiries || 0;
   if (w.first_refusal_until) return w.my_enquiry
@@ -495,9 +516,11 @@ async function enquirySection(w, s) {
     ${esc(w.family_name)} can give it to your family free, or release it, when you’ll get first refusal for ${s.enquiry_hours || 48} hours, in queue order.</p><p class="small" style="margin:8px 0 0"><a href="#/enquiries">See it on the Enquiries page →</a></p></div>`;
   if (w.can_enquire) return `<form class="section" id="enqForm"><h3>Enquire about this week</h3>
       <p class="muted small" style="margin-top:0">Your enquiry goes to ${esc(w.family_name)}’s Enquiries page. They can give the week to your family free, or release it: then families who enquired get first refusal for ${s.enquiry_hours || 48} hours at ${money(w.member_price)}, first come first served.${q ? ` <b>${q} famil${q > 1 ? 'ies have' : 'y has'} already enquired.</b>` : ''}</p>
-      <div class="field"><label>Message (optional)</label><textarea name="message" rows="2" placeholder="e.g. We’d love this week if your plans change."></textarea></div>
+      <div class="field"><label>What’s it about?</label>
+        <label class="check"><input type="radio" name="kind" value="week" checked><span><b>We’d like this week</b>If they don’t need it. Your family joins the queue.</span></label>
+        <label class="check" style="margin-top:8px"><input type="radio" name="kind" value="question"><span><b>Just a question</b>Arrival times, arriving a day early, anything. No queue.</span></label></div>
+      <div class="field"><label>Message <span class="muted enq-opt">(optional)</span></label><textarea name="message" rows="2" placeholder="e.g. We’d love this week if your plans change."></textarea></div>
       <button class="btn primary">Enquire</button>${w.holder_contact ? `<p class="tiny muted" style="margin:14px 0 6px">Or ask ${w.holder_contact.name ? esc(w.holder_contact.name) : 'them'} directly:</p>${contactButtons(w.holder_contact)}` : ''}</form>`;
-  if (w.in_use) return `<div class="section notice small">${esc(w.family_name)} are using this week, so it isn’t open to enquiries.</div>`;
   return '';
 }
 function offerBox(e) {
@@ -521,9 +544,22 @@ function incomingCard(g) {
     ${w.first_refusal_until ? `<p class="small" style="margin:8px 0 0">Released. The families who enquired have first refusal until ${whenTime(w.first_refusal_until)}.</p>` : ''}
     ${g.items.length ? `<ol class="queue">${g.items.map(e => `<li class="${e.status === 'open' ? '' : 'done'}"><div class="row between"><div><b>${esc(e.family)}</b> <span class="muted small">${esc(e.user)} · asked ${asked(e.created_at)}</span></div>${e.status === 'open' ? (e.claim === 'yes' ? '<span class="badge green">Said yes</span>' : e.claim === 'no' ? '<span class="badge">Passed</span>' : '') : enquiryStatus(e)}</div>
       ${e.message ? `<div class="small" style="margin-top:4px">“${esc(e.message)}”</div>` : ''}${offerBox(e)}${pickBox(e, e.can_give ? `<button class="btn green sm" data-give="${e.id}" data-give-fam="${esc(e.family)}" data-give-week="${w.week_no}" data-give-others="${open.length - 1}" data-give-friends="${fopen.length}">Give it to them free</button>` : '')}</li>`).join('')}</ol>` : ''}
+    ${g.questions.length ? `<div class="small muted" style="margin:12px 0 0">Questions from other families</div>${g.questions.map(questionIn).join('')}` : ''}
     ${g.friends.length ? `<div class="small muted" style="margin:12px 0 0">Booking enquiries from trusted friends</div>${g.friends.map(friendEnquiry).join('')}` : ''}
     ${planBtns ? `<div class="row" style="margin-top:10px;gap:8px"><span class="tiny muted">Your plans for this week:</span>${planBtns}</div>` : ''}
     ${!admin && (open.length || fopen.length) ? '<p class="tiny muted" style="margin:8px 0 0">Your family admin answers these: giving the week to a family free, letting it to a trusted friend, releasing it, or saying you’re using it.</p>' : ''}</div>`;
+}
+// a question about one of our weeks (holder's side) and one we asked (asker's side)
+function questionIn(x) {
+  return `<div class="offer"><div class="row between"><div class="small"><b>${esc(x.family)}</b> <span class="muted">${esc(x.by)} · asked ${asked(x.created_at)}</span></div>${x.reply ? '<span class="badge green">Replied</span>' : '<span class="badge amber">Waiting for a reply</span>'}</div>
+    <div class="small" style="margin-top:4px">“${esc(x.message)}”</div>
+    ${x.reply ? `<div class="small" style="margin-top:6px"><span class="muted">${esc(x.replied_by || '')} replied:</span> ${esc(x.reply)}</div>`
+      : x.can_reply ? `<div class="row" data-qbox="${x.id}" style="margin-top:8px;gap:8px;align-items:flex-end;flex-wrap:nowrap"><textarea rows="1" style="flex:1" placeholder="Your reply"></textarea><button class="btn sm primary" data-qreply="${x.id}">Reply</button></div>` : ''}</div>`;
+}
+function questionOut(x) {
+  return `<div class="card flat" style="padding:16px"><div class="row between"><div>${swapWeek(x.week)} <span class="muted small">· ${esc(x.week.family_name)}</span></div>${x.reply ? '<span class="badge green">Replied</span>' : '<span class="badge amber">Waiting for a reply</span>'}</div>
+    <p class="tiny muted" style="margin:6px 0 0">Question from ${esc(x.by)} on ${asked(x.created_at)}</p><div class="small" style="margin-top:4px">“${esc(x.message)}”</div>
+    ${x.reply ? `<div class="small" style="margin-top:8px"><b>${esc(x.week.family_name)}</b>${x.replied_by ? ` <span class="muted">(${esc(x.replied_by)})</span>` : ''}: ${esc(x.reply)}</div>` : ''}</div>`;
 }
 // a trusted friend's booking enquiry, on the holding family's side
 const FE_CLOSED = { using: 'Closed: you’re using it', taken: 'Closed: booked by someone else', swapped: 'Closed: swapped', released: 'Closed: week released' };
@@ -563,6 +599,8 @@ function bindEnquiryActions(root, reload) {
   act('[data-give]', async b => { const d = b.dataset, others = Number(d.giveOthers), fr = Number(d.giveFriends);
     if (!confirm(`Give week ${d.giveWeek} to ${d.giveFam}, free of charge?\n\nThey can use the week. Nothing is paid, there’s no letting cost, and nothing goes on either family’s account.${others || fr ? `\n\nThe other enquiries for this week close (${[others && `${others} famil${others > 1 ? 'ies' : 'y'}`, fr && `${fr} trusted friend${fr > 1 ? 's' : ''}`].filter(Boolean).join(', ')}).` : ''}`)) return false;
     await api(`/enquiries/${d.give}/give`, { body: {} }); toast(`Given to ${d.giveFam}. They’ve been told`); });
+  act('[data-qreply]', async b => { const t = b.closest('[data-qbox]').querySelector('textarea').value.trim(); if (!t) { toast('Write your reply first', true); return false; }
+    await api(`/questions/${b.dataset.qreply}/reply`, { body: { reply: t } }); toast('Reply sent'); });
   act('[data-unsure]', async b => { await api(`/enquiries/${b.dataset.unsure}/reply`, { body: { reply: 'unsure' } }); toast('They’ve been told you’re not sure yet'); });
   act('[data-accept]', async b => { if (!confirm('Accept this swap?')) return false; const r = await api(`/swaps/${b.dataset.accept}/accept`, { body: {} }); toast(r.status === 'accepted' ? 'Swap agreed' : 'Accepted. Their family admin now confirms'); });
   act('[data-confirm]', async b => { if (!confirm('Confirm this swap? The two weeks change hands now, and both are marked “Using it”.')) return false; await api(`/swaps/${b.dataset.confirm}/confirm`, { body: { accept: true } }); toast('Swap agreed'); });
@@ -576,18 +614,19 @@ function bindEnquiryActions(root, reload) {
     await api('/weeks/' + b.dataset.planWeek, { method: 'PUT', body: { plan } }); toast('Week updated'); });
 }
 function enquiryLists(d, opts = {}) {
-  const groups = {}, group = wk => (groups[wk.id] ||= { week: wk, items: [], friends: [] });
+  const groups = {}, group = wk => (groups[wk.id] ||= { week: wk, items: [], friends: [], questions: [] });
+  (d.questions_in || []).filter(x => !opts.openOnly || !x.reply).forEach(x => group(x.week).questions.push(x));
   d.incoming.filter(e => !opts.openOnly || e.status === 'open').forEach(e => group(e.week).items.push(e));
   (d.friends || []).filter(f => !opts.openOnly || f.status === 'open').forEach(f => group(f.week).friends.push(f));
-  const out = d.outgoing.filter(e => !opts.openOnly || e.status === 'open'), mine = S.me.settings.member_requests;
+  const out = d.outgoing.filter(e => !opts.openOnly || e.status === 'open'), mine = S.me.settings.member_requests, qout = (d.questions_out || []).filter(x => !opts.openOnly || !x.reply);
   const about = Object.values(groups).sort((a, b) => a.week.start_date.localeCompare(b.week.start_date)).map(incomingCard).join('') || `<div class="card flat empty small">${mine ? 'No enquiries about your weeks' : 'No booking enquiries from trusted friends at the moment'}</div>`;
   if (!mine) return `<section class="stack" style="max-width:760px">${about}</section>`;
   return `<div class="grid-2"><section class="stack"><h3 style="margin-bottom:0">About your family’s weeks</h3>${about}</section>
-    <section class="stack"><h3 style="margin-bottom:0">Your family’s enquiries</h3>${out.map(outgoingCard).join('') || '<div class="card flat empty small">None yet. Click another family’s week on the calendar to enquire.</div>'}</section></div>`;
+    <section class="stack"><h3 style="margin-bottom:0">Your family’s enquiries</h3>${out.map(outgoingCard).join('') + qout.map(questionOut).join('') || '<div class="card flat empty small">None yet. Click another family’s week on the calendar to enquire or ask a question.</div>'}</section></div>`;
 }
 async function viewEnquiries(main) {
   const d = await api('/enquiries'), s = S.me.settings;
-  main.innerHTML = `<h1>Enquiries</h1>${s.member_requests ? `<p class="muted">Enquire about any other family’s week marked <b>Enquire</b> on the calendar: your enquiry appears here and on their Enquiries page. The family that holds the week can give it to you free, or release it, when those who enquired get first refusal for ${s.enquiry_hours || 48} hours, first come first served; then it opens to all members, then trusted friends. Trusted friends can also ask to book your weeks that are still <b>Undecided</b>: you can let the week to them at the friend price, or decline. For changes to next year’s allocation, ask the site admin.</p>` : `<p class="muted">Trusted friends can ask to book your household’s weeks that are still <b>Undecided</b>. You can let the week to them at the friend price, or decline. (Members asking for other families’ weeks is switched off for now.)</p>`}
+  main.innerHTML = `<h1>Enquiries</h1>${s.member_requests ? `<p class="muted">Enquire about any other family’s week marked <b>Enquire</b> on the calendar: your enquiry appears here and on their Enquiries page. The family that holds the week can give it to you free, or release it, when those who enquired get first refusal for ${s.enquiry_hours || 48} hours, first come first served; then it opens to all members, then trusted friends. You can also ask a question about any other family’s week, even one they’re using (what time they’re leaving, whether you could arrive a day early): it doesn’t join the queue, and they reply here. Trusted friends can also ask to book your weeks that are still <b>Undecided</b>: you can let the week to them at the friend price, or decline. For changes to next year’s allocation, ask the site admin.</p>` : `<p class="muted">Trusted friends can ask to book your household’s weeks that are still <b>Undecided</b>. You can let the week to them at the friend price, or decline. (Members asking for other families’ weeks is switched off for now.)</p>`}
     ${enquiryLists(d)}
     ${d.swaps.length ? `<h2 style="margin-top:32px">Recent swaps</h2><div class="table-wrap"><table><tbody>${d.swaps.map(x => `<tr><td class="small">${asked(x.at)}</td><td>${esc(x.from_family)} gave ${swapWeek(x.offered)}</td><td>${esc(x.to_family)} gave ${swapWeek(x.target)}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
   bindEnquiryActions(main, () => viewEnquiries(main));

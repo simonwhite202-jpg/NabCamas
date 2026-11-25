@@ -133,6 +133,10 @@ db.exec(`CREATE TABLE IF NOT EXISTS outgoing_proposals (id INTEGER PRIMARY KEY, 
 // household now, by shares), reserves (from the bank balance, nothing charged) or reassign (moved from another budget line)
 try { db.exec('ALTER TABLE outgoing_proposals ADD COLUMN funding TEXT'); } catch { }
 try { db.exec('ALTER TABLE outgoing_proposals ADD COLUMN funding_detail TEXT'); } catch { }
+// a member's question about another family's week (what time are you leaving? could we arrive a day early?). It isn't a
+// request for the week, so it never joins the enquiry queue, and it can be asked about any week, Using it included.
+db.exec(`CREATE TABLE IF NOT EXISTS week_questions (id INTEGER PRIMARY KEY, week_id INTEGER NOT NULL, family_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
+  message TEXT NOT NULL, reply TEXT, replied_by INTEGER, replied_at TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP);`);
 db.exec(`CREATE TABLE IF NOT EXISTS bank_balances (id INTEGER PRIMARY KEY, as_of TEXT NOT NULL, amount REAL NOT NULL, note TEXT, created_by INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP);`);
 // "View as": while the site admin views the portal as another login, the session keeps the admin's id here
 try { db.exec('ALTER TABLE sessions ADD COLUMN viewer_id INTEGER'); } catch { }
@@ -341,7 +345,11 @@ function weekView(w, u, s) {
   // enquire = join the queue for another family's week that isn't marked Using it, let or released
   v.can_enquire = MEMBER_REQUESTS_OPEN && isFamily(u) && !mine && w.family_id != null && !w.in_use && w.status === 'own_use' && w.start_date >= today() && !v.my_enquiry;
   v.swappable = swappable(w);
-  if (isFamily(u) && !mine && w.family_id && !w.in_use && ['own_use', 'offered'].includes(w.status)) v.holder_contact = holderContact(w.family_id);
+  if (isFamily(u) && !mine && w.family_id) {
+    v.holder_contact = holderContact(w.family_id);
+    v.can_ask = (w.end_date || w.start_date) >= today();
+    v.my_questions = q('SELECT * FROM week_questions WHERE week_id=? AND family_id=? ORDER BY id', w.id, u.family_id).map(questionView);
+  }
   v.can_manage = canManageFamily(u, w.family_id) && w.family_id != null;
   v.is_mine = mine;
   if (u.role === 'friend' && !friendVisible && w.status === 'offered') v.status = 'own_use'; // friends only see what's offered to them
@@ -590,6 +598,7 @@ route('GET', '/api/me', ({ user }) => {
       + q1(`SELECT COUNT(*) n FROM enquiries e JOIN weeks w ON w.id=e.week_id WHERE w.family_id=? AND e.status='open' AND e.reply IS NULL AND w.status='own_use' AND w.in_use=0
           AND NOT EXISTS (SELECT 1 FROM swaps x WHERE x.enquiry_id=e.id AND x.status IN ('pending','proposed'))`, user.family_id).n
       + q1("SELECT COUNT(*) n FROM friend_enquiries f JOIN weeks w ON w.id=f.week_id WHERE w.family_id=? AND f.status='open' AND w.in_use=0 AND w.status IN ('own_use','offered')", user.family_id).n : 0)
+    + (isFamily(user) ? q1('SELECT COUNT(*) n FROM week_questions x JOIN weeks w ON w.id=x.week_id WHERE w.family_id=? AND x.reply IS NULL AND COALESCE(w.end_date, w.start_date) >= ?', user.family_id, today()).n : 0)
     + q1("SELECT COUNT(*) n FROM enquiries e JOIN weeks w ON w.id=e.week_id WHERE e.family_id=? AND e.status='open' AND e.claim IS NULL AND w.status='offered' AND w.enquiry_until > datetime('now')", user.family_id).n;
   const families = q('SELECT id,name,color FROM families WHERE active=1 ORDER BY name');
   const family = fam && isFamily(user) ? { ...fam, credit_available: creditAvailable(fam.id) } : fam;
@@ -1020,7 +1029,10 @@ route('GET', '/api/enquiries', ({ user }) => {
       week: { ...swapWeekView(w), family_name: famName(w.family_id), plan: planOf(w), state: w.status, member_price: memberPriceOf(w, s), first_refusal_until: null },
       can_answer: admin && f.status === 'open' && free };
   });
-  return { incoming: incoming.map(view), outgoing: outgoing.map(view), swaps, friends };
+  const qw = x => { const w = q1('SELECT * FROM weeks WHERE id=?', x.week_id); return { ...questionView(x), week: { ...swapWeekView(w), family_name: famName(w.family_id), plan: planOf(w), state: w.status, first_refusal_until: null }, can_reply: !x.reply && w.family_id === fid }; };
+  const questions_in = q(`SELECT x.* FROM week_questions x JOIN weeks w ON w.id=x.week_id WHERE w.family_id=? AND (x.reply IS NULL OR x.replied_at > datetime('now','-60 days')) ORDER BY w.start_date, x.id`, fid).map(qw);
+  const questions_out = q(`SELECT * FROM week_questions WHERE family_id=? AND (reply IS NULL OR replied_at > datetime('now','-60 days')) ORDER BY id DESC`, fid).map(qw);
+  return { incoming: incoming.map(view), outgoing: outgoing.map(view), swaps, friends, questions_in, questions_out };
 });
 route('POST', '/api/enquiries/:id/claim', ({ user, params, body }) => {
   const e = q1("SELECT * FROM enquiries WHERE id=? AND status='open'", params.id) || fail(404, 'This enquiry is closed');
@@ -1122,7 +1134,7 @@ function resetPlan(user) {
   const charge = y => { const b = budgetSummary(y); return { year: y, label: b.label, budget: b.total, charges: b.total ? b.raised : 0 }; };
   return {
     demo_logins: n("users WHERE lower(email) LIKE '%@example.com'"), proposals: n('outgoing_proposals'),
-    bookings: n('bookings'), enquiries: n('enquiries') + n('friend_enquiries'), swaps: n('swaps') + n('change_requests'), topups: n('topups'), bank_balances: n('bank_balances'), notifications: n('notifications'),
+    bookings: n('bookings'), enquiries: n('enquiries') + n('friend_enquiries') + n('week_questions'), swaps: n('swaps') + n('change_requests'), topups: n('topups'), bank_balances: n('bank_balances'), notifications: n('notifications'),
     ledger_lines: n('ledger'), credit_lines: n('credit_ledger'),
     weeks_reset: q1("SELECT COUNT(*) n FROM weeks WHERE family_id IS NOT NULL AND (status<>'own_use' OR offer_friends=1 OR offer_swap=1 OR in_use=1 OR price_override IS NOT NULL OR note IS NOT NULL OR gained_by_request=1 OR released_at IS NOT NULL)").n,
     paid: charge(RESET_PAID_YEAR), unpaid: charge(RESET_UNPAID_YEAR), signed_off: signedOff(RESET_UNPAID_YEAR) && RESET_UNPAID_YEAR > thisYear(),
@@ -1133,7 +1145,7 @@ route('POST', '/api/admin/reset', ({ user, body }) => {
   needAdmin(user); if (body.confirm !== 'RESET') fail(400, 'Type RESET to confirm');
   const plan = resetPlan(user), cur = settings().currency;
   tx(() => {
-    for (const t of ['bookings', 'enquiries', 'friend_enquiries', 'swaps', 'change_requests', 'topups', 'bank_balances', 'notifications', 'credit_ledger', 'ledger', 'outgoing_proposals', 'audit']) run(`DELETE FROM ${t}`);
+    for (const t of ['bookings', 'enquiries', 'friend_enquiries', 'swaps', 'change_requests', 'topups', 'bank_balances', 'notifications', 'credit_ledger', 'ledger', 'outgoing_proposals', 'week_questions', 'audit']) run(`DELETE FROM ${t}`);
     run("UPDATE weeks SET status=CASE WHEN family_id IS NULL THEN 'syndicate' ELSE 'own_use' END, offer_friends=0, offer_swap=0, in_use=0, released_at=NULL, enquiry_until=NULL, price_override=NULL, note=NULL, sale_to='all', gained_by_request=0");
     for (const [year, paid] of [[RESET_PAID_YEAR, true], [RESET_UNPAID_YEAR, false]]) {
       const b = budgetSummary(year); if (!b.total) continue;
@@ -1458,6 +1470,27 @@ route('POST', '/api/admin/budget/generate', ({ user, body }) => {
 });
 // --- proposed expenditure
 // the budget year a proposal is for by default: the first year from now whose service charges haven't been issued
+const questionView = x => ({ id: x.id, message: x.message, reply: x.reply, created_at: x.created_at, replied_at: x.replied_at, family: famName(x.family_id),
+  by: (q1('SELECT name FROM users WHERE id=?', x.user_id) || {}).name || '', replied_by: x.replied_by ? (q1('SELECT name FROM users WHERE id=?', x.replied_by) || {}).name : null });
+route('POST', '/api/questions', ({ user, body }) => {
+  need(user, isFamily(user), 'Questions about weeks are for syndicate families');
+  const w = q1('SELECT * FROM weeks WHERE id=?', body.week_id) || fail(404, 'Week not found'), message = String(body.message || '').trim().slice(0, 1000);
+  if (!w.family_id || w.family_id === user.family_id) fail(400, 'Ask about another family’s week');
+  if ((w.end_date || w.start_date) < today()) fail(400, 'That week is over');
+  if (!message) fail(400, 'Write your question');
+  const id = Number(run('INSERT INTO week_questions (week_id,family_id,user_id,message) VALUES (?,?,?,?)', w.id, user.family_id, user.id, message).lastInsertRowid);
+  notify(q("SELECT id FROM users WHERE family_id=? AND active=1 AND role IN ('family_admin','family_member')", w.family_id).map(r => r.id),
+    `${user.name} (${famName(user.family_id)}) asked about your ${weekLabel(w)}: “${message.slice(0, 160)}${message.length > 160 ? '…' : ''}” Reply on the Enquiries page.`, '#/enquiries');
+  audit(user.id, 'question.ask', { id, week: w.id }); return { id };
+});
+route('POST', '/api/questions/:id/reply', ({ user, params, body }) => {
+  const x = q1('SELECT * FROM week_questions WHERE id=?', params.id) || fail(404, 'Not found'), w = q1('SELECT * FROM weeks WHERE id=?', x.week_id);
+  need(user, isFamily(user) && user.family_id === w.family_id, 'Only the family whose week it is can reply');
+  const reply = String(body.reply || '').trim().slice(0, 1000); if (!reply) fail(400, 'Write your reply');
+  run("UPDATE week_questions SET reply=?, replied_by=?, replied_at=datetime('now') WHERE id=?", reply, user.id, x.id);
+  notify([x.user_id], `${user.name} (${famName(w.family_id)}) replied about ${weekLabel(w)}: “${reply.slice(0, 200)}${reply.length > 200 ? '…' : ''}”`, '#/enquiries');
+  audit(user.id, 'question.reply', { id: x.id }); return { ok: true };
+});
 const proposalYear = () => { for (let y = thisYear(); y < thisYear() + 5; y++) if (!q1("SELECT 1 FROM ledger WHERE year=? AND type='service_charge'", y)) return y; return thisYear() + 1; };
 const proposalView = (p, user) => ({ ...p, family: p.family_id ? famName(p.family_id) : 'Site admin', by: (q1('SELECT name FROM users WHERE id=?', p.user_id) || {}).name || '',
   decided_by_name: p.decided_by ? (q1('SELECT name FROM users WHERE id=?', p.decided_by) || {}).name : null,

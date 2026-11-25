@@ -180,6 +180,11 @@ Opening a page you don't have access to takes you back to Home.
   - **Release it.** Those who enquired get **first refusal** for 48 hours, first come first served; then whoever the family chose under **who can book**.
   - Mark it **Using it**, which closes the enquiries.
   - Reply **not sure yet**, which keeps the enquirers' places in the queue.
+- **Questions about a week:** any family member can ask about another family's week, even one marked *Using it*. Examples: what time they're leaving, whether they could arrive a day early. Open the week on the calendar and use **Ask … about this week**; on an undecided week, choose **Just a question** in the enquiry form.
+  - A question isn't a request for the week, so it never joins the queue.
+  - Everyone in the holding family is notified, and anyone in that family can reply on the Enquiries page.
+  - The asker is notified of the reply, which shows on their Enquiries page and in the week's panel.
+  - The week's panel also has the holding family's Email and WhatsApp buttons.
 - To switch members' enquiries off again, set `MEMBER_REQUESTS_OPEN` to `false` in `server.js`.
 
 **Next-year allocation: changes and sign-off**
