@@ -278,13 +278,14 @@ function weekState(w) {
   if (w.plan === 'using') return { k: 'other', who: fam, label: 'In use' };
   return { k: 'other', who: fam, label: 'Allocated' };
 }
-const STATUS_KEY = [['yours', 'Your household’s weeks'], ['other', 'Other households'], ['available', 'Available to book'], ['pending', 'Requested or pending'], ['booked', 'Booked']];
 function filterMatch(w) {
   switch (S.filter) {
     case 'book': return w.can_book;
     case 'swap': return w.can_enquire || !!w.my_enquiry;
     case 'enquire': return w.can_friend_enquire || !!w.my_friend_enquiry;
     case 'mine': return w.is_mine || w.booking?.mine;
+    // released weeks to buy, and other families' weeks they haven't decided about yet
+    case 'open': return !w.is_mine && !!w.family_id && w.start_date >= todayStr() && !['pending', 'booked'].includes(w.status) && (w.plan === 'released' || w.plan === 'undecided');
     case 'offered': return w.status === 'offered';
     default: return true;
   }
@@ -294,22 +295,20 @@ async function viewCalendar(main) {
   if (!years.length) { main.innerHTML = '<div class="card empty">No weeks have been set up yet. The site admin can create a year under Site admin → Weeks.</div>'; return; }
   S.weeks = await api('/weeks?year=' + S.year);
   const role = S.me.user.role;
-  const filters = [['all', 'All weeks'], ['book', role === 'friend' ? 'Available to book' : 'Available to buy'], isFam() && S.me.settings.member_requests && ['swap', 'Open to enquiries'], isFam() && ['mine', 'Your household’s weeks'], role === 'friend' && ['enquire', 'Open to enquiries'], role === 'friend' && ['mine', 'My bookings']].filter(Boolean);
+  const filters = isFam() ? [['all', 'All weeks'], ['mine', 'Our weeks'], ['open', 'Available for enquiry']]
+    : [['all', 'All weeks'], ['book', role === 'friend' ? 'Available to book' : 'Available to buy'], role === 'friend' && ['enquire', 'Open to enquiries'], role === 'friend' && ['mine', 'My bookings']].filter(Boolean);
+  if (!filters.filter(Boolean).some(([k]) => k === S.filter)) S.filter = 'all';
   const intro = isSiteRole() ? 'Every household’s weeks. Open a week to see it, or to change its settings on the household’s behalf.' : role === 'friend' ? 'Weeks the households have made available to trusted friends: open one to book it. Weeks marked <b>Open to enquiries</b> haven’t been decided yet, so you can ask the household whether you could book them.'
-    : (S.me.settings.member_requests ? 'Open any other household’s week to enquire about it, or to book it if it’s been released. ' : 'Open any household’s week to see it, or to book it if it’s been released. ') + 'Open one of your household’s weeks to set your plans for it: <b>Using it</b>, <b>Undecided</b> or <b>Released</b>. <b>Your household’s weeks</b> shows just yours.';
+    : (S.me.settings.member_requests ? 'Open any other household’s week to enquire about it, or to book it if it’s been released. ' : 'Open a week to see it, or to book it if it’s been released. ') + 'Open one of your own weeks to set your plans for it.';
   const byMonth = {};
   for (const w of S.weeks) (byMonth[w.start_date.slice(0, 7)] ||= []).push(w);
   const visible = S.weeks.filter(filterMatch).length;
-  const key = role === 'friend' ? [['available', 'Available to book'], ['pending', 'Enquired or awaiting payment'], ['booked', 'Your bookings'], ['other', 'Not released yet']] : isSiteRole() ? STATUS_KEY.slice(1) : STATUS_KEY.map(([k, l]) => k === 'pending' && !S.me.settings.member_requests && role !== 'friend' ? [k, 'Reserved or awaiting payment'] : [k, l]);
   const band = w => w.school_holiday ? 'School holidays' : { summer: 'Summer', shoulder: 'Shoulder', winter: 'Winter' }[w.season];
-  const st = S.me.settings, price = n => money(isFam() ? Math.round(n * st.member_rate_pct / 100) : n);
   main.innerHTML = `
     <div class="page-head row between" style="align-items:flex-end"><div class="grow" style="min-width:280px"><h1>${role === 'friend' ? 'Available weeks' : 'Calendar'} ${S.year}</h1><p>${intro}${isFam() && S.weeks.length && S.weeks[0].year_open ? ` The ${S.year} allocation is still a draft until the site admin signs it off; ask the site admin about any changes.` : ''}</p></div>
       <div class="seg" aria-label="Year">${years.map(y => `<button data-year="${y}" class="${y === S.year ? 'on' : ''}">${y}</button>`).join('')}</div></div>
     <div class="cal-toolbar"><div class="seg" aria-label="Show">${filters.map(([k, l]) => `<button data-filter="${k}" class="${S.filter === k ? 'on' : ''}">${l}</button>`).join('')}</div>
       <span class="muted small">${visible} week${visible === 1 ? '' : 's'}</span></div>
-    <div class="status-key">${key.map(([k, l]) => `<span><i style="background:var(--st-${k})"></i>${l}</span>`).join('')}
-      <span class="muted" style="margin-left:auto">${isFam() ? 'Member' : 'Weekly'} prices: school holidays ${price(st.rate_school)} · summer ${price(st.rate_summer)} · shoulder ${price(st.rate_shoulder)} · winter ${price(st.rate_winter)}</span></div>
     <div class="months">${Object.entries(byMonth).map(([m, ws]) => `<section class="month"><h3>${dfmt(m + '-01', { month: 'long' })}<span class="tiny muted">${m.slice(0, 4) != S.year ? m.slice(0, 4) : ''}</span></h3>
       ${ws.map(w => { const x = weekState(w); return `<button class="week st-${x.k} ${filterMatch(w) ? '' : 'dim'} ${w.start_date < todayStr() ? 'past' : ''}" data-week="${w.id}" aria-label="Week ${w.week_no}, ${range(w)}: ${x.who}, ${x.label}">
         <span class="no">Week<b>${w.week_no}</b></span>
@@ -363,6 +362,8 @@ async function openWeek(w) {
   }
 
   if (isFam() && S.me.settings.member_requests && !w.is_mine && !past && w.family_id) html += await enquirySection(w, s);
+  else if (isFam() && !w.is_mine && !past && w.plan === 'undecided' && w.holder_contact) html += `<div class="section"><h3>Ask about this week</h3>
+    <p class="muted small" style="margin-top:0">${esc(w.family_name)} haven’t decided about this week yet. If you’d like it, ask them directly${w.holder_contact.name ? ` (${esc(w.holder_contact.name)})` : ''}.</p>${contactButtons(w.holder_contact)}</div>`;
   if (w.booking?.mine && w.booking.status === 'pending') html += `<div class="section">${payBox(w.booking.reference, w.price)}</div>`;
   if (role === 'friend' && !w.can_book && !w.booking?.mine) {
     if (w.my_friend_enquiry) html += `<div class="section"><h3>You’ve enquired about this week</h3><p class="small" style="margin:0">Sent on ${asked(w.my_friend_enquiry.created_at)}. The household that holds it will let you know. If they agree, it’s reserved for you at ${money(w.price)}.</p>

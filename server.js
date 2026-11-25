@@ -282,6 +282,14 @@ function currentUser(req) {
   return u;
 }
 const isFamily = u => u.role === 'family_admin' || u.role === 'family_member';
+// the household's contact: its first family admin with an email or phone (cached for the length of a request)
+let contactMemo = new Map();
+const reachOf = u => u && (u.email || u.phone) ? { name: u.name, email: u.email || null, phone: u.phone || null } : null;
+function holderContact(fid) {
+  if (!fid) return null;
+  if (!contactMemo.has(fid)) contactMemo.set(fid, reachOf(q1("SELECT name, email, phone FROM users WHERE family_id=? AND role='family_admin' AND active=1 AND (email IS NOT NULL OR phone IS NOT NULL) ORDER BY id LIMIT 1", fid)));
+  return contactMemo.get(fid);
+}
 const need = (u, cond, msg = 'Not allowed') => { if (!u) fail(401, 'Please log in'); if (!cond) fail(403, msg); };
 const needAdmin = u => need(u, u && u.is_site_admin, 'Site admin only');
 const canManageFamily = (u, fid) => u && (u.is_site_admin || (u.role === 'family_admin' && u.family_id === fid));
@@ -312,6 +320,7 @@ function weekView(w, u, s) {
   // enquire = join the queue for another family's week that isn't marked Using it, let or released
   v.can_enquire = MEMBER_REQUESTS_OPEN && isFamily(u) && !mine && w.family_id != null && !w.in_use && w.status === 'own_use' && w.start_date >= today() && !v.my_enquiry;
   v.swappable = swappable(w);
+  if (isFamily(u) && !mine && w.family_id && !w.in_use && ['own_use', 'offered'].includes(w.status)) v.holder_contact = holderContact(w.family_id);
   v.can_manage = canManageFamily(u, w.family_id) && w.family_id != null;
   v.is_mine = mine;
   if (u.role === 'friend' && !friendVisible && w.status === 'offered') v.status = 'own_use'; // friends only see what's offered to them
@@ -670,8 +679,7 @@ route('GET', '/api/home', ({ user }) => {
   const notes = q('SELECT * FROM notifications WHERE user_id=? ORDER BY id DESC LIMIT 6', user.id);
   // who to contact about a stay: the holding family's admin, or the guest who booked it (only for the holding family and
   // the site admin). Trusted friends never see contact details.
-  const reach = u => u && (u.email || u.phone) ? { name: u.name, email: u.email || null, phone: u.phone || null } : null;
-  const familyContact = id => reach(q1("SELECT name, email, phone FROM users WHERE family_id=? AND role='family_admin' AND active=1 AND (email IS NOT NULL OR phone IS NOT NULL) ORDER BY id LIMIT 1", id));
+  const reach = reachOf, familyContact = holderContact;
   const stay = w => {
     if (!w) return null;
     const b = q1("SELECT * FROM bookings WHERE week_id=? AND status IN ('pending','confirmed')", w.id), p = planOf(w), friend = user.role === 'friend';
@@ -1446,7 +1454,7 @@ const server = http.createServer(async (req, res) => {
       const chunks = []; let size = 0; for await (const c of req) { size += c.length; if (size > 5e6) fail(413, 'Too large'); chunks.push(c); }
       body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {};
     }
-    creditMemo = new Map();
+    creditMemo = new Map(); contactMemo = new Map();
     const r = routes.find(r => r.method === req.method && r.re.test(url.pathname)); if (!r) fail(404, 'Not found');
     const params = url.pathname.match(r.re).groups || {};
     const user = currentUser(req); actingAdmin = user && user.viewer || null;
