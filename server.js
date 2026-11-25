@@ -1269,6 +1269,25 @@ route('PUT', '/api/admin/families/:id', ({ user, params, body }) => {
   run('UPDATE families SET name=?, share_units=?, color=?, active=? WHERE id=?', body.name ?? f.name, body.share_units != null ? Number(body.share_units) : f.share_units, body.color ?? f.color, body.active != null ? (body.active ? 1 : 0) : f.active, f.id);
   return { ok: true };
 });
+// save the Families page for one year: names, colours, active, and that year's shares (active families must total 52)
+const TOTAL_SHARES = 52;
+route('POST', '/api/admin/families/save', ({ user, body }) => {
+  needAdmin(user); const year = Number(body.year), rows = Array.isArray(body.rows) ? body.rows : [];
+  if (!year) fail(400, 'Year required');
+  const clean = rows.map(r => ({ id: Number(r.id), name: String(r.name || '').trim(), color: r.color, active: !!r.active, units: Number(r.share_units) }));
+  if (clean.some(r => !r.name)) fail(400, 'Every family needs a name');
+  if (clean.some(r => !(r.units >= 0) || !Number.isInteger(r.units))) fail(400, 'Shares must be whole numbers');
+  const total = clean.filter(r => r.active).reduce((a, r) => a + r.units, 0);
+  if (total !== TOTAL_SHARES) fail(400, `The ${year} shares of active families must total ${TOTAL_SHARES} (they total ${total})`);
+  tx(() => {
+    for (const r of clean) {
+      const f = q1('SELECT * FROM families WHERE id=?', r.id) || fail(404, 'Family not found');
+      run('UPDATE families SET name=?, color=?, active=? WHERE id=?', r.name, r.color || f.color, r.active ? 1 : 0, f.id);
+      setShares(f.id, year, r.units);
+    }
+  });
+  audit(user.id, 'family.save', { year, shares: Object.fromEntries(clean.map(r => [r.name, r.units])) }); return { ok: true };
+});
 route('POST', '/api/admin/families/shares-from-weeks', ({ user, body }) => {
   needAdmin(user); const y = Number(body.year);
   const rows = q('SELECT original_family_id fid, COUNT(*) n FROM weeks WHERE year=? AND original_family_id IS NOT NULL GROUP BY original_family_id', y);

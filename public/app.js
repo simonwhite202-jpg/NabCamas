@@ -836,22 +836,32 @@ async function admWeeks(el, year) {
 
 async function admFamilies(el, year) {
   year = year || S.famYear || S.year; S.famYear = year;
-  const fams = await api('/admin/families?year=' + year), ys = [...new Set([...S.me.years, year])].sort();
+  const fams = await api('/admin/families?year=' + year), ys = [...new Set([...S.me.years, year])].sort(), TOTAL = 52;
   el.innerHTML = `<div class="row between" style="margin-bottom:14px;align-items:flex-start"><div class="stack" style="gap:8px"><div class="seg" aria-label="Year">${ys.map(y => `<button data-fy="${y}" class="${y === year ? 'on' : ''}">${y}</button>`).join('')}</div>
-      <p class="muted small" style="margin:0;max-width:520px">Each family’s shares for ${year}. One share is one week, and the ${year} service charge is charged per share, so a family with 12 shares pays 12 × the charge per share. Set them once a year.</p></div>
-    <div class="row"><button class="btn" id="sfw">Set ${year} shares from the ${year} allocation</button><button class="btn primary" id="addf">Add family</button></div></div>
-    <div class="table-wrap"><table><thead><tr><th>Colour</th><th>Family</th><th>Shares ${year}</th><th>Family admins</th><th>Active</th></tr></thead><tbody>
-    ${fams.map(f => `<tr data-id="${f.id}"><td><input type="color" name="color" value="${f.color}" style="width:44px;padding:2px;height:32px"></td><td><input name="name" value="${esc(f.name)}"></td>
-      <td><input name="share_units" type="number" step="1" min="0" value="${f.shares}" style="max-width:110px">${f.allocated != null && f.allocated !== f.shares ? `<div class="tiny muted">${f.allocated} week${f.allocated === 1 ? '' : 's'} allocated in ${year}</div>` : ''}</td>
+      <p class="muted small" style="margin:0;max-width:520px">Each family’s shares for ${year}. One share is one week, and the ${year} service charge is charged per share. The shares of active families must total ${TOTAL}. Make your changes, then press Save.</p></div>
+    <div class="row"><button class="btn" id="sfw">Fill in from the ${year} allocation</button><button class="btn" id="addf">Add family</button></div></div>
+    <form id="famf"><div class="table-wrap"><table><thead><tr><th>Colour</th><th>Family</th><th>Shares ${year}</th><th>Family admins</th><th>Active</th></tr></thead><tbody>
+    ${fams.map(f => `<tr data-id="${f.id}" data-alloc="${f.allocated ?? ''}"><td><input type="color" name="color" value="${f.color}" style="width:44px;padding:2px;height:32px"></td><td><input name="name" value="${esc(f.name)}" required></td>
+      <td><input name="share_units" type="number" step="1" min="0" value="${f.shares}" style="max-width:110px" required></td>
       <td class="small">${f.admins.map(esc).join(', ') || '<span class="badge amber">None</span>'}</td><td><input type="checkbox" name="active" ${f.active ? 'checked' : ''}></td></tr>`).join('')}
-    </tbody><tfoot><tr><td></td><td>Total</td><td>${fams.filter(f => f.active).reduce((a, f) => a + f.shares, 0)}</td><td></td><td></td></tr></tfoot></table></div>
+    </tbody><tfoot><tr><td></td><td>Total (active families)</td><td id="famTotal"></td><td></td><td></td></tr></tfoot></table></div>
+    <div class="row between" style="margin-top:14px"><span class="small" id="famMsg"></span><button class="btn primary" id="famSave" disabled>Save ${year}</button></div></form>
     <p class="tiny muted">To add a family admin, go to Users and add a person with the Family admin role.</p>`;
-  el.querySelectorAll('[data-fy]').forEach(b => b.onclick = () => admFamilies(el, Number(b.dataset.fy)));
-  el.querySelectorAll('tr[data-id] input').forEach(i => i.onchange = guard(async () => {
-    const body = i.name === 'share_units' ? { share_units: i.value, year } : { [i.name]: i.type === 'checkbox' ? i.checked : i.value };
-    await api('/admin/families/' + i.closest('tr').dataset.id, { method: 'PUT', body }); toast(i.name === 'share_units' ? `${year} shares saved` : 'Saved'); await refreshMe(); if (i.name === 'share_units') admFamilies(el, year); }));
-  $('#sfw', el).onclick = guard(async () => { await api('/admin/families/shares-from-weeks', { body: { year } }); toast(`${year} shares set from the allocation`); admFamilies(el, year); });
-  $('#addf', el).onclick = guard(async () => { const n = prompt('Family name'); if (!n) return; await api('/admin/families', { body: { name: n, share_units: 1, color: '#' + Math.floor(Math.random() * 0xaaaaaa + 0x222222).toString(16) } }); await refreshMe(); admFamilies(el, year); });
+  const rows = () => [...el.querySelectorAll('tr[data-id]')].map(tr => ({ id: Number(tr.dataset.id), name: $('[name=name]', tr).value, color: $('[name=color]', tr).value, active: $('[name=active]', tr).checked, share_units: $('[name=share_units]', tr).value }));
+  const start = JSON.stringify(rows());
+  const check = () => {
+    const rs = rows(), total = rs.filter(r => r.active).reduce((a, r) => a + (Number(r.share_units) || 0), 0), changed = JSON.stringify(rs) !== start, good = total === TOTAL;
+    $('#famTotal', el).innerHTML = `<b>${total}</b> of ${TOTAL}`;
+    $('#famMsg', el).innerHTML = good ? (changed ? '<span class="muted">Unsaved changes</span>' : '<span class="muted">Saved</span>') : `<span style="color:var(--st-alert-ink, #8a3b33)">The shares must total ${TOTAL}: ${total > TOTAL ? `${total - TOTAL} too many` : `${TOTAL - total} short`}.</span>`;
+    $('#famSave', el).disabled = !(good && changed);
+  };
+  check();
+  el.querySelectorAll('#famf input').forEach(i => i.addEventListener('input', check));
+  el.querySelectorAll('#famf input[type=checkbox], #famf input[type=color]').forEach(i => i.addEventListener('change', check));
+  $('#famf', el).onsubmit = guard(async e => { e.preventDefault(); await api('/admin/families/save', { body: { year, rows: rows() } }); toast(`${year} saved`); await refreshMe(); admFamilies(el, year); });
+  el.querySelectorAll('[data-fy]').forEach(b => b.onclick = () => { if ($('#famSave', el) && !$('#famSave', el).disabled && !confirm('You have unsaved changes. Leave without saving?')) return; admFamilies(el, Number(b.dataset.fy)); });
+  $('#sfw', el).onclick = () => { el.querySelectorAll('tr[data-id]').forEach(tr => { if (tr.dataset.alloc !== '') $('[name=share_units]', tr).value = tr.dataset.alloc; }); check(); toast('Filled in from the allocation. Check the total, then Save'); };
+  $('#addf', el).onclick = guard(async () => { const n = prompt('Family name'); if (!n) return; await api('/admin/families', { body: { name: n, share_units: 0, color: '#' + Math.floor(Math.random() * 0xaaaaaa + 0x222222).toString(16) } }); await refreshMe(); admFamilies(el, year); });
 }
 async function admUsers(el) {
   const people = await api('/people?all=1');

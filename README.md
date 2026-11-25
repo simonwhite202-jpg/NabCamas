@@ -180,7 +180,7 @@ Opening a page you don't have access to takes you back to Home.
 - **Budget years** can be copied from the previous year with an inflation uplift, edited line by line, or imported from Excel or CSV. The importer lets you pick the columns and previews the result first. It also handles a sheet with the budget on the left and families and weeks on the right.
 
 **Families and shares (site admin)**
-- Shares are set **per year**: pick the year at the top of **Families** and edit each family's shares for that year (one share = one week). That year's service charges are charged per share, so changing 2026 never changes 2027. **Set {year} shares from the {year} allocation** fills them from the week allocation, and a note shows where a family's shares differ from the weeks allocated to it.
+- Shares are set **per year**: pick the year at the top of **Families**, edit each family's shares for that year (one share = one week), then press **Save**. Save only works when the active families' shares total **52**; a running total shows how far off you are. That year's service charges are charged per share, so changing 2026 never changes 2027. **Fill in from the {year} allocation** copies the week allocation into the boxes (nothing is saved until you press Save). Names, colours and Active are saved with the same button.
 - A year without its own figures uses the most recent figure set for this year or later.
 
 **Payments page (site admin)**
