@@ -668,15 +668,20 @@ route('GET', '/api/home', ({ user }) => {
     if (!process.env.RESEND_API_KEY || !process.env.EMAIL_FROM) syndicate.push({ tone: 'info', title: 'Emails aren’t being sent', detail: 'Reminders, invitations and notifications only appear in the bell. Set RESEND_API_KEY and EMAIL_FROM on the server to send them by email.', link: '#/home', cta: '' });
   }
   const notes = q('SELECT * FROM notifications WHERE user_id=? ORDER BY id DESC LIMIT 6', user.id);
+  // who to contact about a stay: the holding family's admin, or the guest who booked it (only for the holding family and
+  // the site admin). Trusted friends never see contact details.
+  const reach = u => u && (u.email || u.phone) ? { name: u.name, email: u.email || null, phone: u.phone || null } : null;
+  const familyContact = id => reach(q1("SELECT name, email, phone FROM users WHERE family_id=? AND role='family_admin' AND active=1 AND (email IS NOT NULL OR phone IS NOT NULL) ORDER BY id LIMIT 1", id));
   const stay = w => {
     if (!w) return null;
     const b = q1("SELECT * FROM bookings WHERE week_id=? AND status IN ('pending','confirmed')", w.id), p = planOf(w), friend = user.role === 'friend';
     const base = { week_no: w.week_no, year: w.year, start: w.start_date, end: w.end_date, week_id: w.id, mine: fam && w.family_id === fid };
     if (friend) return { ...base, household: b && b.user_id === user.id ? 'Your stay' : null,
       status: b && b.user_id === user.id ? 'Your stay' : b || p !== 'released' ? 'Occupied' : 'Available' };
-    if (b) return { ...base, household: b.guest_name || q1('SELECT name FROM users WHERE id=?', b.user_id).name, detail: `Guests, via ${famName(w.family_id)}`, status: b.status === 'confirmed' ? 'Booked' : 'Reserved' };
+    if (b) return { ...base, household: b.guest_name || q1('SELECT name FROM users WHERE id=?', b.user_id).name, detail: `Guests, via ${famName(w.family_id)}`, status: b.status === 'confirmed' ? 'Booked' : 'Reserved',
+      contact: user.is_site_admin || base.mine ? reach(q1('SELECT name, email, phone FROM users WHERE id=?', b.user_id)) : familyContact(w.family_id) };
     if (!w.family_id) return { ...base, household: 'Syndicate week', detail: '', status: 'Syndicate' };
-    return { ...base, household: famName(w.family_id), detail: '', status: { using: 'Using it', undecided: 'Allocated', swap: 'Allocated · willing to swap', released: 'Released' }[p] };
+    return { ...base, household: famName(w.family_id), detail: '', contact: base.mine ? null : familyContact(w.family_id), status: { using: 'Using it', undecided: 'Allocated', swap: 'Allocated · willing to swap', released: 'Released' }[p] };
   };
   const residence = { now: stay(q1('SELECT * FROM weeks WHERE start_date <= ? AND end_date > ? ORDER BY start_date DESC LIMIT 1', t, t)),
     next: q('SELECT * FROM weeks WHERE start_date > ? ORDER BY start_date LIMIT 3', t).map(stay) };

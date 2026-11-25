@@ -68,6 +68,8 @@ Icons are thin-stroke **Lucide** icons, bundled in `public/icons.js` (ISC licenc
 
 ## Home page and navigation
 
+**Contact buttons.** On the Overview, *In residence this week* and *Arriving next* show who to contact, with **Email** and **WhatsApp** buttons (WhatsApp appears when the person has a phone number; UK numbers starting 0 are dialled as +44). The contact is the holding family's admin; for a week let to guests, the holding family and the site admin see the guest's details instead. Your own family's weeks show no buttons, and trusted friends never see contact details.
+
 **View as (site admin, for testing).** The site admin can pick any household login from the **View as** list under "Logged in as" to see the portal exactly as that person does: their menu, Overview, permissions and buttons. A banner shows who you're viewing as, with **Back to site admin**. Anything done while viewing as someone really happens, as them, and the Activity log records it as "site admin acting as …". It can be switched off under **Settings**.
 
 Every page shows who is **logged in** (their name). This appears at the top of the sidebar, or in a strip under the header on tablets and phones. The Overview greets families by household ("Good evening, Mackay family"), and trusted friends and the site admin by name.

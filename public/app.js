@@ -174,10 +174,23 @@ function welcomeHeader(greet) {
     ${s.hero ? `<img class="hero-img" src="/media/hero?v=${esc(s.hero)}" alt="Nab Camas on Loch Carron">` : ''}`;
 }
 const STAY_TAG = { 'Booked': 'booked', 'Your stay': 'booked', 'Reserved': 'pending', 'Released': 'available', 'Available': 'available', 'Using it': 'yours' };
+// a WhatsApp chat link from a phone number as typed; UK numbers starting 0 become +44
+function waLink(phone) {
+  if (!phone) return null;
+  let d = String(phone).trim().replace(/[^\d+]/g, '');
+  d = d.startsWith('+') ? d.slice(1) : d.startsWith('00') ? d.slice(2) : d.startsWith('0') ? '44' + d.slice(1) : d;
+  return /^\d{10,15}$/.test(d) ? `https://wa.me/${d}` : null;
+}
+function contactButtons(c) {
+  if (!c) return '';
+  const wa = waLink(c.phone);
+  return `<span class="contact-btns">${c.email ? `<a class="btn sm" href="mailto:${esc(c.email)}" title="Email ${esc(c.name)}" aria-label="Email ${esc(c.name)}">${icon('mail')}Email</a>` : ''}${wa ? `<a class="btn sm" href="${wa}" target="_blank" rel="noopener" title="WhatsApp ${esc(c.name)}" aria-label="WhatsApp ${esc(c.name)}">${icon('message-circle')}WhatsApp</a>` : ''}</span>`;
+}
 function residenceStrip(h, nextStay) {
   const r = h.residence || {};
   const show = (label, x, none) => `<div class="card"><span class="eyebrow">${label}</span>${x ? `<div class="who">${esc(x.mine ? `${x.household} (you)` : x.household || x.status)}</div>
-      <div class="when">${dfmt(x.start)} – ${dfmt(x.end)} · week ${x.week_no}${x.detail ? ` · ${esc(x.detail)}` : ''}</div><span class="tag ${x.mine ? 'yours' : STAY_TAG[x.status] || ''}">${esc(x.status)}</span>` : `<div class="when">${none}</div>`}</div>`;
+      <div class="when">${dfmt(x.start)} – ${dfmt(x.end)} · week ${x.week_no}${x.detail ? ` · ${esc(x.detail)}` : ''}</div>${x.contact ? `<div class="tiny muted">Contact: ${esc(x.contact.name)}</div>` : ''}
+      <div class="res-foot"><span class="tag ${x.mine ? 'yours' : STAY_TAG[x.status] || ''}">${esc(x.status)}</span>${contactButtons(x.contact)}</div>` : `<div class="when">${none}</div>`}</div>`;
   const arriving = (r.next || []).find(Boolean);
   return `<section class="residence">${show('In residence this week', r.now, 'No week is set up for today.')}${show('Arriving next', arriving, 'No arrivals set up yet.')}
     ${nextStay !== undefined ? `<div class="card"><span class="eyebrow">Your next stay</span>${nextStay ? `<div class="who">${esc(nextStay.title)}</div><div class="when">${esc(nextStay.detail || '')}</div>` : '<div class="when">Nothing booked yet. Browse the calendar to plan a stay.</div>'}</div>` : ''}</section>`;
