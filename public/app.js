@@ -292,7 +292,7 @@ function weekState(w) {
   if (w.can_book) return { k: 'available', who: fam, label: `Available · ${money(w.price)}` };
   if (w.plan === 'released' || w.first_refusal_until) return { k: 'available', who: fam, label: 'Released' };
   if (w.plan === 'using') return { k: 'other', who: fam, label: 'In use' };
-  return { k: 'other', who: fam, label: 'Allocated' };
+  return { k: 'other', who: fam, label: 'Enquire' };   // undecided: the holder may let it go, so ask them
 }
 function filterMatch(w) {
   switch (S.filter) {

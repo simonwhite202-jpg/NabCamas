@@ -145,7 +145,7 @@ Opening a page you don't have access to takes you back to Home.
 
 
 **Your weeks (on the calendar)**
-- There is no separate My weeks page for now: everything is done from the **Calendar**. Families have three filters: **All weeks**, **Our weeks** (just your own; opening one lets the family admin set it) and **Available for enquiry** (other families' released weeks, plus their weeks still *Undecided*). Opening another family's undecided week shows **Ask about this week** with Email and WhatsApp buttons for that family's admin. The colour legend has been removed: every week carries a text label.
+- There is no separate My weeks page for now: everything is done from the **Calendar**. Families have three filters: **All weeks**, **Our weeks** (just your own; opening one lets the family admin set it) and **Available for enquiry** (other families' released weeks, plus their weeks still *Undecided*). Another family's undecided week is labelled **Enquire** on the calendar; opening it shows **Ask about this week** with Email and WhatsApp buttons for that family's admin. The colour legend has been removed: every week carries a text label.
 - The family admin gives each week a setting:
   - **Undecided** (the default)
   - **Using it**
