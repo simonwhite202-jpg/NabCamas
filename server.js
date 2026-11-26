@@ -57,9 +57,12 @@ CREATE TABLE IF NOT EXISTS bookings (
   status TEXT NOT NULL CHECK (status IN ('pending','confirmed','cancelled','expired')),
   reference TEXT NOT NULL, guest_name TEXT, party_size INTEGER, notes TEXT,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP, expires_at TEXT, confirmed_at TEXT, confirmed_by INTEGER, letting_cost REAL, gift INTEGER);
--- the budget (Expenditure): lines per year, and per year its period and the charge per week actually levied
+-- the budget (Expenditure): lines per year, and per year its period and the charge per week actually levied.
+-- funding: 'charge' = added to the service charge; 'bank' = paid from the bank balance (a year's bank lines can't
+-- total more than the latest bank balance)
 CREATE TABLE IF NOT EXISTS budget_items (
-  id INTEGER PRIMARY KEY, year INTEGER NOT NULL, category TEXT, description TEXT NOT NULL, amount REAL NOT NULL DEFAULT 0, sort INTEGER DEFAULT 0, notes TEXT);
+  id INTEGER PRIMARY KEY, year INTEGER NOT NULL, category TEXT, description TEXT NOT NULL, amount REAL NOT NULL DEFAULT 0, sort INTEGER DEFAULT 0, notes TEXT,
+  funding TEXT NOT NULL DEFAULT 'charge');
 CREATE TABLE IF NOT EXISTS budget_years (year INTEGER PRIMARY KEY, label TEXT, rate_per_week REAL);
 -- expenditure a family admin proposes for a coming year's budget, decided at the AGM or a board meeting. funding = how
 -- accepted expenditure is paid for: budget | levy (charged to households by shares) | reserves (bank balance) | reassign
@@ -102,7 +105,7 @@ CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY, user_id INTEGER, actio
 // columns added since a database was first created (each is a no-op when the column is already there)
 for (const [t, def] of [['weeks', 'end_date TEXT'], ['weeks', 'comment TEXT'], ['weeks', 'school_holiday INTEGER NOT NULL DEFAULT 0'], ['weeks', 'in_use INTEGER NOT NULL DEFAULT 0'],
   ['weeks', "sale_to TEXT NOT NULL DEFAULT 'all'"], ['weeks', 'released_at TEXT'], ['weeks', 'enquiry_until TEXT'], ['weeks', 'reminded INTEGER NOT NULL DEFAULT 0'],
-  ['sessions', 'viewer_id INTEGER'], ['bookings', 'letting_cost REAL'], ['bookings', 'gift INTEGER'], ['budget_items', 'notes TEXT'], ['ledger', 'entry_date TEXT'],
+  ['sessions', 'viewer_id INTEGER'], ['bookings', 'letting_cost REAL'], ['bookings', 'gift INTEGER'], ['budget_items', 'notes TEXT'], ["budget_items", "funding TEXT NOT NULL DEFAULT 'charge'"], ['ledger', 'entry_date TEXT'],
   ['enquiries', 'reply TEXT'], ['enquiries', 'replied_at TEXT'], ['outgoing_proposals', 'funding TEXT'], ['outgoing_proposals', 'funding_detail TEXT']])
   try { db.exec(`ALTER TABLE ${t} ADD COLUMN ${def}`); } catch { }
 db.exec("UPDATE users SET is_site_admin = CASE WHEN role='site_admin' THEN 1 ELSE 0 END WHERE is_site_admin <> (role='site_admin')");
@@ -1167,16 +1170,27 @@ route('POST', '/api/admin/allocation/rotate', ({ user, body }) => {
 
 // budget. Service charge = charge per week × each family's weeks (shares). By default the charge per week is
 // budget ÷ total weeks; the admin can set a rounded figure, and the shortfall/surplus against the budget is shown.
+// the latest bank balance recorded on the Payments page
+const latestBank = () => q1('SELECT as_of, amount FROM bank_balances ORDER BY as_of DESC, id DESC LIMIT 1') || null;
+// a year's lines paid from the bank balance can't total more than the latest bank balance (call inside the tx that changed them)
+function checkBankLines(year) {
+  const t = round2(q1("SELECT COALESCE(SUM(amount),0) n FROM budget_items WHERE year=? AND funding='bank'", year).n); if (t <= 0.005) return;
+  const b = latestBank(), cur = settings().currency;
+  if (!b) fail(400, 'Record the bank balance on the Payments page before paying for anything from it');
+  const m = n => cur + n.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (t > b.amount + 0.005) fail(400, `The ${year} lines paid from the bank balance would total ${m(t)}, more than the ${m(b.amount)} bank balance on ${fmtDate(b.as_of)}`);
+}
 function budgetSummary(year) {
   const items = q('SELECT * FROM budget_items WHERE year=? ORDER BY sort, id', year);
-  const total = round2(items.reduce((a, b) => a + b.amount, 0));
+  const total = round2(items.reduce((a, b) => a + b.amount, 0)), bank_total = round2(items.filter(i => i.funding === 'bank').reduce((a, b) => a + b.amount, 0));
+  const charge_total = round2(total - bank_total);   // what the service charge has to raise
   const fams = q('SELECT * FROM families WHERE active=1 ORDER BY name').map(f => ({ ...f, share_units: sharesFor(f.id, year) })); const units = fams.reduce((a, f) => a + f.share_units, 0) || 1;
   const by = q1('SELECT * FROM budget_years WHERE year=?', year) || {};
-  const calc = round2(total / units); const rate = by.rate_per_week != null ? by.rate_per_week : calc;
+  const calc = round2(charge_total / units); const rate = by.rate_per_week != null ? by.rate_per_week : calc;
   const charged = Object.fromEntries(q("SELECT family_id, SUM(amount) a FROM ledger WHERE year=? AND type='service_charge' GROUP BY family_id", year).map(r => [r.family_id, round2(r.a)]));
   const split = fams.map(f => ({ id: f.id, name: f.name, color: f.color, share_units: f.share_units, pct: f.share_units / units * 100, charge: round2(rate * f.share_units), charged: charged[f.id] ?? null }));
   const raised = round2(split.reduce((a, f) => a + f.charge, 0));
-  return { year, items, total, units, label: by.label || '', rate_calc: calc, rate_per_week: by.rate_per_week ?? null, rate, raised, difference: round2(raised - total), split, generated: Object.keys(charged).length > 0 };
+  return { year, items, total, charge_total, bank_total, bank: latestBank(), units, label: by.label || '', rate_calc: calc, rate_per_week: by.rate_per_week ?? null, rate, raised, difference: round2(raised - charge_total), split, generated: Object.keys(charged).length > 0 };
 }
 route('GET', '/api/admin/budget', ({ user, query }) => {
   needAdmin(user);
@@ -1192,18 +1206,28 @@ route('PUT', '/api/admin/budget-year/:year', ({ user, params, body }) => {
 });
 route('POST', '/api/admin/budget', ({ user, body }) => {
   needAdmin(user); if (!body.description) fail(400, 'Description required');
-  const id = Number(run('INSERT INTO budget_items (year,category,description,amount,sort,notes) VALUES (?,?,?,?,?,?)', Number(body.year), body.category || null, body.description, Number(body.amount) || 0, Number(body.sort) || 999, body.notes || null).lastInsertRowid);
+  const year = Number(body.year);
+  const id = tx(() => {
+    const id = Number(run('INSERT INTO budget_items (year,category,description,amount,sort,notes,funding) VALUES (?,?,?,?,?,?,?)', year, body.category || null, body.description,
+      Number(body.amount) || 0, Number(body.sort) || 999, body.notes || null, body.funding === 'bank' ? 'bank' : 'charge').lastInsertRowid);
+    checkBankLines(year); return id;
+  });
   return { id };
 });
 route('PUT', '/api/admin/budget/:id', ({ user, params, body }) => {
   needAdmin(user); const it = q1('SELECT * FROM budget_items WHERE id=?', params.id) || fail(404, 'Not found');
-  run('UPDATE budget_items SET category=?, description=?, amount=?, notes=? WHERE id=?', body.category ?? it.category, body.description ?? it.description, body.amount != null ? Number(body.amount) || 0 : it.amount, body.notes ?? it.notes, it.id); return { ok: true };
+  tx(() => {
+    run('UPDATE budget_items SET category=?, description=?, amount=?, notes=?, funding=? WHERE id=?', body.category ?? it.category, body.description ?? it.description,
+      body.amount != null ? Number(body.amount) || 0 : it.amount, body.notes ?? it.notes, body.funding === undefined ? it.funding : body.funding === 'bank' ? 'bank' : 'charge', it.id);
+    checkBankLines(it.year);
+  });
+  return { ok: true };
 });
 route('DELETE', '/api/admin/budget/:id', ({ user, params }) => { needAdmin(user); run('DELETE FROM budget_items WHERE id=?', params.id); return { ok: true }; });
 route('POST', '/api/admin/budget/copy', ({ user, body }) => {
   needAdmin(user); const from = Number(body.from), to = Number(body.to), up = 1 + (Number(body.uplift_pct) || 0) / 100;
   if (q1('SELECT 1 FROM budget_items WHERE year=?', to)) fail(400, `${to} already has budget lines — delete them first or edit directly`);
-  tx(() => { for (const it of q('SELECT * FROM budget_items WHERE year=?', from)) run('INSERT INTO budget_items (year,category,description,amount,sort,notes) VALUES (?,?,?,?,?,?)', to, it.category, it.description, round2(it.amount * up), it.sort, it.notes); });
+  tx(() => { for (const it of q('SELECT * FROM budget_items WHERE year=?', from)) run('INSERT INTO budget_items (year,category,description,amount,sort,notes,funding) VALUES (?,?,?,?,?,?,?)', to, it.category, it.description, round2(it.amount * up), it.sort, it.notes, it.funding || 'charge'); checkBankLines(to); });
   return { ok: true };
 });
 route('POST', '/api/admin/budget/import', ({ user, body }) => {
@@ -1257,7 +1281,8 @@ route('GET', '/api/expenditure', ({ user, query }) => {
   const def = proposalYear(), year = Number(query.year) || (years.includes(def) ? def : years[years.length - 1] || def);
   const b = budgetSummary(year);
   return { year, years: [...new Set([...years, def, def + 1])].sort(), default_year: def, can_propose: user.is_site_admin || user.role === 'family_admin',
-    budget: { year, label: b.label, total: b.total, rate: b.rate, generated: b.generated, items: b.items.map(i => ({ description: i.description, amount: i.amount, category: i.category, notes: i.notes })) },
+    budget: { year, label: b.label, total: b.total, charge_total: b.charge_total, bank_total: b.bank_total, rate: b.rate, generated: b.generated,
+      items: b.items.map(i => ({ description: i.description, amount: i.amount, category: i.category, notes: i.notes, funding: i.funding })) },
     proposals: q("SELECT * FROM outgoing_proposals WHERE status='proposed' OR year >= ? ORDER BY status<>'proposed', created_at DESC, id DESC", thisYear() - 1).map(p => proposalView(p, user)) };
 });
 route('POST', '/api/expenditure', ({ user, body }) => {
@@ -1276,7 +1301,7 @@ route('POST', '/api/expenditure/:id/withdraw', ({ user, params }) => {
   audit(user.id, 'expenditure.withdraw', { id: p.id }); return { ok: true };
 });
 // the site admin records the decision made at the AGM or a board meeting, and how accepted expenditure is paid for
-const FUNDING = { budget: 'added to the budget', levy: 'charged to households now, by shares', reserves: 'paid from the bank balance', reassign: 'reassigned from another budget line' };
+const FUNDING = { budget: 'added to the service charge', levy: 'charged to households now, by shares', reserves: 'paid from the bank balance', reassign: 'reassigned from another budget line' };
 route('POST', '/api/admin/expenditure/:id/decide', ({ user, params, body }) => {
   needAdmin(user); const p = q1("SELECT * FROM outgoing_proposals WHERE id=? AND status='proposed'", params.id) || fail(404, 'This proposal has already been decided');
   const meeting = String(body.meeting || '').trim().slice(0, 120), note = String(body.note || '').trim().slice(0, 500) || null, cur = settings().currency;
@@ -1289,10 +1314,12 @@ route('POST', '/api/admin/expenditure/:id/decide', ({ user, params, body }) => {
   const who = p.family_id ? famName(p.family_id) : 'the site admin', src = `Proposed by ${who}; accepted at ${meeting}${note ? `. ${note}` : ''}`;
   let detail = null, item = null, shares = [];
   tx(() => {
-    if (funding === 'budget' || funding === 'reassign') {
+    // a budget line for the year: on the service charge, from the bank balance (checked against it), or taking over the line it was moved from
+    if (funding === 'budget' || funding === 'reassign' || funding === 'reserves') {
       const sort = ((q1('SELECT MAX(sort) m FROM budget_items WHERE year=?', year) || {}).m || 0) + 1;
-      item = Number(run('INSERT INTO budget_items (year,category,description,amount,sort,notes) VALUES (?,?,?,?,?,?)', year, 'One-off', p.title, amount, sort,
-        from ? `${src}. Moved from “${from.description}”.` : src).lastInsertRowid);
+      item = Number(run('INSERT INTO budget_items (year,category,description,amount,sort,notes,funding) VALUES (?,?,?,?,?,?,?)', year, 'One-off', p.title, amount, sort,
+        from ? `${src}. Moved from “${from.description}”.` : src, funding === 'reserves' ? 'bank' : from ? from.funding || 'charge' : 'charge').lastInsertRowid);
+      if (funding === 'reserves') checkBankLines(year);
       if (from) { run('UPDATE budget_items SET amount=?, notes=? WHERE id=?', round2(from.amount - amount), [from.notes, `${cur}${amount} moved to “${p.title}” (${meeting})`].filter(Boolean).join('. '), from.id); detail = `from “${from.description}”`; }
     }
     if (funding === 'levy') {

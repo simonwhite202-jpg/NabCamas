@@ -767,8 +767,8 @@ async function viewExpenditure(main) {
       <h2 style="margin:8px 0 0">Waiting for a decision</h2>${open.map(p => proposalCard(p)).join('') || '<div class="card flat empty small">Nothing waiting</div>'}
       ${done.length ? `<h2 style="margin:8px 0 0">Decided</h2>${done.map(p => proposalCard(p)).join('')}` : ''}</section>
     <section class="stack"><h2 style="margin:0">Agreed expenditure ${b.year}</h2>
-      ${b.items.length ? `<div class="table-wrap"><table><thead><tr><th>Item</th><th>Type</th><th class="r">Amount</th></tr></thead><tbody>${b.items.map(i => `<tr><td>${esc(i.description)}${i.notes ? `<div class="tiny muted">${esc(i.notes)}</div>` : ''}</td><td class="small muted">${esc(i.category || '')}</td><td class="r num">${money(i.amount, 2)}</td></tr>`).join('')}</tbody>
-        <tfoot><tr><td colspan="2">Total</td><td class="r num">${money(b.total, 2)}</td></tr></tfoot></table></div>
+      ${b.items.length ? `<div class="table-wrap"><table><thead><tr><th>Item</th><th>Paid from</th><th class="r">Amount</th></tr></thead><tbody>${b.items.map(i => `<tr><td>${esc(i.description)}${i.notes ? `<div class="tiny muted">${esc(i.notes)}</div>` : ''}</td><td class="small muted">${i.funding === 'bank' ? 'Bank balance' : 'Service charge'}</td><td class="r num">${money(i.amount, 2)}</td></tr>`).join('')}</tbody>
+        <tfoot><tr><td colspan="2">Added to the service charge</td><td class="r num">${money(b.charge_total, 2)}</td></tr>${b.bank_total > 0.005 ? `<tr><td colspan="2">Paid from the bank balance</td><td class="r num">${money(b.bank_total, 2)}</td></tr>` : ''}<tr><td colspan="2">Total</td><td class="r num">${money(b.total, 2)}</td></tr></tfoot></table></div>
         <p class="small muted" style="margin:0">Service charge ${money(b.rate, 2)} per share${b.generated ? ', issued' : ', not issued yet'}.</p>` : `<div class="card flat empty small">No expenditure agreed for ${b.year} yet</div>`}</section></div>`;
   const reload = () => viewExpenditure(main);
   bindYears(main, reload);
@@ -785,7 +785,7 @@ function bindProposals(root, reload) {
       ${accept ? `<div class="grid-2" style="gap:12px"><div class="field"><label>Agreed amount (£)</label><input name="amount" type="number" min="0" step="0.01" value="${p.amount}" required></div>
         <div class="field"><label>Budget year</label><select name="year">${years.map(y => `<option value="${y}" ${y === p.year ? 'selected' : ''}>${y}</option>`).join('')}</select></div></div>
       <div class="field"><label>How it’s paid for</label><select name="funding">
-        <option value="budget">Add it to the year’s budget (the service charge goes up)</option>
+        <option value="budget">Add it to the service charge (the charge goes up)</option>
         <option value="levy">Charge households now, split by shares</option>
         <option value="reserves">Pay it from the bank balance (nothing charged)</option>
         <option value="reassign">Move it from another budget line (service charge unchanged)</option></select></div>
@@ -796,7 +796,7 @@ function bindProposals(root, reload) {
     const form = $('#dcf', m);
     if (accept) {
       const sync = async () => { const v = form.funding.value, y = form.year.value; $('#fromf', m).style.display = v === 'reassign' ? '' : 'none';
-        $('#fundhint', m).textContent = { budget: `A new line in the ${y} budget. If the ${y} charges are already issued, you’ll be asked whether to re-issue them.`, levy: 'Each household’s share goes on its account now, as a one-off charge, and its admins are told.', reserves: 'Recorded as agreed. Nothing goes on any household’s account.', reassign: 'A new line in the budget, with the same amount taken off the line you choose.' }[v];
+        $('#fundhint', m).textContent = { budget: `A new line in the ${y} budget. If the ${y} charges are already issued, you’ll be asked whether to re-issue them.`, levy: 'Each household’s share goes on its account now, as a one-off charge, and its admins are told.', reserves: 'A line in the year’s budget paid from the bank balance: nothing is charged. A year’s bank-balance lines can’t total more than the latest bank balance.', reassign: 'A new line in the budget, with the same amount taken off the line you choose.' }[v];
         if (v === 'reassign') { const items = (await api('/admin/budget?year=' + y)).items; form.from_item_id.innerHTML = items.map(i => `<option value="${i.id}">${esc(i.description)} · ${money(i.amount, 2)}</option>`).join('') || '<option value="">No budget lines for that year</option>'; } };
       form.funding.onchange = sync; form.year.onchange = sync; sync();
     }
@@ -847,7 +847,7 @@ async function admOverview(el) {
       <td class="r"><button class="btn sm green" data-tuconf="${t.id}" data-amt="${t.amount}">Arrived</button> <button class="btn sm danger" data-tucan="${t.id}">Cancel</button></td></tr>`).join('')}</tbody></table></div></section>` : ''}
     <section class="stack"><h2 style="margin:0">Service charges ${c.year}</h2>
       <div class="card"><div class="row" style="gap:28px;flex-wrap:wrap;align-items:flex-end">
-        <div><div class="muted small">Expenditure ${esc(b.label || String(c.year))}</div><div class="num" style="font-size:20px">${money(b.total, 2)}</div></div>
+        <div><div class="muted small">Added to the service charge</div><div class="num" style="font-size:20px">${money(b.charge_total, 2)}</div>${b.bank_total > 0.005 ? `<div class="tiny muted">plus ${money(b.bank_total, 2)} from the bank balance</div>` : ''}</div>
         <div><div class="muted small">÷ ${b.units} weeks</div><div class="num" style="font-size:20px">${money(b.rate_calc, 2)}<span class="small muted"> / week</span></div></div>
         <div class="field" style="margin:0"><label>Charge per week</label><div class="row" style="flex-wrap:nowrap;gap:6px"><input id="rate" type="number" step="0.01" min="0" value="${b.rate_per_week ?? ''}" placeholder="${b.rate_calc}" style="max-width:120px">
           <button class="btn sm" data-round="5">Round to ${cur}5</button><button class="btn sm" data-round="10">${cur}10</button></div></div>
@@ -897,30 +897,36 @@ async function admOverview(el) {
       await api('/admin/ledger', { body: { ...d, family_id: r.id } }); closeOverlay(); toast('Recorded'); reload(); });
   });
 }
+// how a budget line is paid for: added to the service charge, or from the bank balance
+const paidFrom = v => `<select name="funding"><option value="charge" ${v !== 'bank' ? 'selected' : ''}>Service charge</option><option value="bank" ${v === 'bank' ? 'selected' : ''}>Bank balance</option></select>`;
 async function admExpenditure(el) {
   const year = S.year, [b, od] = await Promise.all([api('/admin/budget?year=' + year), api('/expenditure')]);
+  const over = b.bank_total > 0.005 && (!b.bank || b.bank_total > b.bank.amount + 0.005);   // bank lines more than the balance (e.g. a lower balance recorded since)
   const openP = od.proposals.filter(p => p.status === 'proposed'), doneP = od.proposals.filter(p => p.status !== 'proposed' && p.year === year);
   const cats = [...new Set(b.items.map(i => i.category).filter(Boolean))];
   const cur = S.me.settings.currency;
   el.innerHTML = `${pageBar(yearPicker(), `<button class="btn" id="imp">Import from spreadsheet</button><button class="btn" id="copy">Copy from ${year - 1}…</button>`)}
     ${openP.length ? `<section class="stack" style="margin-bottom:24px"><h2 style="margin:0">Expenditure proposals to decide</h2><p class="muted small" style="margin:0">Proposed by family admins. Record the decision from the AGM or a board meeting, and how it’s paid for.</p>${openP.map(p => proposalCard(p, true)).join('')}</section>` : ''}
     <div class="row" style="margin-bottom:14px"><div class="field" style="margin:0;min-width:260px"><label>Budget period for ${year}</label><input id="blabel" value="${esc(b.label)}" placeholder="e.g. July ${year - 1} – June ${year}"></div></div>
-    <div class="grid-2" style="grid-template-columns: minmax(0,3fr) minmax(300px,2fr); align-items:start">
-    <section class="stack"><div class="table-wrap"><table style="table-layout:fixed;min-width:620px"><colgroup><col style="width:34%"><col style="width:112px"><col style="width:112px"><col><col style="width:72px"></colgroup><thead><tr><th>Item</th><th class="r">Estimate (${cur})</th><th>Type</th><th>Commentary</th><th></th></tr></thead><tbody>
-      ${b.items.map(i => `<tr data-id="${i.id}"><td><input name="description" value="${esc(i.description)}"></td><td class="r"><input name="amount" type="number" step="0.01" value="${i.amount}" style="text-align:right"></td><td><input name="category" value="${esc(i.category || '')}" list="cats"></td><td><input name="notes" value="${esc(i.notes || '')}"></td><td><button class="iconbtn" data-del="${i.id}" title="Remove">${icon('trash-2')}</button></td></tr>`).join('')}
-      <tr id="newrow"><td><input name="description" placeholder="New item…"></td><td class="r"><input name="amount" type="number" step="0.01" placeholder="0" style="text-align:right"></td><td><input name="category" placeholder="Type" list="cats"></td><td><input name="notes" placeholder="Commentary"></td><td><button class="btn sm primary" id="addi">Add</button></td></tr>
-      </tbody><tfoot><tr><td>Estimated funding need</td><td class="r num">${money(b.total, 2)}</td><td colspan="3"></td></tr></tfoot></table></div>
+    <div class="stack">
+    <section class="stack"><div class="table-wrap"><table style="table-layout:fixed;min-width:860px"><colgroup><col style="width:26%"><col style="width:120px"><col style="width:170px"><col style="width:120px"><col><col style="width:72px"></colgroup><thead><tr><th>Item</th><th class="r">Estimate (${cur})</th><th>Paid from</th><th>Type</th><th>Commentary</th><th></th></tr></thead><tbody>
+      ${b.items.map(i => `<tr data-id="${i.id}"><td><input name="description" value="${esc(i.description)}"></td><td class="r"><input name="amount" type="number" step="0.01" value="${i.amount}" style="text-align:right"></td><td>${paidFrom(i.funding)}</td><td><input name="category" value="${esc(i.category || '')}" list="cats"></td><td><input name="notes" value="${esc(i.notes || '')}"></td><td><button class="iconbtn" data-del="${i.id}" title="Remove">${icon('trash-2')}</button></td></tr>`).join('')}
+      <tr id="newrow"><td><input name="description" placeholder="New item…"></td><td class="r"><input name="amount" type="number" step="0.01" placeholder="0" style="text-align:right"></td><td>${paidFrom('charge')}</td><td><input name="category" placeholder="Type" list="cats"></td><td><input name="notes" placeholder="Commentary"></td><td><button class="btn sm primary" id="addi">Add</button></td></tr>
+      </tbody><tfoot><tr><td>Added to the service charge</td><td class="r num">${money(b.charge_total, 2)}</td><td colspan="4"></td></tr>
+        <tr><td>Paid from the bank balance</td><td class="r num" ${over ? 'style="color:var(--st-alert-ink)"' : ''}>${money(b.bank_total, 2)}</td><td colspan="4" class="small ${over ? '' : 'muted'}" ${over ? 'style="color:var(--st-alert-ink)"' : ''}>${b.bank ? (over ? `More than the ${money(b.bank.amount, 2)} bank balance on ${dfmt(b.bank.as_of, { day: 'numeric', month: 'short', year: 'numeric' })}: move some lines to the service charge` : `Bank balance ${money(b.bank.amount, 2)} on ${dfmt(b.bank.as_of, { day: 'numeric', month: 'short', year: 'numeric' })}`) : 'No bank balance recorded yet (add it on Payments)'}</td></tr>
+        <tr><td>Total expenditure</td><td class="r num">${money(b.total, 2)}</td><td colspan="4"></td></tr></tfoot></table></div>
       <datalist id="cats">${['Regular', 'Postpone', 'Provision', 'One-off', ...cats].filter((v, i, a) => a.indexOf(v) === i).map(c => `<option value="${esc(c)}">`).join('')}</datalist><p class="tiny muted">Changes save when you leave a field.</p></section>
-    <section class="stack"><div class="card"><h3>Service charges ${esc(b.label || year)}</h3>
-      <dl class="kv" style="grid-template-columns:1fr auto"><dt>Funding need</dt><dd class="num r">${money(b.total, 2)}</dd><dt>÷ ${b.units} weeks</dt><dd class="num">${money(b.rate_calc, 2)} / week</dd>
+    <section class="grid-2" style="align-items:start"><div class="card"><h3>Service charges ${esc(b.label || year)}</h3>
+      <dl class="kv" style="grid-template-columns:1fr auto"><dt>Added to the service charge</dt><dd class="num r">${money(b.charge_total, 2)}</dd><dt>÷ ${b.units} weeks</dt><dd class="num">${money(b.rate_calc, 2)} / week</dd>
         <dt>Charge per week</dt><dd class="num">${money(b.rate, 2)}</dd><dt>Status</dt><dd>${b.generated ? '<span class="badge green">Issued</span>' : '<span class="badge amber">Not issued</span>'}</dd></dl>
       <a class="btn block" href="#/admin/overview" id="toPay" style="margin-top:14px">Issue and record payments →</a></div>
-      ${doneP.length ? `<h3 style="margin:8px 0 0">Proposals decided for ${year}</h3>${doneP.map(p => proposalCard(p, true)).join('')}` : ''}</section></div>`;
+      ${doneP.length ? `<div class="stack"><h3 style="margin:0">Proposals decided for ${year}</h3>${doneP.map(p => proposalCard(p, true)).join('')}</div>` : ''}</section></div>`;
   const reload = () => admExpenditure(el);
   bindYears(el, reload);
-  el.querySelectorAll('tr[data-id] input').forEach(inp => inp.onchange = guard(async () => { await api('/admin/budget/' + inp.closest('tr').dataset.id, { method: 'PUT', body: { [inp.name]: inp.value } }); reload(); }));
+  // each field saves when it changes; if the server refuses (e.g. too much from the bank balance) the page reloads to what's saved
+  el.querySelectorAll('tr[data-id] input, tr[data-id] select').forEach(inp => inp.onchange = guard(async () => { try { await api('/admin/budget/' + inp.closest('tr').dataset.id, { method: 'PUT', body: { [inp.name]: inp.value } }); } finally { reload(); } }));
   el.querySelectorAll('[data-del]').forEach(x => x.onclick = guard(async () => { await api('/admin/budget/' + x.dataset.del, { method: 'DELETE' }); reload(); }));
-  $('#addi', el).onclick = guard(async () => { const r = $('#newrow', el); const d = Object.fromEntries([...r.querySelectorAll('input')].map(i => [i.name, i.value])); await api('/admin/budget', { body: { ...d, year } }); reload(); });
+  $('#addi', el).onclick = guard(async () => { const r = $('#newrow', el); const d = Object.fromEntries([...r.querySelectorAll('input, select')].map(i => [i.name, i.value])); await api('/admin/budget', { body: { ...d, year } }); reload(); });
   const saveYear = guard(async body => { await api('/admin/budget-year/' + year, { method: 'PUT', body }); reload(); });
   $('#blabel', el).onchange = e => saveYear({ label: e.target.value });
   bindProposals(el, reload);

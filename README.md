@@ -204,12 +204,16 @@ Opening a page you don't have access to takes you back to Home.
 - **Budget years** can be copied from the previous year with an inflation uplift, edited line by line, or imported from Excel or CSV. The importer lets you pick the columns and previews the result first. It also handles a sheet with the budget on the left and families and weeks on the right.
 
 **Expenditure (the budget, and proposals)**
+- **Paid from:** each budget line, for each year, is paid from either the **Service charge** (the default) or the **Bank balance**. The service charge is worked out from the service-charge lines only: their total ÷ the year's shares.
+- **The bank-balance limit:** a year's bank-balance lines can't add up to more than the latest bank balance recorded on **Payments**. The portal refuses a change that would go over, and does the same when you add a line or copy a year. With no bank balance recorded, nothing can be paid from it yet.
+- **If the balance drops:** if a lower balance is recorded later, the Expenditure page warns in red until lines are moved back to the service charge.
+- **Totals:** the table shows what's added to the service charge, what's paid from the bank balance (next to the latest balance and its date), and the total expenditure. The Payments card shows what goes on the service charge, plus what comes from the bank balance.
 - The site admin's **Budget** page is now called **Expenditure**. It holds each year's budget lines. The service charge card has moved to **Payments**.
 - **Proposing expenditure:** every family admin has an **Expenditure** page. There they can propose something for a coming year's budget, such as a new fridge or a quote for maintenance work: what it's for, the estimated cost, which year's budget, and details. They can withdraw it while it's waiting. The page also shows the agreed expenditure for each year, read-only.
 - **Deciding:** the site admin sees the proposals waiting on the Expenditure page and on Overview. After the AGM or a board meeting, they **Accept** or **Reject** each one, recording where it was decided, the agreed amount and a note. An accepted proposal is paid for in one of four ways:
   - **Added to the year's budget:** a new line, so the service charge goes up. If that year's charges are already issued, the portal offers to re-issue them.
   - **Charged to households now:** split by shares as a one-off charge on each account; re-issuing the service charges leaves it alone. Each household's admins are told their share.
-  - **Paid from the bank balance:** recorded, and nothing is charged.
+  - **Paid from the bank balance:** a line in that year's budget paid from the bank balance, within its limit. Nothing is charged.
   - **Moved from another budget line:** a new line, with the same amount taken off the line chosen, so the service charge is unchanged.
 - The proposing family's admins are told the outcome.
 
