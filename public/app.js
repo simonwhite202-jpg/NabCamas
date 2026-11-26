@@ -45,10 +45,11 @@ function currentTab() { return (location.hash.replace('#/', '').split('/')[0]) |
 async function route() {
   closeOverlay(); const tab = currentTab();
   if (tab === 'weeks') { S.filter = isFam() ? 'mine' : S.filter; location.replace('#/calendar'); return; }   // My weeks is retired: its links open the calendar
+  if (tab === 'expenditure') { location.replace(isSiteRole() ? '#/admin/service-charge' : '#/service-charge'); return; }   // Expenditure became Service charge (and Upgrades)
   const allowed = new Set(navTabs().map(t => t[0].split('/')[0]));
   if (!allowed.has(tab)) { if (location.hash !== '#/home') location.hash = '#/home'; else renderShell('home'); return; }
   renderShell(tab); const main = $('main');
-  const views = { home: viewHome, calendar: viewCalendar, enquiries: viewEnquiries, bookings: viewBookings, account: viewAccount, expenditure: viewExpenditure, maintenance: viewMaintenance, guide: viewGuide, people: viewPeople, admin: viewAdmin };
+  const views = { home: viewHome, calendar: viewCalendar, enquiries: viewEnquiries, bookings: viewBookings, account: viewAccount, 'service-charge': viewServiceCharge, upgrades: viewUpgrades, maintenance: viewMaintenance, guide: viewGuide, people: viewPeople, admin: viewAdmin };
   try { await (views[tab] || viewHome)(main); } catch (e) { main.innerHTML = `<div class="card empty">${esc(e.message)}</div>`; }
 }
 
@@ -84,11 +85,11 @@ function navOn(k, tab) {
   return here.startsWith(k) || (k === 'admin/overview' && (here === 'admin' || here.startsWith('admin/account')));
 }
 // Navigation per role:
-//   trusted friend → Home, Available weeks, My bookings, House guide, Maintenance, My details
-//   family member  → Home, Calendar, Enquiries, Bookings, House guide, Maintenance, Family & friends
-//   family admin   → the same plus Account and Expenditure (and setting plans for the family's weeks from the calendar, managing people)
-//   site admin     → a separate login with no family: Home, Calendar, House guide, Maintenance and the admin pages
-const ADMIN_PAGES = [['admin/overview', 'Payments'], ['admin/expenditure', 'Expenditure'], ['admin/weeks', 'Weeks'], ['admin/lets', 'Lets'], ['admin/families', 'Families'], ['admin/users', 'Users'], ['admin/settings', 'Settings'], ['admin/audit', 'Activity']];
+//   trusted friend → Home, Available weeks, My bookings, Maintenance, House guide, My details
+//   family member  → Home, Calendar, Enquiries, Bookings, Service charge, Upgrades, Maintenance, House guide, Family & friends
+//   family admin   → the same plus Account (and setting plans for the family's weeks from the calendar, managing people)
+//   site admin     → a separate login with no family: Home, Calendar, Upgrades, Maintenance, House guide and the admin pages
+const ADMIN_PAGES = [['admin/overview', 'Payments'], ['admin/service-charge', 'Service charge'], ['admin/weeks', 'Weeks'], ['admin/lets', 'Lets'], ['admin/families', 'Families'], ['admin/users', 'Users'], ['admin/settings', 'Settings'], ['admin/audit', 'Activity']];
 const isSiteRole = () => S.me.user.role === 'site_admin';
 // Who is logged in: name, role and household (site admins have no household). Escaped, ready for HTML.
 function whoAmI() {
@@ -98,12 +99,12 @@ function whoAmI() {
   return { name: esc(u.name), role: esc(role), house: esc(house), nameIsRole };
 }
 const NAV_ICON = { home: 'house', calendar: 'calendar-days', weeks: 'calendar-range', enquiries: 'messages-square', bookings: 'bed-double', account: 'wallet', people: 'users', admin: 'settings',
-  'admin/overview': 'banknote', 'admin/expenditure': 'receipt', expenditure: 'receipt', maintenance: 'wrench', guide: 'book-open', 'admin/weeks': 'calendar-range', 'admin/lets': 'coins', 'admin/families': 'users-round', 'admin/users': 'user-cog', 'admin/settings': 'settings', 'admin/audit': 'history' };
+  'admin/overview': 'banknote', 'admin/service-charge': 'receipt', 'service-charge': 'receipt', upgrades: 'lightbulb', maintenance: 'wrench', guide: 'book-open', 'admin/weeks': 'calendar-range', 'admin/lets': 'coins', 'admin/families': 'users-round', 'admin/users': 'user-cog', 'admin/settings': 'settings', 'admin/audit': 'history' };
 function navTabs() {
-  if (isSiteRole()) return [['home', 'Overview'], ['calendar', 'Calendar'], ['guide', 'House guide'], ['maintenance', 'Maintenance'], ...ADMIN_PAGES];
+  if (isSiteRole()) return [['home', 'Overview'], ['calendar', 'Calendar'], ['upgrades', 'Upgrades'], ['maintenance', 'Maintenance'], ['guide', 'House guide'], ...ADMIN_PAGES];
   const friend = S.me.user.role === 'friend', fam = isFam();
   return [['home', 'Overview'], ['calendar', friend ? 'Available weeks' : 'Calendar'], fam && ['enquiries', 'Enquiries', S.me.enquiryCount],
-    ['bookings', friend ? 'My bookings' : 'Bookings'], isFamAdmin() && ['account', 'Account'], isFamAdmin() && ['expenditure', 'Expenditure'], ['guide', 'House guide'], ['maintenance', 'Maintenance'], ['people', friend ? 'My details' : 'Family & friends'], isSite() && ['admin', 'Site admin']].filter(Boolean);
+    ['bookings', friend ? 'My bookings' : 'Bookings'], isFamAdmin() && ['account', 'Account'], fam && ['service-charge', 'Service charge'], fam && ['upgrades', 'Upgrades'], ['maintenance', 'Maintenance'], ['guide', 'House guide'], ['people', friend ? 'My details' : 'Family & friends'], isSite() && ['admin', 'Site admin']].filter(Boolean);
 }
 function renderShell(tab) {
   const u = S.me.user, tabs = navTabs(), site = esc(S.me.settings.site_name);
@@ -232,7 +233,7 @@ async function viewHome(main) {
   if (h.admin_home) return adminHome(main, h, greet);
   const weekRow = (x, right) => `<button class="list-row" data-open-week="${x.week_id}" data-year="${x.year}"><span class="grow" style="min-width:0"><b>${esc(x.title)}</b><div class="tiny muted">${esc(x.detail || '')}</div></span>${right || ''}</button>`;
   const links = friend ? [['#/calendar', 'Browse available weeks'], ['#/bookings', 'My bookings'], ['#/guide', 'House guide'], ['#/maintenance', 'Report a maintenance issue'], ['#/people', 'Update my details']]
-    : [['#/calendar', 'Browse the calendar'], ['#/weeks', isFamAdmin() ? 'Set your household’s weeks' : 'Your household’s weeks'], ['#/enquiries', 'Enquiries'], ['#/guide', 'House guide'], ['#/maintenance', 'Report a maintenance issue'], ['#/people', isFamAdmin() ? 'Add family or friends' : 'Add a trusted friend'], ...(isFamAdmin() ? [['#/account', 'Household account']] : [])];
+    : [['#/calendar', 'Browse the calendar'], ['#/weeks', isFamAdmin() ? 'Set your household’s weeks' : 'Your household’s weeks'], ['#/enquiries', 'Enquiries'], ['#/upgrades', 'Suggest an upgrade'], ['#/maintenance', 'Report a maintenance issue'], ['#/guide', 'House guide'], ['#/people', isFamAdmin() ? 'Add family or friends' : 'Add a trusted friend'], ...(isFamAdmin() ? [['#/account', 'Household account']] : [])];
   const f = h.family, c = f && f.lets;
   const going = h.upcoming.find(x => ['using', 'booked', 'reserved'].includes(x.plan)) || null;
   const upTag = x => x.plan === 'using' || x.plan === 'booked' ? '<span class="tag booked">Going</span>' : x.plan === 'reserved' ? '<span class="tag pending">Awaiting payment</span>' : x.plan === 'let' ? '<span class="tag booked">Let</span>' : x.plan === 'released' ? '<span class="tag available">Released</span>' : x.plan === 'swap' ? '<span class="tag outline">Will swap</span>' : '<span class="tag">Undecided</span>';
@@ -750,88 +751,124 @@ function bindProfile(main) {
   $('#pw', main).onsubmit = guard(async e => { e.preventDefault(); await api('/me', { method: 'PUT', body: formData(e.target) }); e.target.reset(); toast('Password changed'); });
 }
 
-// ------------------------------------------------------------ proposed expenditure
-// expenditure proposals are one-off costs; the site admin allocates each to a year, then records the decision and how it's paid for
-const FUNDING = { budget: y => `added to the ${y} service charge`, reserves: y => `paid from the bank balance in ${y}`, levy: () => 'charged to households by shares', reassign: y => `moved from another ${y} budget line` };
-function proposalCard(p, admin) {
-  const st = { proposed: '<span class="badge amber">Waiting for a decision</span>', accepted: '<span class="badge green">Accepted</span>', rejected: '<span class="badge">Not accepted</span>', withdrawn: '<span class="badge">Withdrawn</span>' }[p.status];
-  const decided = p.status === 'accepted' ? `Accepted at ${esc(p.meeting)}: ${(FUNDING[p.funding] || FUNDING.budget)(p.year)}${p.funding_detail ? ` (${esc(p.funding_detail)})` : ''}.`
-    : p.status === 'rejected' ? `Not accepted at ${esc(p.meeting)}.` : p.status === 'withdrawn' ? `Withdrawn on ${asked(p.decided_at)}.` : '';
-  const alloc = p.status !== 'proposed' ? '' : p.year ? ` · <b>allocated to ${p.year}</b>` : ' · not allocated to a year yet';
-  const btns = admin && p.status === 'proposed' ? `<button class="btn sm green" data-accept-out="${p.id}">Accept…</button><button class="btn sm" data-edit-out="${p.id}">Edit or allocate…</button><button class="btn sm" data-reject-out="${p.id}">Reject…</button>`
-    : [p.can_edit && `<button class="btn sm" data-edit-out="${p.id}">Edit…</button>`, p.can_withdraw && `<button class="btn sm danger" data-withdraw-out="${p.id}">Withdraw</button>`].filter(Boolean).join('');
-  return `<div class="card flat" style="padding:16px"><div class="row between" style="align-items:flex-start;gap:12px"><div><b>${esc(p.title)}</b> <span class="num">· ${money(p.amount, 2)}</span>
-      <div class="tiny muted" style="margin-top:2px">One-off cost${alloc} · proposed by ${esc(p.by)}${p.family_id ? `, ${esc(p.family)} family,` : ''} on ${asked(p.created_at)}</div></div>${st}</div>
-    ${p.details ? `<div class="small" style="margin-top:8px;white-space:pre-line">${esc(p.details)}</div>` : ''}
-    ${decided ? `<div class="small" style="margin-top:8px">${decided}${p.decision_note ? ` <span class="muted">${esc(p.decision_note)}</span>` : ''}</div>` : ''}
-    ${btns ? `<div class="row" style="margin-top:10px;gap:8px">${btns}</div>` : ''}</div>`;
+// ------------------------------------------------------------ one-off costs: upgrades and maintenance quotes
+// Upgrades the families suggest and quotes for maintenance wait on the Service charge page until the site admin adopts them:
+// now, paid from the bank balance, or put forward for a year's service charge. An adopted cost can be bumped or cancelled.
+const COST_KIND = { upgrade: 'Upgrade', maintenance: 'Maintenance' };
+const costOrigin = c => c.kind === 'maintenance' ? `Maintenance${c.issue ? `: “${esc(c.issue.title)}”` : ''}${c.quote_from ? ` · quote from ${esc(c.quote_from)}` : ''}`
+  : `Suggested by ${esc(c.by)}${c.family ? `, ${esc(c.family)} family` : ''}${c.quote_from ? ` · price from ${esc(c.quote_from)}` : ''}`;
+const costAmount = c => c.amount != null ? money(c.amount, 2) : 'cost not known yet';
+const lastEvent = c => { const h = c.history[c.history.length - 1]; return h ? `${asked(h.at)}${h.by ? `, ${esc(h.by)}` : ''}: ${esc(h.text)}` : ''; };
+function costCard(c) {
+  const btns = [c.can_adopt && `<button class="btn sm green" data-adopt="${c.id}">Adopt…</button>`, c.can_bump && `<button class="btn sm" data-bump="${c.id}">Bump or cancel…</button>`,
+    c.can_edit && `<button class="btn sm" data-cost-edit="${c.id}">Edit…</button>`, c.can_cancel && c.status === 'waiting' && `<button class="btn sm" data-cost-cancel="${c.id}">Cancel…</button>`,
+    c.can_reinstate && `<button class="btn sm" data-reinstate="${c.id}">Reinstate</button>`, c.can_withdraw && `<button class="btn sm danger" data-cost-withdraw="${c.id}">Withdraw</button>`].filter(Boolean).join('');
+  return `<div class="card flat cost" data-cost="${c.id}" style="padding:16px"><div class="row between" style="align-items:flex-start;gap:12px"><div style="min-width:0"><b>${esc(c.title)}</b> <span class="num">· ${costAmount(c)}</span>
+      <div class="tiny muted" style="margin-top:2px">${costOrigin(c)} · ${asked(c.created_at)}</div></div>
+      <div class="row" style="gap:6px;justify-content:flex-end;flex-wrap:wrap"><span class="tag">${COST_KIND[c.kind]}</span><span class="badge ${c.tone}">${esc(c.label)}</span></div></div>
+    ${c.details ? `<div class="small" style="margin-top:8px;white-space:pre-line">${guideText(c.details)}</div>` : ''}
+    ${c.history.length ? `<div class="tiny muted" style="margin-top:8px">${lastEvent(c)}${c.history.length > 1 ? ` · <a href="#" data-cost-history="${c.id}">History (${c.history.length})</a>` : ''}</div>` : ''}
+    ${btns ? `<div class="row" style="margin-top:10px;gap:8px;flex-wrap:wrap">${btns}</div>` : ''}</div>`;
 }
-// what a proposal is: the same fields when proposing and editing (the site admin also allocates it to a year)
-const proposalFields = (p, years) => `<div class="field"><label>What is it for?</label><input name="title" required maxlength="200" value="${esc(p.title || '')}" placeholder="e.g. Replace the water supply pipe"></div>
-  <div class="field"><label>Estimated cost (£)</label><input name="amount" type="number" min="0" step="0.01" required value="${p.amount ?? ''}"></div>
-  ${years ? `<div class="field"><label>Allocated to</label><select name="year"><option value="">Not allocated to a year yet</option>${years.map(y => `<option value="${y}" ${y === p.year ? 'selected' : ''}>${y}</option>`).join('')}</select></div>` : ''}
-  <div class="field"><label>Details (optional)</label><textarea name="details" rows="4" placeholder="Why it’s needed, who quoted, how long the quote is valid…">${esc(p.details || '')}</textarea></div>`;
-async function viewExpenditure(main) {
-  const d = await api('/expenditure?year=' + S.year), b = d.budget, open = d.proposals.filter(p => p.status === 'proposed'), done = d.proposals.filter(p => p.status !== 'proposed');
-  main.innerHTML = `<h1>Expenditure</h1><p class="muted" style="max-width:75ch">Propose a one-off cost: a new fridge, say, or a quote for maintenance work that’s been discussed. The site admin allocates each proposal to a year, and the syndicate accepts or rejects it at the AGM or a board meeting. Accepted costs are added to that year’s service charge or paid from the bank balance (or charged to households by shares, or moved from another budget line).</p>
+// what a cost is: the same fields when suggesting, adding and editing
+const costFields = (c, o = {}) => `<div class="field"><label>${o.upgrade ? 'What would you like?' : 'What is it?'}</label><input name="title" required maxlength="200" value="${esc(c.title || '')}" placeholder="${o.upgrade ? 'e.g. A hot tub, a new coffee grinder' : 'e.g. Replace the water supply pipe'}"></div>
+  ${o.kind ? '<div class="field"><label>Kind</label><select name="kind"><option value="maintenance">Maintenance (works, repairs)</option><option value="upgrade">Upgrade</option></select></div>' : ''}
+  <div class="grid-2" style="gap:12px"><div class="field"><label>${o.upgrade ? 'Rough cost (£, if you know it)' : 'Cost (£)'}</label><input name="amount" type="number" min="0" step="0.01" value="${c.amount ?? ''}" ${o.need ? 'required' : ''}></div>
+    <div class="field"><label>${o.upgrade ? 'Price from (optional)' : 'Quote from (optional)'}</label><input name="quote_from" maxlength="200" value="${esc(c.quote_from || '')}" placeholder="${o.upgrade ? 'e.g. John Lewis' : 'e.g. Highland Plumbing'}"></div></div>
+  <div class="field"><label>Details (optional)</label><textarea name="details" rows="3" placeholder="${o.upgrade ? 'Why, where it would go, a link to one you like…' : 'What it covers, how long the quote is valid…'}">${esc(c.details || '')}</textarea></div>`;
+// the actions on cost cards (and on a one-off line in the Service charge table): adopt, bump or cancel, edit, history
+function bindCosts(root, d, reload, more = []) {
+  const find = id => d.costs.find(c => c.id == id) || more.find(c => c.id == id);
+  // a change to a year whose charges are issued: offer to re-issue them. If a rounded charge per week is set on Payments, the
+  // re-issue uses the rate the budget now works out at (it can be rounded again on Payments).
+  const reissue = async rs => { for (const { year: y, fixed, calc } of rs || []) {
+    const refix = fixed != null && Math.abs(fixed - calc) > 0.005;
+    if (!confirm(refix ? `The ${y} service charges are already issued, at ${money(fixed, 2)} a week. With this change the ${y} budget works out at ${money(calc, 2)} a week. Re-issue the ${y} charges at ${money(calc, 2)} a week? (You can round it on Payments and issue again.)`
+      : `The ${y} service charges are already issued, and the ${y} budget has changed. Re-issue them now so households are charged the new amount?`)) continue;
+    if (refix) await api('/admin/budget-year/' + y, { method: 'PUT', body: { rate_per_week: '' } });
+    await api('/admin/budget/generate', { body: { year: y } }); toast(`${y} service charges re-issued`); } };
+  const yearOpts = sel => d.years.map(y => `<option value="${y}" ${y === sel ? 'selected' : ''}>${y}${d.issued.includes(y) ? ' (charges issued)' : ''}</option>`).join('');
+  root.querySelectorAll('[data-adopt]').forEach(x => x.onclick = () => { const c = find(x.dataset.adopt), bank = d.bank;
+    const m = openModal(`<form id="adf"><h2>Adopt “${esc(c.title)}”</h2><p class="small muted" style="margin-top:0">${costOrigin(c)} · ${costAmount(c)}</p>
+      <div class="field"><label>How</label><select name="how"><option value="bank">Carry it out now, paid from the bank balance</option><option value="charge">Put it forward for a year’s service charge, for the AGM to agree</option></select></div>
+      <div class="grid-2" style="gap:12px"><div class="field"><label>Amount (£)</label><input name="amount" type="number" min="0.01" step="0.01" required value="${c.amount ?? ''}"></div>
+        <div class="field"><label>Year</label><select name="year"></select></div></div>
+      <p class="tiny muted" id="adhint" style="margin:-4px 0 12px"></p>
+      <div class="field"><label>Note (optional)</label><input name="note" maxlength="300" placeholder="e.g. Agreed by the board, 1 Dec 2026"></div>
+      <div class="row" style="justify-content:flex-end;gap:8px"><button type="button" class="btn" data-close>Cancel</button><button class="btn green">Adopt</button></div></form>`);
+    const f = $('#adf', m);
+    const sync = fresh => { const how = f.how.value; if (fresh) f.year.innerHTML = yearOpts(how === 'bank' ? d.now_year : d.forward_year); const y = Number(f.year.value);
+      $('#adhint', m).textContent = how === 'bank' ? `A line in the ${y} budget paid from the bank balance: nothing is charged. A year’s bank-balance lines can’t add up to more than the latest bank balance${bank ? ` (${money(bank.amount, 2)} on ${dfmt(bank.as_of, { day: 'numeric', month: 'short', year: 'numeric' })})` : ' (none is recorded yet: add it on Payments)'}.`
+        : `A line in the ${y} budget, so the service charge goes up. The AGM agrees the budget before the charges are issued.${d.issued.includes(y) ? ` The ${y} charges are already issued, so you’ll be asked whether to re-issue them.` : ''}`; };
+    f.how.onchange = () => sync(true); f.year.onchange = () => sync(false); sync(true);
+    f.onsubmit = guard(async e => { e.preventDefault(); const r = await api(`/admin/costs/${c.id}/adopt`, { body: formData(f) }); closeOverlay(); toast('Adopted'); await reissue(r.reissue); reload(); });
+  });
+  // an adopted cost: back to the waiting list, to another year, or cancelled; a waiting one: cancelled
+  const change = (c, adopted) => {
+    const m = openModal(`<form id="bcf"><h2>${adopted ? 'Bump or cancel' : 'Cancel'} “${esc(c.title)}”</h2><p class="small muted" style="margin-top:0">${costAmount(c)} · ${esc(c.label)}.</p>
+      ${adopted ? `<div class="field"><label>What happens to it</label><select name="action"><option value="waiting">Bump it back to the waiting list</option>${d.years.filter(y => y !== c.year).map(y => `<option value="${y}">Move it to ${y}</option>`).join('')}<option value="cancel">Cancel it</option></select></div>` : '<input type="hidden" name="action" value="cancel">'}
+      <div class="field"><label>Reason (optional)</label><input name="note" maxlength="300" placeholder="e.g. The hot water tank has to come first"></div>
+      <div class="row" style="justify-content:flex-end;gap:8px"><button type="button" class="btn" data-close>Keep it</button><button class="btn ${adopted ? 'primary' : 'danger'}">${adopted ? 'Save' : 'Cancel it'}</button></div></form>`);
+    $('#bcf', m).onsubmit = guard(async e => { e.preventDefault(); const v = formData(e.target);
+      const r = v.action === 'cancel' ? await api(`/admin/costs/${c.id}/cancel`, { body: { note: v.note } }) : await api(`/admin/costs/${c.id}/bump`, { body: { to: v.action === 'waiting' ? null : v.action, note: v.note } });
+      closeOverlay(); toast(v.action === 'cancel' ? 'Cancelled' : v.action === 'waiting' ? 'Bumped back to the waiting list' : `Moved to ${v.action}`); await reissue(r.reissue); reload(); });
+  };
+  root.querySelectorAll('[data-bump]').forEach(x => x.onclick = () => change(find(x.dataset.bump), true));
+  root.querySelectorAll('[data-cost-cancel]').forEach(x => x.onclick = () => change(find(x.dataset.costCancel), false));
+  root.querySelectorAll('[data-reinstate]').forEach(x => x.onclick = guard(async () => { await api(`/admin/costs/${x.dataset.reinstate}/reinstate`, { body: {} }); toast('Waiting again'); reload(); }));
+  root.querySelectorAll('[data-cost-withdraw]').forEach(x => x.onclick = guard(async () => { if (!confirm('Withdraw this suggestion?')) return; await api(`/costs/${x.dataset.costWithdraw}/withdraw`, { body: {} }); toast('Withdrawn'); reload(); }));
+  root.querySelectorAll('[data-cost-edit]').forEach(x => x.onclick = () => { const c = find(x.dataset.costEdit);
+    const m = openModal(`<form id="cef"><h2>Edit “${esc(c.title)}”</h2>${costFields(c, { upgrade: c.kind === 'upgrade', need: c.status === 'adopted' })}
+      ${c.status === 'adopted' ? `<p class="tiny muted" style="margin-top:-4px">Its line in the ${c.year} budget changes too.</p>` : ''}
+      <div class="row" style="justify-content:flex-end;gap:8px"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Save</button></div></form>`);
+    $('#cef', m).onsubmit = guard(async e => { e.preventDefault(); const r = await api('/costs/' + c.id, { method: 'PUT', body: formData(e.target) }); closeOverlay(); toast('Saved'); await reissue(r.reissue); reload(); }); });
+  root.querySelectorAll('[data-cost-history]').forEach(x => x.onclick = e => { e.preventDefault(); const c = find(x.dataset.costHistory);
+    openModal(`<h2>History of “${esc(c.title)}”</h2><div class="stack">${c.history.map(h => `<div class="small"><b>${asked(h.at)}</b>${h.by ? ` · ${esc(h.by)}` : ''}<div>${esc(h.text)}</div></div>`).join('')}</div>
+      <div class="row" style="justify-content:flex-end;margin-top:16px"><button class="btn" data-close>Close</button></div>`); });
+  const add = $('[data-add-cost]', root); if (add) add.onclick = () => {
+    const m = openModal(`<form id="acf"><h2>Add a cost</h2><p class="small muted" style="margin-top:0">A one-off cost to wait with the others: works from a quote, say, or an upgrade.</p>${costFields({}, { kind: true })}
+      <div class="row" style="justify-content:flex-end;gap:8px"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Add</button></div></form>`);
+    $('#acf', m).onsubmit = guard(async e => { e.preventDefault(); await api('/costs', { body: formData(e.target) }); closeOverlay(); toast('Added: waiting to be adopted'); reload(); }); };
+}
+// costs waiting to be adopted (any year), and those cancelled in the last year
+const waitingCosts = (d, admin) => { const waiting = d.costs.filter(c => c.status === 'waiting'), gone = d.costs.filter(c => c.status === 'cancelled'), known = waiting.filter(c => c.amount != null);
+  return `<section class="stack"><div class="row between" style="gap:12px"><h2 style="margin:0">Waiting to be adopted</h2>${admin ? `<button class="btn" data-add-cost>${icon('plus')}Add a cost…</button>` : ''}</div>
+    <p class="muted small" style="margin:0">Upgrades the families suggested and quotes for maintenance${known.length ? `: ${waiting.length} waiting, ${money(known.reduce((a, c) => a + c.amount, 0), 2)} in all` : ''}. ${admin ? 'Adopt one now (paid from the bank balance) or put it forward for a year’s service charge; or leave it waiting.' : 'The site admin adopts them now, paid from the bank balance, or puts them forward for a year’s service charge.'}</p>
+    ${waiting.map(costCard).join('') || '<div class="card flat empty small">Nothing waiting</div>'}
+    ${gone.length ? `<details class="card flat" style="padding:12px 16px"><summary class="small" style="cursor:pointer">Cancelled in the last year (${gone.length})</summary><div class="stack" style="margin-top:12px">${gone.map(costCard).join('')}</div></details>` : ''}</section>`; };
+// a one-off line in a year's service charge: where it came from, and whether it's still only put forward for the AGM
+const lineCost = i => i.cost ? `<div class="tiny muted" style="margin-top:2px">${costOrigin(i.cost)} · <span class="badge ${i.cost.tone}">${i.cost.tone === 'blue' ? 'Put forward: for the AGM' : 'Adopted'}</span></div>` : '';
+// the year's service charge in figures
+const chargeCard = (b, admin) => `<div class="card"><h3>Service charge ${esc(b.label || String(b.year))}</h3>
+  <dl class="kv" style="grid-template-columns:1fr auto"><dt>Added to the service charge</dt><dd class="num r">${money(b.charge_total, 2)}</dd><dt>÷ ${b.units} weeks (shares)</dt><dd class="num r">${money(b.charge_total / (b.units || 1), 2)} a week</dd>
+    <dt>Charge per week</dt><dd class="num r">${money(b.rate, 2)}</dd><dt>Paid from the bank balance</dt><dd class="num r">${money(b.bank_total, 2)}</dd>
+    <dt>Status</dt><dd class="r">${b.generated ? '<span class="badge green">Issued</span>' : '<span class="badge amber">Not issued</span>'}</dd></dl>
+  ${admin ? '<a class="btn block" href="#/admin/overview" id="toPay" style="margin-top:14px">Issue and record payments →</a>' : ''}</div>`;
+const SC_INTRO = 'What the service charge pays for each year, line by line. One-off costs (upgrades the families suggest and quotes for maintenance) wait below until the site admin adopts them: now, paid from the bank balance, or put forward for a year’s service charge, which the AGM agrees. An adopted cost can still be bumped or cancelled if something more urgent comes up.';
+async function viewServiceCharge(main) {
+  const [b, d] = await Promise.all([api('/service-charge?year=' + S.year), api('/costs')]);
+  main.innerHTML = `<h1>Service charge</h1><p class="muted" style="max-width:75ch">${SC_INTRO}</p>
     ${pageBar(yearPicker())}
-    <div class="grid-2" style="align-items:start">
-    <section class="stack">${d.can_propose ? `<form class="card" id="opf"><h3>Propose a one-off cost</h3>${proposalFields({})}
-        <button class="btn primary">Propose</button></form>` : ''}
-      <h2 style="margin:8px 0 0">Waiting for a decision</h2>${open.map(p => proposalCard(p)).join('') || '<div class="card flat empty small">Nothing waiting</div>'}
-      ${done.length ? `<h2 style="margin:8px 0 0">Decided</h2>${done.map(p => proposalCard(p)).join('')}` : ''}</section>
-    <section class="stack"><h2 style="margin:0">Agreed expenditure ${b.year}</h2>
-      ${b.items.length ? `<div class="table-wrap"><table><thead><tr><th>Item</th><th>Paid from</th><th class="r">Amount</th></tr></thead><tbody>${b.items.map(i => `<tr><td>${esc(i.description)}${i.notes ? `<div class="tiny muted">${esc(i.notes)}</div>` : ''}</td><td class="small muted">${i.funding === 'bank' ? 'Bank balance' : 'Service charge'}</td><td class="r num">${money(i.amount, 2)}</td></tr>`).join('')}</tbody>
-        <tfoot><tr><td colspan="2">Added to the service charge</td><td class="r num">${money(b.charge_total, 2)}</td></tr>${b.bank_total > 0.005 ? `<tr><td colspan="2">Paid from the bank balance</td><td class="r num">${money(b.bank_total, 2)}</td></tr>` : ''}<tr><td colspan="2">Total</td><td class="r num">${money(b.total, 2)}</td></tr></tfoot></table></div>
-        <p class="small muted" style="margin:0">Service charge ${money(b.rate, 2)} per share${b.generated ? ', issued' : ', not issued yet'}.</p>` : `<div class="card flat empty small">No expenditure agreed for ${b.year} yet</div>`}</section></div>`;
-  const reload = () => viewExpenditure(main);
-  bindYears(main, reload);
-  const f = $('#opf', main); if (f) f.onsubmit = guard(async e => { e.preventDefault(); await api('/expenditure', { body: formData(f) }); toast('Proposed. The site admin has been told'); reload(); });
-  bindProposals(main, reload);
+    ${b.items.length ? `<div class="table-wrap" style="margin-bottom:24px"><table><thead><tr><th>Item</th><th>Type</th><th>Paid from</th><th class="r">Amount</th></tr></thead><tbody>
+      ${b.items.map(i => `<tr><td>${esc(i.description)}${i.cost ? lineCost(i) : i.notes ? `<div class="tiny muted">${esc(i.notes)}</div>` : ''}</td><td class="small muted">${esc(i.category || '')}</td><td class="small muted">${i.funding === 'bank' ? 'Bank balance' : 'Service charge'}</td><td class="r num">${money(i.amount, 2)}</td></tr>`).join('')}</tbody>
+      <tfoot><tr><td colspan="3">Added to the service charge</td><td class="r num">${money(b.charge_total, 2)}</td></tr>${b.bank_total > 0.005 ? `<tr><td colspan="3">Paid from the bank balance</td><td class="r num">${money(b.bank_total, 2)}</td></tr>` : ''}<tr><td colspan="3">Total</td><td class="r num">${money(b.total, 2)}</td></tr></tfoot></table></div>`
+      : `<div class="card flat empty small" style="margin-bottom:24px">No service charge set for ${b.year} yet</div>`}
+    <div class="grid-2" style="align-items:start">${chargeCard(b)}${waitingCosts(d)}</div>`;
+  const reload = () => viewServiceCharge(main);
+  bindYears(main, reload); bindCosts(main, d, reload);
 }
-function bindProposals(root, reload) {
-  root.querySelectorAll('[data-withdraw-out]').forEach(x => x.onclick = guard(async () => { if (!confirm('Withdraw this proposal?')) return; await api(`/expenditure/${x.dataset.withdrawOut}/withdraw`, { body: {} }); toast('Withdrawn'); reload(); }));
-  // edit what it is and the cost; the site admin also allocates it to a year. With no id, the site admin adds one.
-  const edit = id => async () => {
-    const d = await api('/expenditure'), p = id ? d.proposals.find(x => x.id == id) : {}, admin = isSite();
-    const m = openModal(`<form id="epf"><h2>${id ? `${admin ? 'Edit or allocate' : 'Edit'} “${esc(p.title)}”` : 'Add a one-off cost'}</h2>
-      ${id ? `<p class="small muted" style="margin-top:0">Proposed by ${esc(p.by)}${p.family_id ? `, ${esc(p.family)} family,` : ''} on ${asked(p.created_at)}.</p>` : '<p class="small muted" style="margin-top:0">It waits for a decision at the AGM or a board meeting, like the families’ proposals.</p>'}
-      ${proposalFields(p, admin ? d.alloc_years : null)}
-      <div class="row" style="justify-content:flex-end;gap:8px"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">${id ? 'Save' : 'Add'}</button></div></form>`);
-    $('#epf', m).onsubmit = guard(async e => { e.preventDefault(); await api(id ? `/expenditure/${id}` : '/expenditure', { method: id ? 'PUT' : 'POST', body: formData(e.target) }); closeOverlay(); toast(id ? 'Saved' : 'Added'); reload(); });
-  };
-  root.querySelectorAll('[data-edit-out]').forEach(x => x.onclick = guard(edit(x.dataset.editOut)));
-  const add = $('[data-add-out]', root); if (add) add.onclick = guard(edit(null));
-  const decide = (id, accept) => async () => {
-    const d = await api('/expenditure'), p = d.proposals.find(x => x.id == id), years = [...new Set([...(p.year ? [p.year] : []), ...d.alloc_years])].sort(), y0 = p.year || d.default_year;
-    const m = openModal(`<form id="dcf"><h2>${accept ? 'Accept' : 'Reject'} “${esc(p.title)}”</h2>
-      <p class="small muted" style="margin-top:0">One-off cost of ${money(p.amount, 2)} proposed by ${esc(p.by)}${p.family_id ? `, ${esc(p.family)} family` : ''}${p.year ? `, allocated to ${p.year}` : ''}.</p>
-      <div class="field"><label>Decided at</label><input name="meeting" required placeholder="e.g. AGM, 12 June 2027"></div>
-      ${accept ? `<div class="grid-2" style="gap:12px"><div class="field"><label>Agreed amount (£)</label><input name="amount" type="number" min="0" step="0.01" value="${p.amount}" required></div>
-        <div class="field"><label>Allocated to</label><select name="year">${years.map(y => `<option value="${y}" ${y === y0 ? 'selected' : ''}>${y}</option>`).join('')}</select></div></div>
-      <div class="field"><label>How it’s paid for</label><select name="funding">
-        <option value="budget">Add it to the service charge (the charge goes up)</option>
-        <option value="reserves">Pay it from the bank balance (nothing charged)</option>
-        <option value="levy">Charge households now, split by shares</option>
-        <option value="reassign">Move it from another budget line (service charge unchanged)</option></select></div>
-      <div class="field" id="fromf" style="display:none"><label>Take it from</label><select name="from_item_id"></select></div>
-      <p class="tiny muted" id="fundhint" style="margin:-4px 0 12px"></p>` : ''}
-      <div class="field"><label>Note (optional)</label><input name="note" placeholder="${accept ? 'e.g. Ben to order it before Easter' : 'e.g. Revisit next year'}"></div>
-      <div class="row" style="justify-content:flex-end;gap:8px"><button type="button" class="btn" data-close>Cancel</button><button class="btn ${accept ? 'primary' : 'danger'}">${accept ? 'Accept' : 'Reject'}</button></div></form>`);
-    const form = $('#dcf', m);
-    if (accept) {
-      const sync = async () => { const v = form.funding.value, y = form.year.value; $('#fromf', m).style.display = v === 'reassign' ? '' : 'none';
-        $('#fundhint', m).textContent = { budget: `A one-off line in the ${y} budget, on the service charge. If the ${y} charges are already issued, you’ll be asked whether to re-issue them.`, levy: 'Each household’s share goes on its account now, as a one-off charge, and its admins are told.', reserves: `A one-off line in the ${y} budget paid from the bank balance: nothing is charged. A year’s bank-balance lines can’t total more than the latest bank balance.`, reassign: `A one-off line in the ${y} budget, with the same amount taken off the line you choose.` }[v];
-        if (v === 'reassign') { const items = (await api('/admin/budget?year=' + y)).items; form.from_item_id.innerHTML = items.map(i => `<option value="${i.id}">${esc(i.description)} · ${money(i.amount, 2)}</option>`).join('') || '<option value="">No budget lines for that year</option>'; } };
-      form.funding.onchange = sync; form.year.onchange = sync; sync();
-    }
-    form.onsubmit = guard(async e => { e.preventDefault(); const r = await api(`/admin/expenditure/${id}/decide`, { body: { ...formData(form), accept } }); closeOverlay();
-      toast(accept ? 'Accepted' : 'Rejected. The family has been told');
-      if (r.reissue && confirm(`Added to the ${r.reissue} budget. The ${r.reissue} service charges are already issued. Re-issue them now so households are charged for it?`)) { await api('/admin/budget/generate', { body: { year: r.reissue } }); toast(`${r.reissue} service charges re-issued`); }
-      reload(); });
-  };
-  root.querySelectorAll('[data-accept-out]').forEach(x => x.onclick = guard(decide(x.dataset.acceptOut, true)));
-  root.querySelectorAll('[data-reject-out]').forEach(x => x.onclick = guard(decide(x.dataset.rejectOut, false)));
+async function viewUpgrades(main) {
+  const d = await api('/costs'), ups = d.costs.filter(c => c.kind === 'upgrade');
+  const waiting = ups.filter(c => c.status === 'waiting'), adopted = ups.filter(c => c.status === 'adopted'), gone = ups.filter(c => c.status === 'cancelled' || c.status === 'withdrawn');
+  main.innerHTML = `<h1>Upgrades</h1><p class="muted" style="max-width:75ch">Suggest something that would make the house better: a new fridge, a hot tub, a new coffee grinder. It waits on the Service charge page until the site admin adopts it: now, paid from the bank balance, or put forward for a year’s service charge for the AGM to agree. For repairs, report the problem on the Maintenance page.</p>
+    <div class="grid-2" style="align-items:start">
+      <section class="stack">${d.can_suggest ? `<form class="card" id="upf"><h3>${icon('lightbulb')} Suggest an upgrade</h3>${costFields({}, { upgrade: true })}<button class="btn primary">Suggest</button></form>` : ''}</section>
+      <section class="stack"><h2 style="margin:0">Waiting</h2>${waiting.map(costCard).join('') || '<div class="card flat empty small">No suggestions waiting</div>'}
+        ${adopted.length ? `<h2 style="margin:8px 0 0">Adopted</h2>${adopted.map(costCard).join('')}` : ''}
+        ${gone.length ? `<h2 style="margin:8px 0 0">Cancelled and withdrawn</h2>${gone.map(costCard).join('')}` : ''}</section></div>`;
+  const reload = () => viewUpgrades(main);
+  const f = $('#upf', main); if (f) f.onsubmit = guard(async e => { e.preventDefault(); await api('/costs', { body: formData(f) }); toast(isSite() ? 'Added: waiting to be adopted' : 'Suggested. The site admin has been told'); reload(); });
+  bindCosts(main, d, reload);
 }
 
 // ------------------------------------------------------------ maintenance
@@ -859,15 +896,15 @@ async function formWithPhoto(form) {
 }
 function issueCard(i, d) {
   const meta = [esc(i.area), i.urgency !== 'urgent' && d.urgency[i.urgency], `reported by ${esc(i.by)}${i.family ? `, ${esc(i.family)} family,` : i.by_friend ? ' (trusted friend)' : ''} on ${asked(i.created_at)}`].filter(Boolean).join(' · ');
-  const ps = i.proposal && { proposed: 'waiting for a decision', accepted: `accepted${i.proposal.year ? ` for ${i.proposal.year}` : ''}`, rejected: 'not accepted', withdrawn: 'withdrawn' }[i.proposal.status];
-  const btns = [i.can_update && `<button class="btn sm" data-iss-status="${i.id}">Update…</button>`, i.can_propose && `<button class="btn sm" data-iss-propose="${i.id}">Propose as expenditure…</button>`,
+  const q = i.cost, requote = q && q.status === 'waiting';
+  const btns = [i.can_update && `<button class="btn sm" data-iss-status="${i.id}">Update…</button>`, i.can_quote && `<button class="btn sm" data-iss-quote="${i.id}">${requote ? 'Update the quote…' : 'Add a quote…'}</button>`,
     i.can_edit && `<button class="btn sm" data-iss-edit="${i.id}">Edit…</button>`, i.can_withdraw && `<button class="btn sm danger" data-iss-withdraw="${i.id}">Withdraw</button>`].filter(Boolean).join('');
   return `<div class="card flat issue" style="padding:16px"><div class="row between" style="align-items:flex-start;gap:12px"><div style="min-width:0"><b>${esc(i.title)}</b><div class="tiny muted" style="margin-top:2px">${meta}</div></div>
       <div class="row" style="gap:6px;justify-content:flex-end;flex-wrap:wrap">${i.urgency === 'urgent' ? '<span class="badge red">Urgent</span>' : ''}<span class="badge ${ISSUE_BADGE[i.status]}">${d.statuses[i.status]}</span></div></div>
     ${i.details ? `<div class="small" style="margin-top:8px;white-space:pre-line">${esc(i.details)}</div>` : ''}
     ${i.photo ? `<a href="${i.photo}" target="_blank" rel="noopener" class="issue-photo"><img src="${i.photo}" alt="Photo: ${esc(i.title)}" loading="lazy"></a>` : ''}
     ${i.status !== 'open' || i.update_note ? `<div class="small" style="margin-top:8px"><b>${d.statuses[i.status]}</b>${i.updated_at ? ` <span class="muted">· ${asked(i.updated_at)}${i.updated_by ? `, ${esc(i.updated_by)}` : ''}</span>` : ''}${i.update_note ? `: ${esc(i.update_note)}` : ''}</div>` : ''}
-    ${i.proposal ? `<div class="small" style="margin-top:8px">${icon('receipt')} Proposed as expenditure: ${money(i.proposal.amount, 2)}, ${ps}</div>` : ''}
+    ${q ? `<div class="small row" style="margin-top:8px;gap:6px">${icon('receipt')} Quote ${money(q.amount, 2)}${q.quote_from ? ` from ${esc(q.quote_from)}` : ''} <span class="badge ${q.tone}">${esc(q.label)}</span></div>` : ''}
     ${btns ? `<div class="row" style="margin-top:10px;gap:8px;flex-wrap:wrap">${btns}</div>` : ''}</div>`;
 }
 async function viewMaintenance(main) {
@@ -891,10 +928,14 @@ async function viewMaintenance(main) {
       <div class="row between" style="gap:8px"><button type="button" class="btn sm danger" id="misDel">Delete report</button><span class="row" style="gap:8px"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Save</button></span></div></form>`);
     $('#mis', m).onsubmit = guard(async e => { e.preventDefault(); await api(`/maintenance/${i.id}/status`, { body: formData(e.target) }); closeOverlay(); toast('Updated'); reload(); });
     $('#misDel', m).onclick = guard(async () => { if (!confirm('Delete this report? Use it for duplicates or reports made by mistake.')) return; await api('/maintenance/' + i.id, { method: 'DELETE' }); closeOverlay(); toast('Deleted'); reload(); }); });
-  main.querySelectorAll('[data-iss-propose]').forEach(x => x.onclick = () => { const i = find(x.dataset.issPropose);
-    const m = openModal(`<form id="mip"><h2>Propose as expenditure</h2><p class="small muted" style="margin-top:0">A one-off cost on the Expenditure page, decided at the AGM or a board meeting. The report is linked to it.</p>
-      ${proposalFields({ title: i.title })}<div class="row" style="justify-content:flex-end;gap:8px"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Propose</button></div></form>`);
-    $('#mip', m).onsubmit = guard(async e => { e.preventDefault(); await api(`/maintenance/${i.id}/propose`, { body: formData(e.target) }); closeOverlay(); toast('Proposed as expenditure'); reload(); }); });
+  // a quote for the work: it becomes a cost waiting to be adopted on the Service charge page (a new quote replaces one still waiting)
+  main.querySelectorAll('[data-iss-quote]').forEach(x => x.onclick = () => { const i = find(x.dataset.issQuote), c = i.cost && i.cost.status === 'waiting' ? i.cost : {};
+    const m = openModal(`<form id="miq"><h2>${c.id ? 'Update the quote' : 'Add a quote'}</h2><p class="small muted" style="margin-top:0">For “${esc(i.title)}”. It waits on the Service charge page until the site admin adopts it: now, paid from the bank balance, or put forward for a year’s service charge.</p>
+      <div class="grid-2" style="gap:12px"><div class="field"><label>Amount quoted (£)</label><input name="amount" type="number" min="0.01" step="0.01" required value="${c.amount ?? ''}"></div>
+        <div class="field"><label>Quote from</label><input name="quote_from" maxlength="200" value="${esc(c.quote_from || '')}" placeholder="e.g. Highland Plumbing"></div></div>
+      <div class="field"><label>Details (optional)</label><textarea name="details" rows="3" placeholder="What it covers, how long the quote is valid…">${esc(c.details || '')}</textarea></div>
+      <div class="row" style="justify-content:flex-end;gap:8px"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">${c.id ? 'Save' : 'Add quote'}</button></div></form>`);
+    $('#miq', m).onsubmit = guard(async e => { e.preventDefault(); await api(`/maintenance/${i.id}/quote`, { body: formData(e.target) }); closeOverlay(); toast('Quote saved: waiting to be adopted'); reload(); }); });
 }
 
 // ------------------------------------------------------------ house guide
@@ -954,8 +995,8 @@ async function viewGuide(main) {
 
 // ------------------------------------------------------------ site admin
 async function viewAdmin(main) {
-  const raw = location.hash.split('/')[2] || 'overview', sub = { budget: 'expenditure', credits: 'lets' }[raw] || raw;   // older addresses still work
-  const pages = { overview: ['Payments', admOverview], expenditure: ['Expenditure', admExpenditure], weeks: ['Weeks', admWeeks], lets: ['Lets', admLets],
+  const raw = location.hash.split('/')[2] || 'overview', sub = { budget: 'service-charge', expenditure: 'service-charge', credits: 'lets' }[raw] || raw;   // older addresses still work
+  const pages = { overview: ['Payments', admOverview], 'service-charge': ['Service charge', admServiceCharge], weeks: ['Weeks', admWeeks], lets: ['Lets', admLets],
     families: ['Families', admFamilies], users: ['Users', admUsers], settings: ['Settings', admSettings], audit: ['Activity', admAudit] };
   if (sub.startsWith('account-')) return viewAccount(main, sub.split('-')[1]);
   const [title, view] = pages[sub] || pages.overview;
@@ -1042,43 +1083,35 @@ async function admOverview(el) {
 }
 // how a budget line is paid for: added to the service charge, or from the bank balance
 const paidFrom = v => `<select name="funding"><option value="charge" ${v !== 'bank' ? 'selected' : ''}>Service charge</option><option value="bank" ${v === 'bank' ? 'selected' : ''}>Bank balance</option></select>`;
-async function admExpenditure(el) {
-  const year = S.year, [b, od] = await Promise.all([api('/admin/budget?year=' + year), api('/expenditure')]);
+async function admServiceCharge(el) {
+  const year = S.year, [b, d] = await Promise.all([api('/admin/budget?year=' + year), api('/costs')]);
   const over = b.bank_total > 0.005 && (!b.bank || b.bank_total > b.bank.amount + 0.005);   // bank lines more than the balance (e.g. a lower balance recorded since)
-  // one-off proposals waiting (any year), what's allocated to this year but not decided, and those decided for this year
-  const openP = od.proposals.filter(p => p.status === 'proposed'), pencilled = openP.filter(p => p.year === year);
-  const doneP = od.proposals.filter(p => p.status !== 'proposed' && (p.year ? p.year === year : (p.decided_at || '').slice(0, 4) == year));
-  const cats = [...new Set(b.items.map(i => i.category).filter(Boolean))];
-  const cur = S.me.settings.currency;
-  el.innerHTML = `${pageBar(yearPicker(), `<button class="btn" id="imp">Import from spreadsheet</button><button class="btn" id="copy">Copy from ${year - 1}…</button>`)}
-    <section class="stack" style="margin-bottom:24px"><div class="row between" style="gap:12px"><h2 style="margin:0">Expenditure proposals to decide</h2><button class="btn" data-add-out>${icon('plus')}Add a one-off cost…</button></div>
-      <p class="muted small" style="margin:0">One-off costs proposed by family admins, for any year. Edit them and allocate each to a year, then record the decision from the AGM or a board meeting: added to that year’s service charge or paid from the bank balance.</p>
-      ${openP.map(p => proposalCard(p, true)).join('') || '<div class="card flat empty small">Nothing waiting for a decision</div>'}</section>
+  const cats = [...new Set(b.items.map(i => i.category).filter(Boolean))], cur = S.me.settings.currency;
+  const row = i => `<tr data-id="${i.id}"><td><input name="description" value="${esc(i.description)}"></td><td class="r"><input name="amount" type="number" step="0.01" value="${i.amount}" style="text-align:right"></td><td>${paidFrom(i.funding)}</td>
+    <td><input name="category" value="${esc(i.category || '')}" list="cats"></td>
+    <td>${i.cost ? `<div class="small">${costOrigin(i.cost)}</div><span class="badge ${i.cost.tone}">${i.cost.tone === 'blue' ? 'Put forward: for the AGM' : 'Adopted'}</span>` : `<input name="notes" value="${esc(i.notes || '')}">`}</td>
+    <td>${i.cost ? `<button class="iconbtn" data-bump="${i.cost.id}" title="Bump or cancel">${icon('trash-2')}</button>` : `<button class="iconbtn" data-del="${i.id}" title="Remove">${icon('trash-2')}</button>`}</td></tr>`;
+  el.innerHTML = `<p class="muted" style="max-width:75ch;margin-top:0">${SC_INTRO}</p>
+    ${pageBar(yearPicker(), `<button class="btn" id="imp">Import from spreadsheet</button><button class="btn" id="copy">Copy from ${year - 1}…</button>`)}
     <div class="row" style="margin-bottom:14px"><div class="field" style="margin:0;min-width:260px"><label>Budget period for ${year}</label><input id="blabel" value="${esc(b.label)}" placeholder="e.g. July ${year - 1} – June ${year}"></div></div>
-    <div class="stack">
-    <section class="stack"><div class="table-wrap"><table style="table-layout:fixed;min-width:860px"><colgroup><col style="width:26%"><col style="width:120px"><col style="width:170px"><col style="width:120px"><col><col style="width:72px"></colgroup><thead><tr><th>Item</th><th class="r">Estimate (${cur})</th><th>Paid from</th><th>Type</th><th>Commentary</th><th></th></tr></thead><tbody>
-      ${b.items.map(i => `<tr data-id="${i.id}"><td><input name="description" value="${esc(i.description)}"></td><td class="r"><input name="amount" type="number" step="0.01" value="${i.amount}" style="text-align:right"></td><td>${paidFrom(i.funding)}</td><td><input name="category" value="${esc(i.category || '')}" list="cats"></td><td><input name="notes" value="${esc(i.notes || '')}"></td><td><button class="iconbtn" data-del="${i.id}" title="Remove">${icon('trash-2')}</button></td></tr>`).join('')}
+    <section class="stack" style="margin-bottom:24px"><div class="table-wrap"><table style="table-layout:fixed;min-width:900px"><colgroup><col style="width:24%"><col style="width:120px"><col style="width:160px"><col style="width:110px"><col><col style="width:56px"></colgroup><thead><tr><th>Item</th><th class="r">Amount (${cur})</th><th>Paid from</th><th>Type</th><th>Commentary</th><th></th></tr></thead><tbody>
+      ${b.items.map(row).join('')}
       <tr id="newrow"><td><input name="description" placeholder="New item…"></td><td class="r"><input name="amount" type="number" step="0.01" placeholder="0" style="text-align:right"></td><td>${paidFrom('charge')}</td><td><input name="category" placeholder="Type" list="cats"></td><td><input name="notes" placeholder="Commentary"></td><td><button class="btn sm primary" id="addi">Add</button></td></tr>
       </tbody><tfoot><tr><td>Added to the service charge</td><td class="r num">${money(b.charge_total, 2)}</td><td colspan="4"></td></tr>
-        <tr><td>Paid from the bank balance</td><td class="r num" ${over ? 'style="color:var(--st-alert-ink)"' : ''}>${money(b.bank_total, 2)}</td><td colspan="4" class="small ${over ? '' : 'muted'}" ${over ? 'style="color:var(--st-alert-ink)"' : ''}>${b.bank ? (over ? `More than the ${money(b.bank.amount, 2)} bank balance on ${dfmt(b.bank.as_of, { day: 'numeric', month: 'short', year: 'numeric' })}: move some lines to the service charge` : `Bank balance ${money(b.bank.amount, 2)} on ${dfmt(b.bank.as_of, { day: 'numeric', month: 'short', year: 'numeric' })}`) : 'No bank balance recorded yet (add it on Payments)'}</td></tr>
-        <tr><td>Total expenditure</td><td class="r num">${money(b.total, 2)}</td><td colspan="4"></td></tr>
-        ${pencilled.length ? `<tr class="muted"><td>Allocated to ${year}, not decided yet</td><td class="r num">${money(pencilled.reduce((a, p) => a + p.amount, 0), 2)}</td><td colspan="4" class="small">${pencilled.length} proposal${pencilled.length > 1 ? 's' : ''} (above), not in these totals until accepted</td></tr>` : ''}</tfoot></table></div>
-      <datalist id="cats">${['Regular', 'Postpone', 'Provision', 'One-off', ...cats].filter((v, i, a) => a.indexOf(v) === i).map(c => `<option value="${esc(c)}">`).join('')}</datalist><p class="tiny muted">Changes save when you leave a field.</p></section>
-    <section class="grid-2" style="align-items:start"><div class="card"><h3>Service charges ${esc(b.label || year)}</h3>
-      <dl class="kv" style="grid-template-columns:1fr auto"><dt>Added to the service charge</dt><dd class="num r">${money(b.charge_total, 2)}</dd><dt>÷ ${b.units} weeks</dt><dd class="num">${money(b.rate_calc, 2)} / week</dd>
-        <dt>Charge per week</dt><dd class="num">${money(b.rate, 2)}</dd><dt>Status</dt><dd>${b.generated ? '<span class="badge green">Issued</span>' : '<span class="badge amber">Not issued</span>'}</dd></dl>
-      <a class="btn block" href="#/admin/overview" id="toPay" style="margin-top:14px">Issue and record payments →</a></div>
-      ${doneP.length ? `<div class="stack"><h3 style="margin:0">Proposals decided for ${year}</h3>${doneP.map(p => proposalCard(p, true)).join('')}</div>` : ''}</section></div>`;
-  const reload = () => admExpenditure(el);
+        <tr><td>Paid from the bank balance</td><td class="r num" ${over ? 'style="color:var(--st-alert-ink)"' : ''}>${money(b.bank_total, 2)}</td><td colspan="4" class="small ${over ? '' : 'muted'}" ${over ? 'style="color:var(--st-alert-ink)"' : ''}>${b.bank ? (over ? `More than the ${money(b.bank.amount, 2)} bank balance on ${dfmt(b.bank.as_of, { day: 'numeric', month: 'short', year: 'numeric' })}: move some lines to the service charge, or bump them` : `Bank balance ${money(b.bank.amount, 2)} on ${dfmt(b.bank.as_of, { day: 'numeric', month: 'short', year: 'numeric' })}`) : 'No bank balance recorded yet (add it on Payments)'}</td></tr>
+        <tr><td>Total</td><td class="r num">${money(b.total, 2)}</td><td colspan="4"></td></tr></tfoot></table></div>
+      <datalist id="cats">${['Regular', 'Postpone', 'Provision', 'One-off', ...cats].filter((v, i, a) => a.indexOf(v) === i).map(c => `<option value="${esc(c)}">`).join('')}</datalist>
+      <p class="tiny muted" style="margin:0">Changes save when you leave a field. Lines from adopted costs show where they came from; the bin bumps or cancels them.</p></section>
+    <div class="grid-2" style="align-items:start">${chargeCard(b, true)}${waitingCosts(d, true)}</div>`;
+  const reload = () => admServiceCharge(el);
   bindYears(el, reload);
   // each field saves when it changes; if the server refuses (e.g. too much from the bank balance) the page reloads to what's saved
   el.querySelectorAll('tr[data-id] input, tr[data-id] select').forEach(inp => inp.onchange = guard(async () => { try { await api('/admin/budget/' + inp.closest('tr').dataset.id, { method: 'PUT', body: { [inp.name]: inp.value } }); } finally { reload(); } }));
   el.querySelectorAll('[data-del]').forEach(x => x.onclick = guard(async () => { await api('/admin/budget/' + x.dataset.del, { method: 'DELETE' }); reload(); }));
-  $('#addi', el).onclick = guard(async () => { const r = $('#newrow', el); const d = Object.fromEntries([...r.querySelectorAll('input, select')].map(i => [i.name, i.value])); await api('/admin/budget', { body: { ...d, year } }); reload(); });
-  const saveYear = guard(async body => { await api('/admin/budget-year/' + year, { method: 'PUT', body }); reload(); });
-  $('#blabel', el).onchange = e => saveYear({ label: e.target.value });
-  bindProposals(el, reload);
-  $('#copy', el).onclick = () => { const m = openModal(`<form id="cf"><h2>Start ${year} from ${year - 1}</h2><p class="small muted" style="margin-top:0">One-off lines (type One-off) stay in ${year - 1}: they aren’t yearly costs.</p><div class="field"><label>Inflation uplift %</label><input name="uplift_pct" type="number" step="0.1" value="3"></div><div class="row" style="justify-content:flex-end"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Copy</button></div></form>`);
+  $('#addi', el).onclick = guard(async () => { const r = $('#newrow', el); const v = Object.fromEntries([...r.querySelectorAll('input, select')].map(i => [i.name, i.value])); await api('/admin/budget', { body: { ...v, year } }); reload(); });
+  $('#blabel', el).onchange = guard(async e => { await api('/admin/budget-year/' + year, { method: 'PUT', body: { label: e.target.value } }); reload(); });
+  bindCosts(el, d, reload, b.items.map(i => i.cost).filter(Boolean));
+  $('#copy', el).onclick = () => { const m = openModal(`<form id="cf"><h2>Start ${year} from ${year - 1}</h2><p class="small muted" style="margin-top:0">One-off lines (adopted costs, and any line whose type is One-off) stay in ${year - 1}: they aren’t yearly costs.</p><div class="field"><label>Inflation uplift %</label><input name="uplift_pct" type="number" step="0.1" value="3"></div><div class="row" style="justify-content:flex-end"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Copy</button></div></form>`);
     $('#cf', m).onsubmit = guard(async e => { e.preventDefault(); const r = await api('/admin/budget/copy', { body: { from: year - 1, to: year, ...formData(e.target) } }); closeOverlay();
       toast(`Copied ${r.copied} line${r.copied === 1 ? '' : 's'}${r.skipped ? `; ${r.skipped} one-off line${r.skipped > 1 ? 's' : ''} left in ${year - 1}` : ''}`); reload(); }); };
   $('#imp', el).onclick = () => importDialog('budget', year, reload);
@@ -1199,13 +1232,13 @@ async function admSettings(el) {
   $('#heroRm', el) && ($('#heroRm', el).onclick = guard(async () => { if (!confirm('Remove the Overview photograph?')) return; await api('/admin/hero', { method: 'DELETE' }); toast('Photograph removed'); await refreshMe(); admSettings(el); }));
   // Start afresh: clear test activity, keeping every login (preview first, backup offered, then RESET to confirm)
   el.insertAdjacentHTML('beforeend', `<div class="card" id="resetCard" style="margin-top:var(--sp-6);border-color:var(--st-alert, #b4544a)"><h3>${icon('trash-2')} Start afresh</h3>
-    <p class="small muted" style="margin:0 0 var(--sp-4);max-width:75ch">Clears all test activity: bookings and lets, enquiries and questions, expenditure proposals, maintenance reports, top-ups, bank balances, notices and account lines. Every login is kept, including the demo logins (@example.com). Each week’s plan goes back to Undecided. Who holds each week, the families, budgets and settings are kept. Service charges are reissued from the budgets: 2026 paid in full, 2027 unpaid. The 2027 allocation goes back to draft.</p>
+    <p class="small muted" style="margin:0 0 var(--sp-4);max-width:75ch">Clears all test activity: bookings and lets, enquiries and questions, upgrade suggestions and quotes, maintenance reports, top-ups, bank balances, notices and account lines. Every login is kept, including the demo logins (@example.com). Each week’s plan goes back to Undecided. Who holds each week, the families, budgets and settings are kept. Service charges are reissued from the budgets: 2026 paid in full, 2027 unpaid. The 2027 allocation goes back to draft.</p>
     <button type="button" class="btn" id="resetCheck">Check what would be removed</button><div id="resetPlan"></div></div>`);
   $('#resetCheck', el).onclick = guard(async () => {
     const p = await api('/admin/reset'), box = $('#resetPlan', el), yr = x => x.budget ? `${money(x.charges, 2)} from the ${x.year} budget${x.label ? ` (${esc(x.label)})` : ''}` : `no ${x.year} budget yet, so no charges`;
     box.innerHTML = `<ul class="small" style="margin:var(--sp-4) 0;line-height:1.8">
       <li>All logins kept${p.demo_logins ? `, including ${p.demo_logins} demo login${p.demo_logins === 1 ? '' : 's'}` : ''}</li>
-      <li>${p.bookings} booking${p.bookings === 1 ? '' : 's'} and lets, ${p.enquiries} enquir${p.enquiries === 1 ? 'y' : 'ies'} and questions, ${p.proposals} expenditure proposal${p.proposals === 1 ? '' : 's'}, ${p.maintenance} maintenance report${p.maintenance === 1 ? '' : 's'}, ${p.topups} top-up${p.topups === 1 ? '' : 's'}, ${p.bank_balances} bank balance${p.bank_balances === 1 ? '' : 's'}, ${p.notifications} notice${p.notifications === 1 ? '' : 's'}</li>
+      <li>${p.bookings} booking${p.bookings === 1 ? '' : 's'} and lets, ${p.enquiries} enquir${p.enquiries === 1 ? 'y' : 'ies'} and questions, ${p.costs} one-off cost${p.costs === 1 ? '' : 's'} (upgrades and quotes), ${p.maintenance} maintenance report${p.maintenance === 1 ? '' : 's'}, ${p.topups} top-up${p.topups === 1 ? '' : 's'}, ${p.bank_balances} bank balance${p.bank_balances === 1 ? '' : 's'}, ${p.notifications} notice${p.notifications === 1 ? '' : 's'}</li>
       <li>${p.ledger_lines} account line${p.ledger_lines === 1 ? '' : 's'} cleared, so every family balance starts again from the service charges</li>
       <li>${p.weeks_reset} week${p.weeks_reset === 1 ? '' : 's'} set back to Undecided (who holds them is kept)</li>
       <li><b>2026:</b> ${yr(p.paid)}${p.paid.budget ? ', marked <b>paid in full</b>' : ''}</li>

@@ -29,7 +29,7 @@ It also adds **demo logins** (password `demo1234`) and a few demo week offers in
 | bonar@, ekserdjian@, howarth@, lunthall@, mackay@example.com | Each other family's admin |
 
 To go live: log in as admin@example.com and go to **Site admin**:
-1. **Expenditure** (the budget): check 2026. For next year, use *Copy from 2026* (with an uplift) or *Import from spreadsheet*. Then on **Payments**, set the charge per week, **Issue** the charges and record payments already made.
+1. **Service charge** (the budget): check 2026. For next year, use *Copy from 2026* (with an uplift) or *Import from spreadsheet*. Then on **Payments**, set the charge per week, **Issue** the charges and record payments already made.
 2. **Weeks & allocation**: add future years with **+ Year** and import their allocation (Word, Excel or CSV).
 3. **Settings & rates**: add the bank details and the summer, shoulder and winter rates.
 4. **Users**: add each family's real admin, change your own email and password, and remove the demo users. The site admin login has no family, so if you also run a family, give yourself a second login as that family's admin, with a different email address (for example a `+family` alias of your usual address). In the calendar, untick the demo offers.
@@ -80,10 +80,10 @@ Everyone lands on the **Overview** (Home), headed *Welcome to Camas*, with who's
 
 | Who | Navigation | Needs your attention shows |
 |---|---|---|
-| Trusted friend | Home, Available weeks, My bookings, House guide, Maintenance, My details | Bookings to pay for |
-| Family member | Home, Calendar, Enquiries, Bookings, House guide, Maintenance, Family & friends | Bookings to pay for, and first refusals to take or pass |
-| Family admin | The same, plus Account and Expenditure | Also: inaccuracies reported in the house guide, enquiries to answer (release, using it or not sure yet), friends' booking enquiries, undecided weeks in the next 16 weeks, the balance to pay, and people who haven't set up their login |
-| Site admin | A separate login with no family: Home, Calendar, House guide, Maintenance, Payments, Expenditure, Weeks, Lets, Families, Users, Settings, Activity | Syndicate jobs: maintenance issues open (urgent ones in red), house guide inaccuracies, expenditure proposals to decide, payments to confirm, families owing money, families with no admin, service charges not issued, let-income pots not shared out, next year's weeks not set up, demo logins still active, email not switched on, and storage problems. Home also shows balances, credits, the pot and recent activity. |
+| Trusted friend | Home, Available weeks, My bookings, Maintenance, House guide, My details | Bookings to pay for |
+| Family member | Home, Calendar, Enquiries, Bookings, Service charge, Upgrades, Maintenance, House guide, Family & friends | Bookings to pay for, and first refusals to take or pass |
+| Family admin | The same, plus Account | Also: inaccuracies reported in the house guide, enquiries to answer (release, using it or not sure yet), friends' booking enquiries, undecided weeks in the next 16 weeks, the balance to pay, and people who haven't set up their login |
+| Site admin | A separate login with no family: Home, Calendar, Upgrades, Maintenance, House guide, Payments, Service charge, Weeks, Lets, Families, Users, Settings, Activity | Syndicate jobs: maintenance issues open (urgent ones in red), house guide inaccuracies, costs waiting to be adopted, payments to confirm, families owing money, families with no admin, service charges not issued, let-income pots not shared out, next year's weeks not set up, demo logins still active, email not switched on, and storage problems. Home also shows balances, credits, the pot and recent activity. |
 
 The panels are:
 - **Coming up:** the family's next weeks, or a friend's bookings.
@@ -112,8 +112,10 @@ Opening a page you don't have access to takes you back to Home.
 | Add family members, change roles | — | — | ✓ | ✓ |
 | See own family account | — | ✓ | ✓ | All families |
 | Budget, rates, allocation, confirm payments | — | — | — | ✓ |
-| Propose expenditure (a one-off cost) | — | — | ✓ | ✓ |
-| Allocate a proposal to a year, accept or reject it | — | — | — | ✓ |
+| See each year's service charge, line by line | — | ✓ | ✓ | ✓ |
+| Suggest an upgrade | — | ✓ | ✓ | ✓ |
+| Add a quote to a maintenance report | — | — | ✓ | ✓ |
+| Adopt, bump or cancel a cost | — | — | — | ✓ |
 | Report a maintenance issue | ✓ (sees only their own) | ✓ | ✓ | ✓ |
 | Update a maintenance issue (In hand, Fixed, Closed) | — | — | — | ✓ |
 | Read the house guide, report an inaccuracy | ✓ | ✓ | ✓ | ✓ |
@@ -212,28 +214,32 @@ Opening a page you don't have access to takes you back to Home.
 - Each budget year has a **period label** (e.g. July 2025 – June 2026), and each line has a **type** (Regular, Postpone, …) and **commentary**, as on the spreadsheet.
 - **Budget years** can be copied from the previous year with an inflation uplift, edited line by line, or imported from Excel or CSV. The importer lets you pick the columns and previews the result first. It also handles a sheet with the budget on the left and families and weeks on the right.
 
-**Expenditure (the budget, and proposals)**
-- **Paid from:** each budget line, for each year, is paid from either the **Service charge** (the default) or the **Bank balance**. The service charge is worked out from the service-charge lines only: their total ÷ the year's shares.
-- **The bank-balance limit:** a year's bank-balance lines can't add up to more than the latest bank balance recorded on **Payments**. The portal refuses a change that would go over, and does the same when you add a line or copy a year. With no bank balance recorded, nothing can be paid from it yet.
-- **If the balance drops:** if a lower balance is recorded later, the Expenditure page warns in red until lines are moved back to the service charge.
-- **Totals:** the table shows what's added to the service charge, what's paid from the bank balance (next to the latest balance and its date), and the total expenditure. The Payments card shows what goes on the service charge, plus what comes from the bank balance.
-- The site admin's **Budget** page is now called **Expenditure**. It holds each year's budget lines. The service charge card has moved to **Payments**.
-- **Proposals are one-off costs.** Every family admin has an **Expenditure** page. There they propose a one-off cost, such as a new fridge or a quote for works (the drainage repair, a new water supply pipe, damp repairs): what it's for, the estimated cost and details. There's no year to choose. While it's waiting they can **Edit** or **Withdraw** it. The page also shows the agreed expenditure for each year, read-only.
-- **Editing and allocating (site admin).** Proposals waiting for a decision are listed at the top of the site admin's **Expenditure** page, whatever year is showing. **Edit or allocate…** changes what it is, the cost and the details, and allocates it to a year (this year or a coming one), or leaves it unallocated. The proposing family is told what changed. A year's table shows what's allocated to it but not decided yet, outside its totals. **Add a one-off cost…** lets the site admin enter one directly, for example from a works update.
-- **Deciding.** After the AGM or a board meeting, the site admin **Accepts** or **Rejects** each proposal, recording where it was decided, the agreed amount and a note. Accepting commits it to a year: the one it's allocated to, or one chosen then (it suggests the first year whose charges aren't issued). It is paid for in one of four ways:
-  - **Added to the service charge:** a One-off line in that year's budget, so the charge goes up. If that year's charges are already issued, the portal offers to re-issue them.
-  - **Paid from the bank balance:** a One-off line in that year's budget paid from the bank balance, within its limit. Nothing is charged.
-  - **Charged to households now:** split by shares as a one-off charge on each account; re-issuing the service charges leaves it alone. Each household's admins are told their share.
-  - **Moved from another budget line:** a One-off line, with the same amount taken off the line chosen, so the service charge is unchanged.
-- The proposing family's admins are told the outcome.
-- **Copying a year leaves one-off lines behind.** *Copy from {last year}* skips lines whose type is *One-off*, since they aren't yearly costs, and says how many it left.
+**Service charge (the budget)**
+- **The page.** *Service charge* shows each year's service charge, line by line: what each line is, its type, whether it's on the service charge or paid from the bank balance, and the amount, with the charge per week and whether it's issued. Every family login can read it; the site admin edits it. (It replaces the Expenditure page. Old links still work.)
+- **Paid from:** each line is paid from either the **Service charge** (the default) or the **Bank balance**. The service charge is worked out from the service-charge lines only: their total ÷ the year's shares.
+- **The bank-balance limit:** a year's bank-balance lines can't add up to more than the latest bank balance recorded on **Payments**. The portal refuses a change that would go over, whether you edit a line, add one, adopt a cost or copy a year. With no bank balance recorded, nothing can be paid from it yet. If a lower balance is recorded later, the page warns in red until lines are moved or bumped.
+- **Totals:** the table shows what's added to the service charge, what's paid from the bank balance (next to the latest balance and its date), and the total. Issuing the charges and recording payments stay on **Payments**.
+- **Copying a year leaves one-off lines behind.** *Copy from {last year}* skips adopted costs and any line whose type is *One-off*, since they aren't yearly costs, and says how many it left.
+
+**Upgrades, maintenance quotes and adopting them**
+- **One-off costs come from two places.** On **Upgrades**, anyone in the families (members and admins) suggests something for the house: a new fridge, a hot tub, a coffee grinder, with a rough cost if they know it. On **Maintenance**, a family admin or the site admin adds a **quote** to a report when one comes in; a new quote replaces one still waiting. The site admin can also **Add a cost…** directly on the Service charge page (from a works list, say). No year is chosen for any of them.
+- **They wait on the Service charge page**, under *Waiting to be adopted*, until the site admin decides. Families see the same list, read-only. Doing nothing is fine: a cost just stays there.
+- **Adopting (site admin).** **Adopt…** offers two ways:
+  - **Carry it out now, paid from the bank balance:** a One-off line in a year's budget (this year by default) paid from the bank balance, within its limit. Nothing is charged.
+  - **Put it forward for a year's service charge:** a One-off line in that year's budget (by default the first year whose charges aren't issued), so the charge goes up. It shows as *Put forward: for the AGM* until the year's charges are issued, then *In the {year} service charge*.
+  - The amount can be changed as it's adopted, with a note (e.g. "Agreed by the board, 1 Dec 2026").
+- **Bumping and cancelling.** Money set aside for one job sometimes goes to something more urgent. **Bump or cancel…** (on the cost, or the bin on its line) moves an adopted cost **back to the waiting list**, **to another year**, or **cancels** it, with a reason; its line moves or comes out of the budget with it. A waiting cost can be cancelled too, and a cancelled one **reinstated**. Removing an adopted line from the table puts its cost back on the waiting list.
+- **Editing.** Whoever suggested it (or added the quote) can edit or withdraw it while it waits; the site admin can edit it while it waits or once adopted, and its line follows. Editing an adopted line in the table changes the cost too.
+- **Issued years.** If a change affects a year whose charges are already issued, the site admin is asked whether to re-issue them. If a rounded charge per week is set on Payments, the re-issue uses the rate the budget now works out at; round it again on Payments and issue again if you like.
+- **History.** Each cost keeps a short history (quotes, adopted, bumped, moved, cancelled, with who and when), and whoever suggested it or reported the issue is told when it's adopted, bumped, moved or cancelled.
+- **Older proposals** (from the Expenditure page) became costs when the site was updated: waiting ones still wait, accepted ones are adopted with their lines, rejected ones are cancelled, and where each was decided is in its history. One that was charged to households by shares stays as it was.
 
 **Maintenance**
 - **Reporting.** Anyone who logs in (family members, family admins, trusted friends, the site admin) can report a problem at the house from **Maintenance**: what it is, where (kitchen, heating and hot water, water and drainage, roof and walls, safety…), how urgent (urgent: safety or the house can't be used; needs fixing soon; when convenient), details and one photo. The photo is made smaller in the browser before it's sent. The site admin is told straight away; urgent reports start with "URGENT".
 - **Who sees what.** Families and the site admin see every report, so nothing gets reported twice. Trusted friends see only their own. Photos are only shown to people who can see the report.
 - **Keeping it up to date (site admin).** **Update…** sets the status (Reported, In hand, Fixed, Closed) with a note; the person who reported it is sent both. The site admin can also delete a report made by mistake. Open reports are listed with urgent ones first; fixed and closed ones stay on the page for a year.
 - **The reporter** can edit a report, or withdraw it, until the site admin has picked it up.
-- **From a report to expenditure.** A family admin or the site admin can **Propose as expenditure…**: a one-off cost on the Expenditure page, with the report's details added and linked, so the report shows how the proposal is getting on.
+- **Quotes.** A family admin or the site admin can **Add a quote…** (amount, who quoted, details). It becomes a cost waiting to be adopted on the Service charge page, and the report shows the quote and how it's getting on (waiting, put forward, adopted, cancelled).
 - The site admin's Overview shows how many reports are open, and how many are urgent.
 
 **House guide**
@@ -261,7 +267,7 @@ Opening a page you don't have access to takes you back to Home.
 - **Payments to confirm** and **Top-ups expected** work as before.
 
 **Start afresh (Settings, site admin)**
-- **Check what would be removed** lists, from the live data, everything that will go: bookings and lets, enquiries and questions, expenditure proposals, maintenance reports, top-ups, bank balances, notices and account lines, plus the weeks whose plans (and check-ins) reset to Undecided. The house guide is kept. **Every login is kept**, the demo logins (@example.com) included.
+- **Check what would be removed** lists, from the live data, everything that will go: bookings and lets, enquiries and questions, upgrades and quotes, maintenance reports, top-ups, bank balances, notices and account lines, plus the weeks whose plans (and check-ins) reset to Undecided. The house guide is kept. **Every login is kept**, the demo logins (@example.com) included.
 - **Download a backup first** saves a copy of the whole database.
 - **Remove it all** (type RESET) does it. Logins, families, who holds each week, budgets and settings are kept. Service charges are reissued from the budgets: **2026 marked paid in full**, **2027 left unpaid** (if there's no 2027 budget yet, add it and press *Issue charges*). The 2027 allocation goes back to draft. To get rid of a demo login later, open it under **Users** and press **Remove**.
 
@@ -273,16 +279,16 @@ Opening a page you don't have access to takes you back to Home.
 
 ## How the pages fit together
 
-- **One year for every page.** Pages that show a year (Calendar, Payments, Expenditure, Weeks, Lets, Families, the family Expenditure page and the Account page) share it. The portal opens on the current calendar year (2026 until 1 January 2027). Pick another year on any page and the others follow.
+- **One year for every page.** Pages that show a year (Calendar, Payments, Service charge, Weeks, Lets, Families and the Account page) share it. The portal opens on the current calendar year (2026 until 1 January 2027). Pick another year on any page and the others follow.
 - **The years listed** are the years whose weeks exist. To add one, use **Add year…** on **Weeks**; it then appears on every page, ready for its budget and allocation.
 - **The bar at the top of a page** has the year picker (and the calendar's filters) on the left, and the page's actions on the right, such as Import, Copy, Add year, Add family or Add person.
 - **Buttons:**
-  - **Filled:** saving or committing something (Save, Issue, Sign off, Propose, Book).
+  - **Filled:** saving or committing something (Save, Issue, Sign off, Suggest, Book).
   - **Green:** money arriving or accepting (Paid, Paid in full, Accept).
   - **Plain:** everything else.
   - **Red outline:** removing, cancelling or withdrawing.
-- **Shared pages:** House guide and Maintenance are the same pages for every role; what you can do on them depends on your role.
-- **Admin page titles** match the menu: Payments, Expenditure, Weeks, Lets, Families, Users, Settings, Activity. Old links to `#/admin/budget` and `#/admin/credits` still work.
+- **Shared pages:** Upgrades, Maintenance and House guide are the same pages for every role; what you can do on them depends on your role.
+- **Admin page titles** match the menu: Payments, Service charge, Weeks, Lets, Families, Users, Settings, Activity. Old links to `#/admin/budget`, `#/admin/expenditure`, `#/expenditure` and `#/admin/credits` still work.
 
 ## Clean-up (November 2026)
 
