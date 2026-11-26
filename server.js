@@ -20,177 +20,102 @@ const db = new DatabaseSync(DB_FILE);
 db.exec('PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;');
 
 // ---------------------------------------------------------------- schema
+// The tables as they stand. A database created by an earlier version gets any newer columns from addColumn() below.
 db.exec(`
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS families (
   id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, share_units REAL NOT NULL DEFAULT 1,
   color TEXT NOT NULL DEFAULT '#888', active INTEGER NOT NULL DEFAULT 1);
+-- each family's shares (one share = one week) for a year; that year's service charge is charged per share.
+-- A year without its own row uses families.share_units, the current figure.
+CREATE TABLE IF NOT EXISTS family_shares (family_id INTEGER NOT NULL REFERENCES families(id), year INTEGER NOT NULL, units REAL NOT NULL, PRIMARY KEY (family_id, year));
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY, family_id INTEGER REFERENCES families(id), name TEXT NOT NULL,
   email TEXT UNIQUE, phone TEXT, relationship TEXT, notes TEXT,
   role TEXT NOT NULL CHECK (role IN ('site_admin','family_admin','family_member','friend')),
   is_site_admin INTEGER NOT NULL DEFAULT 0, password_hash TEXT, invite_token TEXT,
   active INTEGER NOT NULL DEFAULT 1, created_by INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
-CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id INTEGER NOT NULL, expires_at TEXT NOT NULL);
+-- viewer_id: while the site admin uses "View as", the session keeps the admin's own id
+CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id INTEGER NOT NULL, expires_at TEXT NOT NULL, viewer_id INTEGER);
+-- A week. status: own_use (Undecided, or Using it when in_use=1), offered (Released: offer_friends=1), pending/booked (a
+-- booking), syndicate (not allocated). original_family_id = the family it was allocated to. sale_to = who can book it once
+-- released: all | members_first | own | members. comment = calendar note; note = the holding family's note.
 CREATE TABLE IF NOT EXISTS weeks (
-  id INTEGER PRIMARY KEY, year INTEGER NOT NULL, week_no INTEGER NOT NULL, start_date TEXT NOT NULL,
-  season TEXT NOT NULL CHECK (season IN ('summer','shoulder','winter')),
+  id INTEGER PRIMARY KEY, year INTEGER NOT NULL, week_no INTEGER NOT NULL, start_date TEXT NOT NULL, end_date TEXT,
+  season TEXT NOT NULL CHECK (season IN ('summer','shoulder','winter')), school_holiday INTEGER NOT NULL DEFAULT 0, comment TEXT,
   family_id INTEGER REFERENCES families(id), original_family_id INTEGER REFERENCES families(id),
   status TEXT NOT NULL DEFAULT 'own_use' CHECK (status IN ('own_use','offered','pending','booked','syndicate')),
-  offer_friends INTEGER NOT NULL DEFAULT 0, offer_swap INTEGER NOT NULL DEFAULT 0, in_use INTEGER NOT NULL DEFAULT 0,
-  friend_scope TEXT NOT NULL DEFAULT 'all' CHECK (friend_scope IN ('all','own')), sale_to TEXT NOT NULL DEFAULT 'all',
-  price_override REAL, note TEXT, end_date TEXT, comment TEXT, UNIQUE(year, week_no));
+  offer_friends INTEGER NOT NULL DEFAULT 0, in_use INTEGER NOT NULL DEFAULT 0, sale_to TEXT NOT NULL DEFAULT 'all',
+  price_override REAL, note TEXT, released_at TEXT, enquiry_until TEXT, reminded INTEGER NOT NULL DEFAULT 0, UNIQUE(year, week_no));
+-- allocation sign-off for a year
+CREATE TABLE IF NOT EXISTS year_status (year INTEGER PRIMARY KEY, signed_off_at TEXT, signed_off_by INTEGER);
+-- letting_cost = kept from a paid let for the maintenance fund; gift = a week given free to another family (a £0 booking)
 CREATE TABLE IF NOT EXISTS bookings (
   id INTEGER PRIMARY KEY, week_id INTEGER NOT NULL REFERENCES weeks(id), user_id INTEGER NOT NULL REFERENCES users(id),
   seller_family_id INTEGER NOT NULL REFERENCES families(id), buyer_family_id INTEGER REFERENCES families(id),
   amount REAL NOT NULL, method TEXT NOT NULL CHECK (method IN ('bank','account')),
   status TEXT NOT NULL CHECK (status IN ('pending','confirmed','cancelled','expired')),
   reference TEXT NOT NULL, guest_name TEXT, party_size INTEGER, notes TEXT,
-  created_at TEXT DEFAULT CURRENT_TIMESTAMP, expires_at TEXT, confirmed_at TEXT, confirmed_by INTEGER);
-CREATE TABLE IF NOT EXISTS swaps (
-  id INTEGER PRIMARY KEY, requester_id INTEGER NOT NULL REFERENCES users(id),
-  from_family_id INTEGER NOT NULL, offered_week_id INTEGER REFERENCES weeks(id),
-  to_family_id INTEGER NOT NULL, target_week_id INTEGER NOT NULL REFERENCES weeks(id),
-  message TEXT, status TEXT NOT NULL CHECK (status IN ('pending','proposed','accepted','declined','cancelled','void')),
-  responded_by INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP, responded_at TEXT,
-  decline_reason TEXT, proposed_by INTEGER, proposed_at TEXT, reply_note TEXT);
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP, expires_at TEXT, confirmed_at TEXT, confirmed_by INTEGER, letting_cost REAL, gift INTEGER);
+-- the budget (Expenditure): lines per year, and per year its period and the charge per week actually levied
 CREATE TABLE IF NOT EXISTS budget_items (
   id INTEGER PRIMARY KEY, year INTEGER NOT NULL, category TEXT, description TEXT NOT NULL, amount REAL NOT NULL DEFAULT 0, sort INTEGER DEFAULT 0, notes TEXT);
--- per budget year: the period it covers and the charge per week actually levied (the syndicate rounds it, e.g. £371.77 → £370)
 CREATE TABLE IF NOT EXISTS budget_years (year INTEGER PRIMARY KEY, label TEXT, rate_per_week REAL);
+-- expenditure a family admin proposes for a coming year's budget, decided at the AGM or a board meeting. funding = how
+-- accepted expenditure is paid for: budget | levy (charged to households by shares) | reserves (bank balance) | reassign
+CREATE TABLE IF NOT EXISTS outgoing_proposals (id INTEGER PRIMARY KEY, family_id INTEGER, user_id INTEGER NOT NULL, year INTEGER NOT NULL,
+  title TEXT NOT NULL, amount REAL NOT NULL DEFAULT 0, details TEXT, status TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN ('proposed','accepted','rejected','withdrawn')),
+  decided_at TEXT, decided_by INTEGER, meeting TEXT, decision_note TEXT, budget_item_id INTEGER, funding TEXT, funding_detail TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+-- each household's account: charges positive, payments and credits negative. entry_date = when the money arrived.
 CREATE TABLE IF NOT EXISTS ledger (
   id INTEGER PRIMARY KEY, family_id INTEGER NOT NULL REFERENCES families(id), year INTEGER NOT NULL,
   type TEXT NOT NULL CHECK (type IN ('service_charge','rental_credit','purchase','payment','adjustment')),
   description TEXT NOT NULL, amount REAL NOT NULL, booking_id INTEGER, created_by INTEGER,
-  created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP, entry_date TEXT);
+-- money a household sends in to build up credit, confirmed by the site admin when it arrives
+CREATE TABLE IF NOT EXISTS topups (
+  id INTEGER PRIMARY KEY, family_id INTEGER NOT NULL REFERENCES families(id), user_id INTEGER NOT NULL REFERENCES users(id), amount REAL NOT NULL, reference TEXT,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','confirmed','cancelled')), created_at TEXT DEFAULT CURRENT_TIMESTAMP, confirmed_at TEXT, confirmed_by INTEGER);
+-- the syndicate's bank balance as the site admin reads it from the bank, by date
+CREATE TABLE IF NOT EXISTS bank_balances (id INTEGER PRIMARY KEY, as_of TEXT NOT NULL, amount REAL NOT NULL, note TEXT, created_by INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+-- a family's place in the queue for another family's week. If the holder releases it, enquirers get first refusal
+-- (enquiry_hours), first come first served. reply = 'unsure' when the holder isn't sure yet.
+CREATE TABLE IF NOT EXISTS enquiries (
+  id INTEGER PRIMARY KEY, week_id INTEGER NOT NULL REFERENCES weeks(id), family_id INTEGER NOT NULL REFERENCES families(id), user_id INTEGER NOT NULL REFERENCES users(id),
+  message TEXT, status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','won','closed','withdrawn')), close_reason TEXT,
+  claim TEXT CHECK (claim IN ('yes','no')), claim_method TEXT, claim_guest TEXT, claim_party INTEGER, claimed_at TEXT,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP, closed_at TEXT, reply TEXT, replied_at TEXT);
+-- a trusted friend asking to book a week its household hasn't decided about
+CREATE TABLE IF NOT EXISTS friend_enquiries (
+  id INTEGER PRIMARY KEY, week_id INTEGER NOT NULL REFERENCES weeks(id), user_id INTEGER NOT NULL REFERENCES users(id),
+  message TEXT, guest_name TEXT, party_size INTEGER,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','accepted','declined','closed','withdrawn')),
+  close_reason TEXT, booking_id INTEGER, answered_by INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP, closed_at TEXT);
+-- a member's question about another family's week (arrival times, arriving a day early). Never joins the queue.
+CREATE TABLE IF NOT EXISTS week_questions (id INTEGER PRIMARY KEY, week_id INTEGER NOT NULL, family_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
+  message TEXT NOT NULL, reply TEXT, replied_by INTEGER, replied_at TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS notifications (
   id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, text TEXT NOT NULL, link TEXT,
   read INTEGER NOT NULL DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY, user_id INTEGER, action TEXT, detail TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 `);
-for (const col of ['end_date TEXT', 'comment TEXT']) { try { db.exec('ALTER TABLE weeks ADD COLUMN ' + col); } catch { } }
-try { db.exec('ALTER TABLE budget_items ADD COLUMN notes TEXT'); } catch { }
-// Swaps: every family week can receive swap requests unless its family marks it "in use".
-try { db.exec('ALTER TABLE weeks ADD COLUMN in_use INTEGER NOT NULL DEFAULT 0'); db.exec("UPDATE weeks SET status='own_use' WHERE status='offered' AND offer_friends=0"); } catch { }
-try { db.exec('ALTER TABLE swaps ADD COLUMN decline_reason TEXT'); } catch { }
-// Week settings: Undecided / Using it / Released (stored as in_use, offer_friends; offer_swap is no longer used).
-// sale_to = who may buy a sale week: 'members' (other syndicate families), 'all' (+ any family's trusted friends), 'own' (+ our own friends).
-try { db.exec("ALTER TABLE weeks ADD COLUMN sale_to TEXT NOT NULL DEFAULT 'all'"); db.exec('UPDATE weeks SET sale_to=friend_scope'); } catch { }
-// Swaps v3: the requester only names the week they want; the receiving family picks one of the requester's "willing to swap"
-// weeks (offered_week_id), and the requesting family confirms. Older databases need the column made optional.
-if (db.prepare("SELECT \"notnull\" nn FROM pragma_table_info('swaps') WHERE name='offered_week_id'").get().nn) {
-  db.exec(`BEGIN;
-    CREATE TABLE swaps_v3 (id INTEGER PRIMARY KEY, requester_id INTEGER NOT NULL REFERENCES users(id), from_family_id INTEGER NOT NULL,
-      offered_week_id INTEGER REFERENCES weeks(id), to_family_id INTEGER NOT NULL, target_week_id INTEGER NOT NULL REFERENCES weeks(id),
-      message TEXT, status TEXT NOT NULL CHECK (status IN ('pending','proposed','accepted','declined','cancelled','void')),
-      responded_by INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP, responded_at TEXT, decline_reason TEXT, proposed_by INTEGER, proposed_at TEXT, reply_note TEXT);
-    INSERT INTO swaps_v3 (id,requester_id,from_family_id,offered_week_id,to_family_id,target_week_id,message,status,responded_by,created_at,responded_at,decline_reason)
-      SELECT id,requester_id,from_family_id,CASE WHEN status='pending' THEN NULL ELSE offered_week_id END,to_family_id,target_week_id,message,status,responded_by,created_at,responded_at,decline_reason FROM swaps;
-    DROP TABLE swaps; ALTER TABLE swaps_v3 RENAME TO swaps; COMMIT;`);
-}
-
-// Site admins are a separate kind of user with no family. Older databases only allowed family roles, so rebuild users.
-if (!db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'").get().sql.includes("'site_admin'")) {
-  const cols = 'id,family_id,name,email,phone,relationship,notes,role,is_site_admin,password_hash,invite_token,active,created_by,created_at';
-  db.exec('PRAGMA foreign_keys = OFF');
-  db.exec(`BEGIN;
-    CREATE TABLE users_v2 (
-      id INTEGER PRIMARY KEY, family_id INTEGER REFERENCES families(id), name TEXT NOT NULL,
-      email TEXT UNIQUE, phone TEXT, relationship TEXT, notes TEXT,
-      role TEXT NOT NULL CHECK (role IN ('site_admin','family_admin','family_member','friend')),
-      is_site_admin INTEGER NOT NULL DEFAULT 0, password_hash TEXT, invite_token TEXT,
-      active INTEGER NOT NULL DEFAULT 1, created_by INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
-    INSERT INTO users_v2 (${cols}) SELECT ${cols} FROM users;
-    DROP TABLE users; ALTER TABLE users_v2 RENAME TO users;
-    UPDATE users SET role='site_admin', family_id=NULL WHERE is_site_admin=1;
-    COMMIT;`);
-  db.exec('PRAGMA foreign_keys = ON');
-}
+// columns added since a database was first created (each is a no-op when the column is already there)
+for (const [t, def] of [['weeks', 'end_date TEXT'], ['weeks', 'comment TEXT'], ['weeks', 'school_holiday INTEGER NOT NULL DEFAULT 0'], ['weeks', 'in_use INTEGER NOT NULL DEFAULT 0'],
+  ['weeks', "sale_to TEXT NOT NULL DEFAULT 'all'"], ['weeks', 'released_at TEXT'], ['weeks', 'enquiry_until TEXT'], ['weeks', 'reminded INTEGER NOT NULL DEFAULT 0'],
+  ['sessions', 'viewer_id INTEGER'], ['bookings', 'letting_cost REAL'], ['bookings', 'gift INTEGER'], ['budget_items', 'notes TEXT'], ['ledger', 'entry_date TEXT'],
+  ['enquiries', 'reply TEXT'], ['enquiries', 'replied_at TEXT'], ['outgoing_proposals', 'funding TEXT'], ['outgoing_proposals', 'funding_detail TEXT']])
+  try { db.exec(`ALTER TABLE ${t} ADD COLUMN ${def}`); } catch { }
 db.exec("UPDATE users SET is_site_admin = CASE WHEN role='site_admin' THEN 1 ELSE 0 END WHERE is_site_admin <> (role='site_admin')");
-
-// Phase 1 (credits): school-holiday weeks, when a week was released, reminder bookkeeping, pot distributions, carried credits.
-// Assumed English school holidays — the site admin should check and adjust these under Site admin → Weeks.
-const SCHOOL_HOLIDAYS = { 2026: [8, 14, 15, 22, 31, 32, 33, 34, 35, 36, 44, 52, 53], 2027: [7, 13, 14, 22, 30, 31, 32, 33, 34, 35, 43, 51, 52] };
-try {
-  db.exec('ALTER TABLE weeks ADD COLUMN school_holiday INTEGER NOT NULL DEFAULT 0');
-  for (const [y, ws] of Object.entries(SCHOOL_HOLIDAYS)) for (const n of ws) db.prepare('UPDATE weeks SET school_holiday=1 WHERE year=? AND week_no=?').run(Number(y), n);
-} catch { }
-try { db.exec('ALTER TABLE weeks ADD COLUMN released_at TEXT'); db.exec("UPDATE weeks SET released_at=datetime('now') WHERE offer_friends=1"); } catch { }
-try { db.exec('ALTER TABLE weeks ADD COLUMN reminded INTEGER NOT NULL DEFAULT 0'); } catch { }
-try { db.exec('ALTER TABLE ledger ADD COLUMN pot_year INTEGER'); } catch { }
-// each family's shares (= weeks) for a year; the service charge for that year is charged per share. A year without its
-// own row uses families.share_units (the current figure).
-db.exec(`CREATE TABLE IF NOT EXISTS family_shares (family_id INTEGER NOT NULL REFERENCES families(id), year INTEGER NOT NULL, units REAL NOT NULL, PRIMARY KEY (family_id, year));`);
-// the date a payment actually arrived (the line's created_at is when it was recorded)
-try { db.exec('ALTER TABLE ledger ADD COLUMN entry_date TEXT'); } catch { }
-// the syndicate's bank balance as the site admin reads it from the bank, by date
-// expenditure a family admin proposes for a coming year's budget (a new fridge, a quote for maintenance work). The syndicate
-// accepts or rejects them at the AGM or a board meeting; an accepted one becomes a line in that year's budget.
-db.exec(`CREATE TABLE IF NOT EXISTS outgoing_proposals (id INTEGER PRIMARY KEY, family_id INTEGER, user_id INTEGER NOT NULL, year INTEGER NOT NULL,
-  title TEXT NOT NULL, amount REAL NOT NULL DEFAULT 0, details TEXT, status TEXT NOT NULL DEFAULT 'proposed' CHECK (status IN ('proposed','accepted','rejected','withdrawn')),
-  decided_at TEXT, decided_by INTEGER, meeting TEXT, decision_note TEXT, budget_item_id INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP);`);
-// how accepted expenditure is paid for: budget (a new line, so the service charge changes), levy (a one-off charge to each
-// household now, by shares), reserves (from the bank balance, nothing charged) or reassign (moved from another budget line)
-try { db.exec('ALTER TABLE outgoing_proposals ADD COLUMN funding TEXT'); } catch { }
-try { db.exec('ALTER TABLE outgoing_proposals ADD COLUMN funding_detail TEXT'); } catch { }
-// a member's question about another family's week (what time are you leaving? could we arrive a day early?). It isn't a
-// request for the week, so it never joins the enquiry queue, and it can be asked about any week, Using it included.
-db.exec(`CREATE TABLE IF NOT EXISTS week_questions (id INTEGER PRIMARY KEY, week_id INTEGER NOT NULL, family_id INTEGER NOT NULL, user_id INTEGER NOT NULL,
-  message TEXT NOT NULL, reply TEXT, replied_by INTEGER, replied_at TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP);`);
-db.exec(`CREATE TABLE IF NOT EXISTS bank_balances (id INTEGER PRIMARY KEY, as_of TEXT NOT NULL, amount REAL NOT NULL, note TEXT, created_by INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP);`);
-// "View as": while the site admin views the portal as another login, the session keeps the admin's id here
-try { db.exec('ALTER TABLE sessions ADD COLUMN viewer_id INTEGER'); } catch { }
-// letting cost kept from each paid let for the maintenance fund (the rest is credited to the family that released the week)
-try { db.exec('ALTER TABLE bookings ADD COLUMN letting_cost REAL'); } catch { }
-// Enquiries: a family's place in the queue for another family's week. If the holder releases the week, enquirers get
-// first refusal (enquiry_hours), first come first served; a swap offer can be attached to an enquiry.
-db.exec(`CREATE TABLE IF NOT EXISTS enquiries (
-  id INTEGER PRIMARY KEY, week_id INTEGER NOT NULL REFERENCES weeks(id), family_id INTEGER NOT NULL REFERENCES families(id), user_id INTEGER NOT NULL REFERENCES users(id),
-  message TEXT, status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','won','closed','withdrawn')), close_reason TEXT,
-  claim TEXT CHECK (claim IN ('yes','no')), claim_method TEXT, claim_guest TEXT, claim_party INTEGER, claimed_at TEXT,
-  created_at TEXT DEFAULT CURRENT_TIMESTAMP, closed_at TEXT);`);
-try { db.exec('ALTER TABLE weeks ADD COLUMN enquiry_until TEXT'); } catch { }
-try {
-  db.exec('ALTER TABLE swaps ADD COLUMN enquiry_id INTEGER');
-  // earlier swap requests become enquiries; any that already named a week to give become swap offers on them
-  for (const sw of db.prepare("SELECT * FROM swaps WHERE status IN ('pending','proposed')").all()) {
-    const id = db.prepare('INSERT INTO enquiries (week_id,family_id,user_id,message,created_at) VALUES (?,?,?,?,?)').run(sw.target_week_id, sw.from_family_id, sw.requester_id, sw.message, sw.created_at).lastInsertRowid;
-    if (sw.offered_week_id) db.prepare("UPDATE swaps SET enquiry_id=?, status='pending' WHERE id=?").run(id, sw.id);
-    else db.prepare("UPDATE swaps SET status='cancelled' WHERE id=?").run(sw.id);
-  }
-} catch { }
-// Booking enquiries from trusted friends about weeks still Undecided. The holding family's admin lets the week to them
-// (it is released and reserved for the friend at the friend price) or declines. Separate from members' requests and first refusal.
-db.exec(`CREATE TABLE IF NOT EXISTS friend_enquiries (
-  id INTEGER PRIMARY KEY, week_id INTEGER NOT NULL REFERENCES weeks(id), user_id INTEGER NOT NULL REFERENCES users(id),
-  message TEXT, guest_name TEXT, party_size INTEGER,
-  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','accepted','declined','closed','withdrawn')),
-  close_reason TEXT, booking_id INTEGER, answered_by INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP, closed_at TEXT);`);
-// Allocation sign-off (year_status). Change requests through the portal were removed; the site admin edits the allocation
-// directly on the Weeks page. The change_requests table stays so earlier records are kept.
-db.exec(`CREATE TABLE IF NOT EXISTS year_status (year INTEGER PRIMARY KEY, signed_off_at TEXT, signed_off_by INTEGER);
-CREATE TABLE IF NOT EXISTS change_requests (
-  id INTEGER PRIMARY KEY, year INTEGER NOT NULL, family_id INTEGER NOT NULL REFERENCES families(id), user_id INTEGER NOT NULL REFERENCES users(id),
-  give_week_id INTEGER NOT NULL REFERENCES weeks(id), want_week_id INTEGER NOT NULL REFERENCES weeks(id), want_family_id INTEGER, note TEXT,
-  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','approved','declined','withdrawn','lapsed')),
-  admin_note TEXT, decided_by INTEGER, decided_at TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
-CREATE TABLE IF NOT EXISTS topups (
-  id INTEGER PRIMARY KEY, family_id INTEGER NOT NULL REFERENCES families(id), user_id INTEGER NOT NULL REFERENCES users(id), amount REAL NOT NULL, reference TEXT,
-  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','confirmed','cancelled')), created_at TEXT DEFAULT CURRENT_TIMESTAMP, confirmed_at TEXT, confirmed_by INTEGER);`);
-// a week a family gained through a change request: its let income is capped at that year's service charge per share
-try { db.exec('ALTER TABLE weeks ADD COLUMN gained_by_request INTEGER NOT NULL DEFAULT 0'); } catch { }
-// let income above that cap, which goes to the maintenance fund along with the letting cost
-try { db.exec('ALTER TABLE bookings ADD COLUMN fund_extra REAL'); } catch { }
-// a week the holding family lets another family use free of charge, after an enquiry: recorded as a £0 booking
-try { db.exec('ALTER TABLE bookings ADD COLUMN gift INTEGER'); } catch { }
-// picked = 1: the family holding the week chose this week from the requesting family's Willing to swap weeks
-try { db.exec('ALTER TABLE swaps ADD COLUMN picked INTEGER NOT NULL DEFAULT 0'); } catch { }
-// the holder's reply to an enquiry without picking a week or releasing ('unsure' = not sure yet; they stay in the queue)
-try { db.exec('ALTER TABLE enquiries ADD COLUMN reply TEXT'); } catch { }
-try { db.exec('ALTER TABLE enquiries ADD COLUMN replied_at TEXT'); } catch { }
-db.exec(`CREATE TABLE IF NOT EXISTS credit_ledger (
-  id INTEGER PRIMARY KEY, family_id INTEGER NOT NULL REFERENCES families(id), year INTEGER NOT NULL, amount REAL NOT NULL,
-  description TEXT NOT NULL, swap_id INTEGER, created_by INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP);`);
+// One-off clean-up: retired features' tables, columns and settings go. They were in-year swaps, change requests, credits and
+// the let-income pot, the income cap on weeks gained by request, the member discount and release weighting.
+if (!db.prepare("SELECT 1 FROM settings WHERE key='cleanup_2026_11'").get()) {
+  for (const sql of ['DROP TABLE IF EXISTS swaps', 'DROP TABLE IF EXISTS change_requests', 'DROP TABLE IF EXISTS credit_ledger',
+    'ALTER TABLE weeks DROP COLUMN offer_swap', 'ALTER TABLE weeks DROP COLUMN friend_scope', 'ALTER TABLE weeks DROP COLUMN gained_by_request',
+    'ALTER TABLE ledger DROP COLUMN pot_year', 'ALTER TABLE bookings DROP COLUMN fund_extra']) try { db.exec(sql); } catch { }
+  db.exec(`DELETE FROM settings WHERE key IN ('commission_pct','member_rate_pct','credits_per_share','credit_school','credit_summer','credit_shoulder','credit_winter',
+      'early_release_weeks','late_release_weight','income_model','credits_equal','member_requests_off','change_requests_removed','shares_per_year','in_year_swaps');
+    INSERT INTO settings (key,value) VALUES ('cleanup_2026_11','1')`);
+}
 
 // ---------------------------------------------------------------- helpers
 const q = (sql, ...a) => db.prepare(sql).all(...a);
@@ -203,25 +128,21 @@ const fail = (s, m) => { throw new HttpError(s, m); };
 const round2 = n => Math.round(n * 100) / 100;
 
 const DEFAULT_SETTINGS = {
-  site_name: 'Nab Camas', place_line: 'Loch Carron · Scottish Highlands', hero_version: '', currency: '£', rate_summer: '1200', rate_shoulder: '800', rate_winter: '500',
-  commission_pct: '0', letting_cost: '100', view_as_enabled: '1', hold_days: '3', winter_changeover_day: '5', summer_changeover_day: '6', summer_changeover_from: '12', summer_changeover_to: '43',
+  site_name: 'Nab Camas', place_line: 'Loch Carron · Scottish Highlands', hero_version: '', currency: '£', view_as_enabled: '1',
+  // prices per week by band (a family can set its own when it releases a week); the same for members and trusted friends
+  rate_school: '1400', rate_summer: '1200', rate_shoulder: '800', rate_winter: '500', letting_cost: '100',
+  // releasing and booking: days a "Members first" release is for members only, hours of first refusal for enquirers,
+  // days a bank-transfer booking is held, reminders about undecided weeks (weeks before)
+  members_first_days: '7', enquiry_hours: '48', hold_days: '3', reminder_weeks: '16,8', allow_member_account_charge: '1',
+  // creating a new year's weeks
+  winter_changeover_day: '5', summer_changeover_day: '6', summer_changeover_from: '12', summer_changeover_to: '43', summer_months: '6,7,8', shoulder_months: '4,5,9,10',
   bank_name: 'Syndicate bank account', bank_account_name: 'Nab Camas Syndicate', bank_sort_code: '00-00-00', bank_account_no: '00000000', bank_iban: '',
-  summer_months: '6,7,8', shoulder_months: '4,5,9,10', allow_member_account_charge: '1',
-  // prices: rate_* are the price per week by band, the same for members and trusted friends (member_rate_pct is no longer used)
-  rate_school: '1400', member_rate_pct: '75', members_first_days: '7',
-  // credits: each share = credits_per_share a year; week values are scaled from these weights so a year adds up exactly
-  // Credits are switched off for now: every season counts the same (the screens no longer show credits). Trusted-friend
-  // prices per season (rate_*) are still set by the site admin in Settings.
-  credits_per_share: '100', credit_school: '100', credit_summer: '100', credit_shoulder: '100', credit_winter: '100',
-  // (no longer used: the let-income pot was shared by how early weeks were released)
-  early_release_weeks: '8', late_release_weight: '0.5', reminder_weeks: '16,8', enquiry_hours: '48',
 };
 function settings() { const s = { ...DEFAULT_SETTINGS }; for (const r of q('SELECT key,value FROM settings')) s[r.key] = r.value; return s; }
 const bandOf = w => w.school_holiday ? 'school' : w.season;            // school | summer | shoulder | winter
 const rateFor = (band, s = settings()) => Number(s['rate_' + band]) || 0;
-const priceOf = (w, s = settings()) => w.price_override != null ? w.price_override : rateFor(bandOf(w), s);   // trusted-friend price
-// members pay the same price as trusted friends: there is no member discount
-const memberPriceOf = (w, s = settings()) => priceOf(w, s);
+// a week's price: the family's own, or the price for its band. Members and trusted friends pay the same.
+const priceOf = (w, s = settings()) => w.price_override != null ? w.price_override : rateFor(bandOf(w), s);
 
 function hashPw(pw) { const salt = crypto.randomBytes(16).toString('hex'); return salt + ':' + crypto.scryptSync(pw, salt, 64).toString('hex'); }
 function checkPw(pw, h) { if (!h) return false; const [salt, hex] = h.split(':'); const a = Buffer.from(hex, 'hex'); const b = crypto.scryptSync(pw, salt, 64); return a.length === b.length && crypto.timingSafeEqual(a, b); }
@@ -321,8 +242,8 @@ function sessionCookie(tok, maxAge) { return `sid=${tok}; HttpOnly; SameSite=Lax
 
 // ---------------------------------------------------------------- week view model
 function weekView(w, u, s) {
-  const v = { ...w, family_name: w.family_id ? famName(w.family_id) : 'Syndicate', price: isFamily(u) || u.is_site_admin ? memberPriceOf(w, s) : priceOf(w, s) };
-  if (u.role !== 'friend') Object.assign(v, { friend_price: priceOf(w, s), member_price: memberPriceOf(w, s), credits: creditValue(w, s), band: bandOf(w), friends_from: friendsFrom(w, s), release_weight: releaseWeight(w, s) });
+  const v = { ...w, family_name: w.family_id ? famName(w.family_id) : 'Syndicate', price: priceOf(w, s) };   // one price for members and trusted friends
+  if (u.role !== 'friend') v.friends_from = friendsFrom(w, s);
   v.family_color = w.family_id ? q1('SELECT color FROM families WHERE id=?', w.family_id).color : '#9aa1a9';
   const mine = u.family_id === w.family_id && isFamily(u);
   const b = q1("SELECT * FROM bookings WHERE week_id=? AND status IN ('pending','confirmed') ORDER BY id DESC", w.id);
@@ -343,8 +264,7 @@ function weekView(w, u, s) {
     v.my_enquiry = i >= 0 ? { id: queue[i].id, position: i + 1, claim: queue[i].claim, created_at: queue[i].created_at } : null;
   }
   // enquire = join the queue for another family's week that isn't marked Using it, let or released
-  v.can_enquire = MEMBER_REQUESTS_OPEN && isFamily(u) && !mine && w.family_id != null && !w.in_use && w.status === 'own_use' && w.start_date >= today() && !v.my_enquiry;
-  v.swappable = swappable(w);
+  v.can_enquire = isFamily(u) && !mine && w.family_id != null && !w.in_use && w.status === 'own_use' && w.start_date >= today() && !v.my_enquiry;
   if (isFamily(u) && !mine && w.family_id) {
     v.holder_contact = holderContact(w.family_id);
     v.can_ask = (w.end_date || w.start_date) >= today();
@@ -356,17 +276,11 @@ function weekView(w, u, s) {
   if (u.role === 'friend') {
     const fe = q1("SELECT id, created_at FROM friend_enquiries WHERE week_id=? AND user_id=? AND status='open'", w.id, u.id);
     v.my_friend_enquiry = fe || null; v.can_friend_enquire = !fe && undecidedWeek(w);
-    v.offer_swap = 0; v.in_use = 0; v.plan = null; v.enquiry_until = null;
-  } else if (mine) {
-    v.friend_enquiries = q1("SELECT COUNT(*) n FROM friend_enquiries WHERE week_id=? AND status='open'", w.id).n;
-    if (w.gained_by_request) v.income_cap = chargePerShare(w.year);   // let income on this week is capped (see confirmBooking)
-  }
-  v.pending_swaps = isFamily(u) ? q1("SELECT COUNT(*) n FROM swaps WHERE status IN ('pending','proposed') AND target_week_id=?", w.id).n : 0;
+    v.in_use = 0; v.plan = null; v.enquiry_until = null;
+  } else if (mine) v.friend_enquiries = q1("SELECT COUNT(*) n FROM friend_enquiries WHERE week_id=? AND status='open'", w.id).n;
   return v;
 }
 const today = () => new Date().toISOString().slice(0, 10);
-// A week can be asked for (or offered) in a swap if a family holds it, it isn't let/reserved, its family hasn't marked it in use, and it's in the future.
-const swappable = w => w.family_id != null && !w.in_use && !['pending', 'booked', 'syndicate'].includes(w.status) && w.start_date >= today();
 const thisYear = () => new Date().getFullYear();
 const sharesFor = (fid, year) => { const r = q1('SELECT units FROM family_shares WHERE family_id=? AND year=?', fid, year); return r ? r.units : (q1('SELECT share_units FROM families WHERE id=?', fid) || {}).share_units || 0; };
 function setShares(fid, year, units) {
@@ -378,29 +292,14 @@ const signedOff = year => year <= thisYear() || !!q1('SELECT 1 FROM year_status 
 const openYears = () => q('SELECT DISTINCT year FROM weeks ORDER BY year').map(r => r.year).filter(y => !signedOff(y));
 const familyBalance = fid => round2(q1('SELECT COALESCE(SUM(amount),0) n FROM ledger WHERE family_id=?', fid).n);
 const creditAvailable = fid => Math.max(0, -familyBalance(fid));
-// the service charge per share for a year, or the latest one set before it
-const chargePerShare = year => (q1('SELECT rate_per_week r FROM budget_years WHERE rate_per_week IS NOT NULL ORDER BY (year<=?) DESC, year DESC LIMIT 1', year) || {}).r ?? null;
 // Each week's setting: undecided | using | released (others can book it; income → that family's account, less the letting cost)
-// (Willing to swap was retired: once a year is signed off, weeks are only bought and sold; swaps are next-year change requests.)
 const PLANS = ['undecided', 'using', 'released'];
 const planOf = w => w.in_use ? 'using' : w.offer_friends ? 'released' : 'undecided';
-const swapWeekView = w => w && { id: w.id, year: w.year, week_no: w.week_no, start_date: w.start_date, end_date: w.end_date, season: w.season, comment: w.comment, school_holiday: w.school_holiday, credits: creditValue(w) };
+// the short form of a week used in lists (Enquiries, questions)
+const weekBrief = w => w && { id: w.id, year: w.year, week_no: w.week_no, start_date: w.start_date, end_date: w.end_date, season: w.season, comment: w.comment, school_holiday: w.school_holiday };
 
-// ---------------------------------------------------------------- credits & let income
-// Every week has a credit value from its band (school holiday / summer / shoulder / winter). The weights are scaled so that
-// a year's weeks add up to total shares × credits_per_share (5,200 for 52 shares, give or take rounding), whatever the number of weeks.
-let creditMemo = new Map();     // per-request cache of each year's scale factor
-const totalShares = () => q1('SELECT COALESCE(SUM(share_units),0) n FROM families WHERE active=1').n;
-function yearScale(year, s = settings()) {
-  if (creditMemo.has(year)) return creditMemo.get(year);
-  const raw = q('SELECT season, school_holiday FROM weeks WHERE year=?', year).reduce((a, w) => a + (Number(s['credit_' + bandOf(w)]) || 0), 0);
-  const k = raw ? totalShares() * Number(s.credits_per_share || 100) / raw : 0;
-  creditMemo.set(year, k); return k;
-}
-const creditValue = (w, s = settings()) => Math.round((Number(s['credit_' + bandOf(w)]) || 0) * yearScale(w.year, s));
+// ---------------------------------------------------------------- let income
 const daysBetween = (fromIso, toDate) => (Date.parse(toDate + 'T00:00:00Z') - Date.parse(fromIso.replace(' ', 'T') + (fromIso.length > 10 ? 'Z' : 'T00:00:00Z'))) / 864e5;
-// a release counts in full if made early_release_weeks or more before arrival, otherwise late_release_weight
-const releaseWeight = (w, s = settings()) => !w.released_at ? 0 : daysBetween(w.released_at, w.start_date) >= 7 * Number(s.early_release_weeks || 8) ? 1 : Number(s.late_release_weight ?? 0.5);
 // When trusted friends can book a released week. The family chooses when it releases (sale_to):
 //   all / own      straight away (after any enquirers' first refusal); 'own' = only the family's own trusted friends
 //   members_first  members_first_days later (but always from 3 weeks before arrival)
@@ -415,24 +314,19 @@ function friendsFrom(w, s = settings()) {
 // Let income: each paid let is credited to the family that released the week, less the letting cost, which goes to
 // the maintenance fund. Credit sits on the family's account and carries forward against future charges.
 function letIncome(year) {
-  const g = q1(`SELECT COALESCE(SUM(b.amount),0) n, COUNT(*) c, COALESCE(SUM(COALESCE(b.letting_cost,0) + COALESCE(b.fund_extra,0)),0) f FROM bookings b JOIN weeks w ON w.id=b.week_id WHERE b.status='confirmed' AND COALESCE(b.gift,0)=0 AND w.year=?`, year);
+  const g = q1(`SELECT COALESCE(SUM(b.amount),0) n, COUNT(*) c, COALESCE(SUM(COALESCE(b.letting_cost,0)),0) f FROM bookings b JOIN weeks w ON w.id=b.week_id WHERE b.status='confirmed' AND COALESCE(b.gift,0)=0 AND w.year=?`, year);
   return { gross: round2(g.n), lets: g.c, fund: round2(g.f), credited: round2(g.n - g.f) };
 }
-function creditSummary(year, s = settings()) {
-  const per = Number(s.credits_per_share || 100), weeks = q('SELECT * FROM weeks WHERE year=?', year), income = letIncome(year);
+// the Lets page and each household's account: weeks held and released, lets and the income credited, per household
+function letsSummary(year) {
+  const weeks = q('SELECT * FROM weeks WHERE year=?', year), income = letIncome(year);
   const rows = q('SELECT * FROM families WHERE active=1 ORDER BY name').map(f => {
     const held = weeks.filter(w => w.family_id === f.id);
-    const carried = q1('SELECT COALESCE(SUM(amount),0) n FROM credit_ledger WHERE family_id=? AND year=?', f.id, year).n;
-    const shares = sharesFor(f.id, year), value = held.reduce((a, w) => a + creditValue(w, s), 0), entitlement = shares * per + carried;
-    // differences from this year's uneven swaps are already settled by credits carried into next year
-    const settled = q1(`SELECT COALESCE(SUM(c.amount),0) n FROM credit_ledger c JOIN swaps sw ON sw.id=c.swap_id JOIN weeks t ON t.id=sw.target_week_id
-      WHERE c.family_id=? AND c.year=? AND t.year=?`, f.id, year + 1, year).n;
-    const lets = q1(`SELECT COUNT(*) c, COALESCE(SUM(b.amount - COALESCE(b.letting_cost,0) - COALESCE(b.fund_extra,0)),0) n FROM bookings b JOIN weeks w ON w.id=b.week_id WHERE b.status='confirmed' AND COALESCE(b.gift,0)=0 AND w.year=? AND b.seller_family_id=?`, year, f.id);
-    return { id: f.id, name: f.name, color: f.color, shares, carried, entitlement, weeks: held.length, value, settled, diff: value - entitlement + settled,
-      school_weeks: held.filter(w => w.school_holiday).length, released_weeks: held.filter(w => w.offer_friends && w.released_at).length, lets: lets.c, let_income: round2(lets.n) };
+    const lets = q1(`SELECT COUNT(*) c, COALESCE(SUM(b.amount - COALESCE(b.letting_cost,0)),0) n FROM bookings b JOIN weeks w ON w.id=b.week_id
+      WHERE b.status='confirmed' AND COALESCE(b.gift,0)=0 AND w.year=? AND b.seller_family_id=?`, year, f.id);
+    return { id: f.id, name: f.name, color: f.color, shares: sharesFor(f.id, year), weeks: held.length, released_weeks: held.filter(w => w.offer_friends && w.released_at).length, lets: lets.c, let_income: round2(lets.n) };
   });
-  const bands = Object.fromEntries(['school', 'summer', 'shoulder', 'winter'].map(b => [b, { credits: Math.round(Number(s['credit_' + b]) * yearScale(year, s)), weeks: weeks.filter(w => bandOf(w) === b).length }]));
-  return { year, per, bands, rows, income };
+  return { year, rows, income };
 }
 
 // Reminders: weeks still "undecided" get a nudge to their family admins at each reminder point (default 16 and 8 weeks before).
@@ -440,7 +334,7 @@ function runReminders() {
   const s = settings(); const points = String(s.reminder_weeks || '').split(',').map(Number).filter(n => n > 0).sort((a, b) => b - a);
   if (!points.length) return;
   const due = {};
-  for (const w of q("SELECT * FROM weeks WHERE family_id IS NOT NULL AND in_use=0 AND offer_friends=0 AND offer_swap=0 AND status='own_use' AND start_date > date('now') AND start_date <= date('now', ?)", `+${points[0] * 7} days`)) {
+  for (const w of q("SELECT * FROM weeks WHERE family_id IS NOT NULL AND in_use=0 AND offer_friends=0 AND status='own_use' AND start_date > date('now') AND start_date <= date('now', ?)", `+${points[0] * 7} days`)) {
     const days = daysBetween(today(), w.start_date);
     let bits = w.reminded, hit = false;
     points.forEach((p, i) => { if (days <= p * 7 && !(bits & (1 << i))) { hit = true; bits |= 1 << i; } });
@@ -451,33 +345,14 @@ function runReminders() {
   }
   const asked = w => { const n = openEnquiries(w.id).length; return n ? `, ${n} famil${n > 1 ? 'ies have' : 'y has'} enquired` : ''; };
   for (const [fid, ws] of Object.entries(due)) notify(familyAdmins(Number(fid)),
-    `Still undecided: ${ws.map(w => `week ${w.week_no} (${fmtDate(w.start_date)}${asked(w)})`).join('; ')}. Please mark ${ws.length > 1 ? 'them' : 'it'} Using it or Released. If you release a week and it lets, the payment, less the ${s.currency}${s.letting_cost} letting cost, is credited to your account.`, '#/weeks');
-}
-
-// Called whenever a week stops being available, so swap offers that depend on it don't hang around:
-//  - offers FOR the week are declined ('in_use') or voided (let / reserved / swapped)
-//  - offers that would GIVE the week in exchange are voided
-function releaseSwaps(w, why, byUser, exceptId = 0) {
-  for (const sw of q("SELECT * FROM swaps WHERE status IN ('pending','proposed') AND target_week_id=? AND id<>?", w.id, exceptId)) {
-    if (why === 'in_use') {
-      run("UPDATE swaps SET status='declined', decline_reason='in_use', responded_by=?, responded_at=datetime('now') WHERE id=?", byUser ? byUser.id : null, sw.id);
-      notify([sw.requester_id, ...familyAdmins(sw.from_family_id)], `${famName(w.family_id)} are using ${weekLabel(w)}, so your swap offer for it was declined.`, '#/enquiries');
-    } else {
-      run("UPDATE swaps SET status='void' WHERE id=?", sw.id);
-      notify([sw.requester_id], `Your swap offer for ${weekLabel(w)} lapsed because that week has been ${why}.`, '#/enquiries');
-    }
-  }
-  for (const sw of q("SELECT * FROM swaps WHERE status IN ('pending','proposed') AND offered_week_id=? AND id<>?", w.id, exceptId)) {
-    run("UPDATE swaps SET status='void' WHERE id=?", sw.id);
-    notify([sw.requester_id, ...familyAdmins(sw.to_family_id)], `A swap offer of ${weekLabel(w)} lapsed because that week is no longer available.`, '#/enquiries');
-  }
+    `Still undecided: ${ws.map(w => `week ${w.week_no} (${fmtDate(w.start_date)}${asked(w)})`).join('; ')}. Please mark ${ws.length > 1 ? 'them' : 'it'} Using it or Released. If you release a week and it lets, the payment, less the ${s.currency}${s.letting_cost} letting cost, is credited to your account.`, '#/calendar');
 }
 
 // ---------------------------------------------------------------- enquiries & first refusal
 const nowSql = () => new Date().toISOString().replace('T', ' ').slice(0, 19);
 const ordinal = n => n + (n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] || 'th');
 const openEnquiries = weekId => q("SELECT * FROM enquiries WHERE week_id=? AND status='open' ORDER BY created_at, id", weekId);
-const CLOSED_WHY = { using: 'they are using it', taken: 'it has been taken', swapped: 'it has been swapped', given: 'it has been given to another family' };
+const CLOSED_WHY = { using: 'they are using it', taken: 'it has been taken', given: 'it has been given to another family' };
 // close the queue for a week; the winning family's enquiry (if any) is marked won
 function closeEnquiries(w, reason, winnerFamily = null) {
   for (const e of openEnquiries(w.id)) {
@@ -487,7 +362,7 @@ function closeEnquiries(w, reason, winnerFamily = null) {
   }
 }
 // trusted friends can enquire about a week only while its family hasn't decided (not Using it or Released)
-const undecidedWeek = w => w.family_id != null && !w.in_use && !w.offer_swap && !w.offer_friends && w.status === 'own_use' && w.start_date >= today();
+const undecidedWeek = w => w.family_id != null && !w.in_use && !w.offer_friends && w.status === 'own_use' && w.start_date >= today();
 const openFriendEnquiries = weekId => q("SELECT * FROM friend_enquiries WHERE week_id=? AND status='open' ORDER BY created_at, id", weekId);
 // close friends' enquiries when the week stops being theirs to ask for. Friends aren't told which household holds a week.
 function closeFriendEnquiries(w, reason, s = settings()) {
@@ -497,8 +372,7 @@ function closeFriendEnquiries(w, reason, s = settings()) {
     notify([e.user_id], {
       using: `${weekLabel(w)} isn't available: the household is using it.`,
       taken: `${weekLabel(w)} has been booked by someone else, so your enquiry is closed.`,
-      swapped: `${weekLabel(w)} isn't available any more, so your enquiry is closed.`,
-      released: from ? `${weekLabel(w)} has been released. Syndicate members get the first chance; if it's still free you can book it from ${fmtDate(from)} on the Available weeks page.` : `${weekLabel(w)} has been released to syndicate members only, so your enquiry is closed.`,
+      released: from ? (from <= today() ? `${weekLabel(w)} has been released: you can book it now on the Available weeks page.` : `${weekLabel(w)} has been released. Syndicate members get the first chance; if it's still free you can book it from ${fmtDate(from)} on the Available weeks page.`) : `${weekLabel(w)} has been released to syndicate members only, so your enquiry is closed.`,
     }[reason] || `Your enquiry about ${weekLabel(w)} is closed.`, '#/bookings');
   }
 }
@@ -522,7 +396,7 @@ function resolveFirstRefusal() {
     if (winner) {
       const u = q1('SELECT * FROM users WHERE id=?', winner.user_id);
       try {
-        const price = memberPriceOf(w), method = winner.claim_method === 'account' && creditAvailable(winner.family_id) + 0.005 < price ? 'bank' : winner.claim_method;
+        const price = priceOf(w), method = winner.claim_method === 'account' && creditAvailable(winner.family_id) + 0.005 < price ? 'bank' : winner.claim_method;
         const b = createBooking(u, w, { method, guest_name: winner.claim_guest, party_size: winner.claim_party }, price);
         notify([winner.user_id, ...familyAdmins(winner.family_id)].filter((x, i, a) => a.indexOf(x) === i), b.status === 'confirmed'
           ? `Your family has ${weekLabel(w)}: it's booked and charged to your family account.`
@@ -531,7 +405,7 @@ function resolveFirstRefusal() {
     } else if (!waiting) {
       run("UPDATE weeks SET enquiry_until=MIN(enquiry_until, datetime('now')) WHERE id=?", w.id);
       for (const e of queue) run("UPDATE enquiries SET status='closed', close_reason=?, closed_at=datetime('now') WHERE id=?", e.claim === 'no' ? 'passed' : 'no_reply', e.id);
-      notify(familyAdmins(w.family_id), `Nobody who enquired took ${weekLabel(w)}, so it is now open to all members.`, '#/weeks');
+      notify(familyAdmins(w.family_id), `Nobody who enquired took ${weekLabel(w)}, so it is now open to all members.`, '#/calendar');
     }
   }
 }
@@ -543,21 +417,19 @@ function balances() {
 }
 function confirmBooking(b, byUser) {
   const s = settings(); const w = q1('SELECT * FROM weeks WHERE id=?', b.week_id);
-  const cost = round2(Math.min(b.amount, Number(s.letting_cost) || 0)), net = round2(b.amount - cost);
-  // a week gained through a change request earns its household no more than that year's service charge per share
-  const cap = w.gained_by_request && w.family_id === b.seller_family_id ? chargePerShare(w.year) : null;
-  const credit = cap != null ? round2(Math.min(net, cap)) : net, extra = round2(net - credit);
+  const cost = round2(Math.min(b.amount, Number(s.letting_cost) || 0)), credit = round2(b.amount - cost);
   const buyer = q1('SELECT * FROM users WHERE id=?', b.user_id), guest = b.guest_name || buyer.name;
-  run("UPDATE bookings SET status='confirmed', confirmed_at=datetime('now'), confirmed_by=?, letting_cost=?, fund_extra=? WHERE id=?", byUser.id, cost, extra || null, b.id);
+  run("UPDATE bookings SET status='confirmed', confirmed_at=datetime('now'), confirmed_by=?, letting_cost=? WHERE id=?", byUser.id, cost, b.id);
   if (credit > 0) run("INSERT INTO ledger (family_id,year,type,description,amount,booking_id,created_by) VALUES (?,?,'rental_credit',?,?,?,?)",
-    b.seller_family_id, w.year, `Week ${w.week_no} ${w.year} let to ${guest}: ${s.currency}${b.amount} less ${s.currency}${cost} letting cost${extra ? `, capped at ${s.currency}${cap} as the week came from a change request (${s.currency}${extra} to the maintenance fund)` : ''}`, -credit, b.id, byUser.id);
+    b.seller_family_id, w.year, `Week ${w.week_no} ${w.year} let to ${guest}: ${s.currency}${b.amount} less ${s.currency}${cost} letting cost`, -credit, b.id, byUser.id);
   run("UPDATE weeks SET status='booked' WHERE id=?", w.id);
   if (b.method === 'account') run("INSERT INTO ledger (family_id,year,type,description,amount,booking_id,created_by) VALUES (?,?,?,?,?,?,?)",
     b.buyer_family_id, w.year, 'purchase', `Bought week ${w.week_no} ${w.year} from ${famName(b.seller_family_id)}`, b.amount, b.id, byUser.id);
-  releaseSwaps(w, 'let', byUser);
   notify([b.user_id], `Confirmed: ${weekLabel(w)} is booked. Reference ${b.reference}.`, '#/bookings');
-  notify(familyAdmins(b.seller_family_id), `${weekLabel(w)} has been let to ${guest}. ${s.currency}${credit} has been credited to your account (the ${s.currency}${b.amount} paid, less the ${s.currency}${cost} letting cost${extra ? ` and ${s.currency}${extra} above the cap for a week gained by request, both to the maintenance fund` : ' for the maintenance fund'}).`, '#/account');
+  notify(familyAdmins(b.seller_family_id), `${weekLabel(w)} has been let to ${guest}. ${s.currency}${credit} has been credited to your account (the ${s.currency}${b.amount} paid, less the ${s.currency}${cost} letting cost for the maintenance fund).`, '#/account');
 }
+// the year the portal opens on: from October, next year if its weeks exist; otherwise this year
+const workingYear = () => { const y = thisYear() + (new Date().getMonth() >= 9 ? 1 : 0); return q1('SELECT 1 FROM weeks WHERE year=?', y) ? y : thisYear(); };
 
 // ---------------------------------------------------------------- routes
 const routes = [];
@@ -588,15 +460,13 @@ route('GET', '/api/me', ({ user }) => {
   need(user, true); resolveFirstRefusal(); const s = settings();
   const unread = q1('SELECT COUNT(*) n FROM notifications WHERE user_id=? AND read=0', user.id).n;
   const years = q('SELECT DISTINCT year FROM weeks ORDER BY year').map(r => r.year);
-  const pub = { member_requests: MEMBER_REQUESTS_OPEN, site_name: s.site_name, place_line: s.place_line, hero: s.hero_version || null, currency: s.currency, rate_summer: +s.rate_summer, rate_shoulder: +s.rate_shoulder, rate_winter: +s.rate_winter, rate_school: +s.rate_school, hold_days: +s.hold_days,
-    member_rate_pct: +s.member_rate_pct, members_first_days: +s.members_first_days, enquiry_hours: +s.enquiry_hours, early_release_weeks: +s.early_release_weeks, late_release_weight: +s.late_release_weight, letting_cost: +s.letting_cost, credits_per_share: +s.credits_per_share,
+  const pub = { site_name: s.site_name, place_line: s.place_line, hero: s.hero_version || null, currency: s.currency, rate_summer: +s.rate_summer, rate_shoulder: +s.rate_shoulder, rate_winter: +s.rate_winter, rate_school: +s.rate_school, hold_days: +s.hold_days,
+    members_first_days: +s.members_first_days, enquiry_hours: +s.enquiry_hours, letting_cost: +s.letting_cost,
     bank: { name: s.bank_name, account_name: s.bank_account_name, sort_code: s.bank_sort_code, account_no: s.bank_account_no, iban: s.bank_iban }, allow_member_account_charge: s.allow_member_account_charge === '1' };
   const fam = user.family_id ? q1('SELECT * FROM families WHERE id=?', user.family_id) : null;
-  // things waiting for this person: swap offers to answer or confirm (admins), first refusals to take or pass (any family member)
-  // Enquiries badge: swaps to answer or confirm, swap requests on the family's weeks still waiting for an answer, and first refusals
-  const pendingSwaps = !isFamily(user) ? 0 : (user.role === 'family_admin' ? q1("SELECT COUNT(*) n FROM swaps WHERE (status='pending' AND to_family_id=?) OR (status='proposed' AND from_family_id=?)", user.family_id, user.family_id).n
-      + q1(`SELECT COUNT(*) n FROM enquiries e JOIN weeks w ON w.id=e.week_id WHERE w.family_id=? AND e.status='open' AND e.reply IS NULL AND w.status='own_use' AND w.in_use=0
-          AND NOT EXISTS (SELECT 1 FROM swaps x WHERE x.enquiry_id=e.id AND x.status IN ('pending','proposed'))`, user.family_id).n
+  // the number on the Enquiries menu item: for family admins, enquiries and friends' enquiries waiting for an answer; for
+  // everyone in the family, unanswered questions about its weeks and first refusals to take or pass
+  const enquiryCount = !isFamily(user) ? 0 : (user.role === 'family_admin' ? q1(`SELECT COUNT(*) n FROM enquiries e JOIN weeks w ON w.id=e.week_id WHERE w.family_id=? AND e.status='open' AND e.reply IS NULL AND w.status='own_use' AND w.in_use=0`, user.family_id).n
       + q1("SELECT COUNT(*) n FROM friend_enquiries f JOIN weeks w ON w.id=f.week_id WHERE w.family_id=? AND f.status='open' AND w.in_use=0 AND w.status IN ('own_use','offered')", user.family_id).n : 0)
     + (isFamily(user) ? q1('SELECT COUNT(*) n FROM week_questions x JOIN weeks w ON w.id=x.week_id WHERE w.family_id=? AND x.reply IS NULL AND COALESCE(w.end_date, w.start_date) >= ?', user.family_id, today()).n : 0)
     + q1("SELECT COUNT(*) n FROM enquiries e JOIN weeks w ON w.id=e.week_id WHERE e.family_id=? AND e.status='open' AND e.claim IS NULL AND w.status='offered' AND w.enquiry_until > datetime('now')", user.family_id).n;
@@ -605,7 +475,7 @@ route('GET', '/api/me', ({ user }) => {
   const admin = realAdmin(user);
   const view_as = admin && viewAsOn() ? q("SELECT id, name, role, family_id FROM users WHERE active=1 AND is_site_admin=0 ORDER BY family_id, CASE role WHEN 'family_admin' THEN 0 WHEN 'family_member' THEN 1 ELSE 2 END, name")
     .map(u => ({ id: u.id, name: u.name, role: u.role, family: famName(u.family_id) })) : null;
-  return { user: publicUser(user), family, settings: pub, unread, years, open_years: openYears(), pendingSwaps, families,
+  return { user: publicUser(user), family, settings: pub, unread, years, open_years: openYears(), working_year: workingYear(), enquiryCount, families,
     viewing_as: user.viewer && admin ? { admin: admin.name } : null, view_as };
 });
 route('PUT', '/api/me', ({ user, body }) => {
@@ -643,26 +513,19 @@ route('GET', '/api/home', ({ user }) => {
       const w = W(e.week_id), pos = openEnquiries(w.id).findIndex(x => x.id === e.id) + 1;
       attention.push(e.claim === 'yes'
         ? { tone: 'info', title: `You've said yes to ${weekLabel(w)}`, detail: `Families who enquired before you have until ${when(w.enquiry_until)} to answer. If none of them take it, it's yours.`, link: '#/enquiries', cta: 'View' }
-        : { tone: 'urgent', title: `You have first refusal on ${weekLabel(w)}`, detail: `${famName(w.family_id)} have released it. You're ${ordinal(pos)} in the queue. Take it at ${money(memberPriceOf(w, s))} or pass before ${when(w.enquiry_until)}.`, link: '#/enquiries', cta: 'Take it or pass' });
+        : { tone: 'urgent', title: `You have first refusal on ${weekLabel(w)}`, detail: `${famName(w.family_id)} have released it. You're ${ordinal(pos)} in the queue. Take it at ${money(priceOf(w, s))} or pass before ${when(w.enquiry_until)}.`, link: '#/enquiries', cta: 'Take it or pass' });
     }
     if (admin) {
-      const offered = new Set();   // weeks with a swap offer are listed once, as the offer
-      for (const sw of q("SELECT * FROM swaps WHERE status='pending' AND to_family_id=? ORDER BY created_at", fid)) offered.add(sw.target_week_id) && attention.push({ tone: 'action',
-        title: `${famName(sw.from_family_id)} offer a swap for your ${weekLabel(W(sw.target_week_id))}`, detail: `They'd give you their ${weekLabel(W(sw.offered_week_id))} in exchange.`, link: '#/enquiries', cta: 'Review offer' });
-      for (const sw of q("SELECT * FROM swaps WHERE status='proposed' AND from_family_id=? ORDER BY proposed_at", fid)) attention.push({ tone: 'action',
-        title: `Confirm a swap with ${famName(sw.to_family_id)}`, detail: sw.picked
-          ? `They'd give you their ${weekLabel(W(sw.target_week_id))} for your ${weekLabel(W(sw.offered_week_id))}, which they picked from your weeks marked Willing to swap.`
-          : `They accepted ${q1('SELECT name FROM users WHERE id=?', sw.requester_id).name}'s offer of your ${weekLabel(W(sw.offered_week_id))} for their ${weekLabel(W(sw.target_week_id))}.`, link: '#/enquiries', cta: 'Confirm or decline' });
       for (const f of q(`SELECT f.*, u.name friend FROM friend_enquiries f JOIN weeks w ON w.id=f.week_id JOIN users u ON u.id=f.user_id WHERE w.family_id=? AND f.status='open' AND w.in_use=0 AND w.status IN ('own_use','offered') ORDER BY w.start_date`, fid)) attention.push({ tone: 'action',
         title: `${f.friend} (trusted friend) would like to book your ${weekLabel(W(f.week_id))}`, detail: `Let it to them at ${money(priceOf(W(f.week_id), s))}, or decline.${f.party_size ? ` Party of ${f.party_size}.` : ''}`, link: '#/enquiries', cta: 'Answer' });
       // enquiries waiting for an answer: not released, not in use, no "not sure yet" reply
       for (const r of q(`SELECT w.*, COUNT(e.id) n FROM enquiries e JOIN weeks w ON w.id=e.week_id WHERE w.family_id=? AND e.status='open' AND e.reply IS NULL AND w.status='own_use' AND w.in_use=0
-          AND NOT EXISTS (SELECT 1 FROM swaps x WHERE x.enquiry_id=e.id AND x.status IN ('pending','proposed')) GROUP BY w.id ORDER BY w.start_date`, fid)) if (!offered.has(r.id)) attention.push({ tone: 'action',
+          GROUP BY w.id ORDER BY w.start_date`, fid)) attention.push({ tone: 'action',
         title: `${r.n} famil${r.n > 1 ? 'ies have' : 'y has'} enquired about your ${weekLabel(r)}`, detail: 'Release it (they get first refusal), say you are using it, or reply not sure yet.', link: '#/enquiries', cta: 'Answer' });
       const horizon = Math.max(...String(s.reminder_weeks || '16').split(',').map(Number).filter(n => n > 0), 0) * 7;
-      const undecided = q("SELECT * FROM weeks WHERE family_id=? AND in_use=0 AND offer_friends=0 AND offer_swap=0 AND status='own_use' AND start_date >= ? AND start_date <= date(?, ?) ORDER BY start_date", fid, t, t, `+${horizon} days`);
+      const undecided = q("SELECT * FROM weeks WHERE family_id=? AND in_use=0 AND offer_friends=0 AND status='own_use' AND start_date >= ? AND start_date <= date(?, ?) ORDER BY start_date", fid, t, t, `+${horizon} days`);
       if (undecided.length) attention.push({ tone: 'action', title: `${undecided.length} of your weeks in the next ${horizon / 7} weeks ${undecided.length > 1 ? 'are' : 'is'} still undecided`,
-        detail: `${undecided.slice(0, 5).map(w => `week ${w.week_no} (${fmtDate(w.start_date)})`).join(', ')}${undecided.length > 5 ? '…' : ''}. If you release a week and it lets, the payment, less the ${s.currency}${s.letting_cost} letting cost, is credited to your account.`, link: '#/weeks', cta: 'See your weeks' });
+        detail: `${undecided.slice(0, 5).map(w => `week ${w.week_no} (${fmtDate(w.start_date)})`).join(', ')}${undecided.length > 5 ? '…' : ''}. If you release a week and it lets, the payment, less the ${s.currency}${s.letting_cost} letting cost, is credited to your account.`, link: '#/calendar', cta: 'See your weeks' });
       const bal = round2(q1('SELECT COALESCE(SUM(amount),0) n FROM ledger WHERE family_id=?', fid).n);
       if (bal > 0.005) attention.push({ tone: 'action', title: `Balance to pay: ${money(bal)}`, detail: `Pay ${s.bank_account_name} using reference ${famName(fid).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10)}-SC.`, link: '#/account', cta: 'View account' });
       const invited = q("SELECT name FROM users WHERE family_id=? AND active=1 AND email IS NOT NULL AND password_hash IS NULL", fid).map(r => r.name);
@@ -683,12 +546,11 @@ route('GET', '/api/home', ({ user }) => {
     .map(v => ({ week_id: v.id, year: v.year, title: weekLabel(v), price: v.price, band: bandOf(v), family: user.role === 'friend' ? null : v.family_name }));
   const myEnquiries = fam ? q("SELECT * FROM enquiries WHERE family_id=? AND status='open' ORDER BY created_at", fid).map(e => { const w = W(e.week_id), qn = openEnquiries(w.id);
     return { title: weekLabel(w), holder: famName(w.family_id), position: qn.findIndex(x => x.id === e.id) + 1, queue: qn.length, plan: planOf(w), week_id: w.id, year: w.year }; }) : [];
-  // family snapshot: credits and let income for the current year
+  // family snapshot: weeks released and let income for the working year
   let family = null;
   if (fam) {
-    const year = q1('SELECT 1 FROM weeks WHERE year=?', new Date().getFullYear() + (new Date().getMonth() >= 9 ? 1 : 0)) ? new Date().getFullYear() + (new Date().getMonth() >= 9 ? 1 : 0) : new Date().getFullYear();
-    const c = creditSummary(year, s), r = c.rows.find(x => x.id === fid);
-    family = { name: famName(fid), year, credits: r && { value: r.value, entitlement: r.entitlement, diff: r.diff, released: r.released_weeks, lets: r.lets, let_income: r.let_income },
+    const year = workingYear(), r = letsSummary(year).rows.find(x => x.id === fid);
+    family = { name: famName(fid), year, lets: r && { released: r.released_weeks, lets: r.lets, let_income: r.let_income },
       balance: admin ? round2(q1('SELECT COALESCE(SUM(amount),0) n FROM ledger WHERE family_id=?', fid).n) : null };
   }
   // site admin: syndicate-wide jobs and system health
@@ -705,7 +567,7 @@ route('GET', '/api/home', ({ user }) => {
     if (noAdmin.length) syndicate.push({ tone: 'urgent', title: `${noAdmin.join(', ')} ${noAdmin.length > 1 ? 'have' : 'has'} no family admin`, detail: 'Nobody can manage their weeks or answer enquiries.', link: '#/admin/users', cta: 'All users' });
     for (const { year } of q('SELECT DISTINCT year FROM budget_items ORDER BY year')) { const b = budgetSummary(year); if (b.total && !b.generated) syndicate.push({ tone: 'action', title: `${b.label || year} service charges not issued yet`, detail: `Expenditure ${money(b.total)} at ${money(b.rate)} a share.`, link: '#/admin/overview', cta: 'Payments' }); }
     const props = q("SELECT * FROM outgoing_proposals WHERE status='proposed'");
-    if (props.length) syndicate.push({ tone: 'action', title: `${props.length} expenditure proposal${props.length > 1 ? 's' : ''} to decide (${money(props.reduce((a, p) => a + p.amount, 0))})`, detail: 'Accept or reject them after the AGM or a board meeting.', link: '#/admin/budget', cta: 'Expenditure' });
+    if (props.length) syndicate.push({ tone: 'action', title: `${props.length} expenditure proposal${props.length > 1 ? 's' : ''} to decide (${money(props.reduce((a, p) => a + p.amount, 0))})`, detail: 'Accept or reject them after the AGM or a board meeting.', link: '#/admin/expenditure', cta: 'Expenditure' });
     const ny = new Date().getFullYear() + 1; if (!q1('SELECT 1 FROM weeks WHERE year=?', ny)) syndicate.push({ tone: 'action', title: `No weeks set up for ${ny} yet`, detail: 'Create the year and import its allocation.', link: '#/admin/weeks', cta: 'Weeks & allocation' });
     const demo = q1("SELECT COUNT(*) n FROM users WHERE active=1 AND email LIKE '%@example.com'").n;
     if (demo) syndicate.push({ tone: 'urgent', title: `${demo} demo logins are still active`, detail: 'Anyone who knows the demo password can log in. Add the real family admins, then remove the demo users, before families start using the site.', link: '#/admin/users', cta: 'All users' });
@@ -728,18 +590,17 @@ route('GET', '/api/home', ({ user }) => {
     if (b) return { ...base, household: b.guest_name || q1('SELECT name FROM users WHERE id=?', b.user_id).name, detail: `Guests, via ${famName(w.family_id)}`, status: b.status === 'confirmed' ? 'Booked' : 'Reserved',
       contact: user.is_site_admin || base.mine ? reach(q1('SELECT name, email, phone FROM users WHERE id=?', b.user_id)) : familyContact(w.family_id) };
     if (!w.family_id) return { ...base, household: 'Syndicate week', detail: '', status: 'Syndicate' };
-    return { ...base, household: famName(w.family_id), detail: '', contact: base.mine ? null : familyContact(w.family_id), status: { using: 'Using it', undecided: 'Allocated', swap: 'Allocated · willing to swap', released: 'Released' }[p] };
+    return { ...base, household: famName(w.family_id), detail: '', contact: base.mine ? null : familyContact(w.family_id), status: { using: 'Using it', undecided: 'Undecided', released: 'Released' }[p] };
   };
   const residence = { now: stay(q1('SELECT * FROM weeks WHERE start_date <= ? AND end_date > ? ORDER BY start_date DESC LIMIT 1', t, t)),
     next: q('SELECT * FROM weeks WHERE start_date > ? ORDER BY start_date LIMIT 3', t).map(stay) };
   const since = q1('SELECT MIN(created_at) d FROM users').d;
   if (user.role === 'site_admin') {
-    const year = q1('SELECT 1 FROM weeks WHERE year=?', new Date().getFullYear() + (new Date().getMonth() >= 9 ? 1 : 0)) ? new Date().getFullYear() + (new Date().getMonth() >= 9 ? 1 : 0) : new Date().getFullYear();
-    const c = creditSummary(year, s);
+    const year = workingYear(), c = letsSummary(year);
     const activity = q('SELECT a.*, u.name FROM audit a LEFT JOIN users u ON u.id=a.user_id ORDER BY a.id DESC LIMIT 8');
     const counts = { families: q1('SELECT COUNT(*) n FROM families WHERE active=1').n, logins: q1('SELECT COUNT(*) n FROM users WHERE active=1').n,
       released: q1("SELECT COUNT(*) n FROM weeks WHERE year=? AND offer_friends=1", year).n, enquiries: q1("SELECT COUNT(*) n FROM enquiries WHERE status='open'").n };
-    return { admin_home: true, residence, attention: syndicate, balances: balances(), credits: { year, rows: c.rows, income: c.income }, activity, counts, notifications: notes,
+    return { admin_home: true, residence, attention: syndicate, balances: balances(), lets: { year, rows: c.rows, income: c.income }, activity, counts, notifications: notes,
       system: { database: DB_FILE, volume: VOLUME || null, on_railway: ON_RAILWAY, data_since: since, email: !!(process.env.RESEND_API_KEY && process.env.EMAIL_FROM) } };
   }
   return { residence, attention, upcoming: [...trips, ...upcoming].sort((a, b) => a.start.localeCompare(b.start)).slice(0, 6), available, enquiries: myEnquiries, family, syndicate, notifications: notes,
@@ -756,29 +617,27 @@ route('PUT', '/api/weeks/:id', ({ user, params, body }) => {
   need(user, canManageFamily(user, w.family_id), 'Only this week’s family admin can change it');
   if (['pending', 'booked'].includes(w.status)) fail(400, 'This week has a booking. Cancel the booking first.');
   let plan = body.plan !== undefined ? body.plan : planOf(w);
-  if (plan === 'sell' || plan === 'swap_sell') plan = 'released';
-  if (plan === 'swap') plan = 'undecided';
   if (!PLANS.includes(plan)) fail(400, 'Unknown setting');
   const using = plan === 'using', sell = plan === 'released';
   const price = body.price_override === undefined ? w.price_override : body.price_override === '' || body.price_override == null ? null : Number(body.price_override);
   if (price != null && (isNaN(price) || price < 0)) fail(400, 'Price must be a positive number');
   const saleTo = ['members', 'members_first', 'all', 'own'].includes(body.sale_to) ? body.sale_to : w.sale_to;
   tx(() => {
-    run(`UPDATE weeks SET status=?, offer_friends=?, offer_swap=?, in_use=?, sale_to=?, price_override=?, note=?,
+    run(`UPDATE weeks SET status=?, offer_friends=?, in_use=?, sale_to=?, price_override=?, note=?,
       released_at=${sell ? (w.offer_friends ? 'released_at' : "datetime('now')") : 'NULL'} WHERE id=?`,
-      sell ? 'offered' : 'own_use', sell ? 1 : 0, 0, using ? 1 : 0, saleTo, price, body.note !== undefined ? body.note || null : w.note, w.id);
+      sell ? 'offered' : 'own_use', sell ? 1 : 0, using ? 1 : 0, saleTo, price, body.note !== undefined ? body.note || null : w.note, w.id);
     const now = q1('SELECT * FROM weeks WHERE id=?', w.id);
     if (sell && !w.offer_friends) {
       const s = settings(), enquirers = startFirstRefusal(now, s), rel = q1('SELECT * FROM weeks WHERE id=?', w.id);
       const skip = new Set(openEnquiries(w.id).map(e => e.family_id));
       notify(q("SELECT id, family_id FROM users WHERE active=1 AND role IN ('family_admin','family_member') AND family_id<>?", w.family_id).filter(r => !skip.has(r.family_id)).map(r => r.id),
-        `${famName(w.family_id)} have released ${weekLabel(rel)}. Members can book it at ${s.currency}${memberPriceOf(rel, s)}${enquirers ? ` once the families who enquired have had first refusal (until ${fmtDate(rel.enquiry_until.slice(0, 10))})` : ''}${friendsFrom(rel, s) > today() ? `, before it opens to trusted friends on ${fmtDate(friendsFrom(rel, s))}` : ''}.`, '#/calendar');
+        `${famName(w.family_id)} have released ${weekLabel(rel)}. Members can book it at ${s.currency}${priceOf(rel, s)}${enquirers ? ` once the families who enquired have had first refusal (until ${fmtDate(rel.enquiry_until.slice(0, 10))})` : ''}${friendsFrom(rel, s) > today() ? `, before it opens to trusted friends on ${fmtDate(friendsFrom(rel, s))}` : ''}.`, '#/calendar');
     }
     if (!sell && w.offer_friends) {   // un-released: any first-refusal window stops, the queue stays
       run('UPDATE weeks SET enquiry_until=NULL WHERE id=?', w.id);
       run("UPDATE enquiries SET claim=NULL, claim_method=NULL, claim_guest=NULL, claim_party=NULL, claimed_at=NULL WHERE week_id=? AND status='open'", w.id);
     }
-    if (using && !w.in_use) { releaseSwaps(now, 'in_use', user); closeEnquiries(now, 'using'); closeFriendEnquiries(now, 'using'); }
+    if (using && !w.in_use) { closeEnquiries(now, 'using'); closeFriendEnquiries(now, 'using'); }
     if (sell && !w.offer_friends) closeFriendEnquiries(q1('SELECT * FROM weeks WHERE id=?', w.id), 'released');
   });
   audit(user.id, 'week.update', { week: w.id, ...body });
@@ -797,7 +656,6 @@ function createBooking(user, w, body, price) {
     if (!r.changes) fail(409, 'Sorry — someone else has just booked this week');
     const ins = run("INSERT INTO bookings (week_id,user_id,seller_family_id,buyer_family_id,amount,method,status,reference,guest_name,party_size,notes,expires_at) VALUES (?,?,?,?,?,?,'pending',?,?,?,?,datetime('now', ?))",
       w.id, user.id, w.family_id, isFamily(user) ? user.family_id : null, price, method, ref, body.guest_name || null, Number(body.party_size) || null, body.notes || null, `+${Number(s.hold_days) || 3} days`);
-    releaseSwaps(w, 'reserved by someone buying it', user);
     closeEnquiries(w, 'taken', isFamily(user) ? user.family_id : null);
     closeFriendEnquiries(w, 'taken');
     return Number(ins.lastInsertRowid);
@@ -864,41 +722,13 @@ route('POST', '/api/admin/bookings/:id/confirm', ({ user, params }) => {
   tx(() => confirmBooking(b, user)); audit(user.id, 'booking.confirm', { booking: b.id }); return { ok: true };
 });
 
-// --- enquiries (and the swap offers of earlier versions)
+// --- enquiries
 // 1. A family member enquires about another family's week (not Using it, not let). Their family joins the queue for it.
-// 2. If the holder releases the week, enquirers get first refusal (enquiry_hours), first come first served, then all
-//    members, then trusted friends. Using it → the queue closes. Not sure yet → the enquirer is told and stays in the queue.
-// Swaps happen only as next-year change requests decided by the site admin; swap offers below are kept for old records.
-// (Older databases may hold swap offers where the requester named the week; those can still be accepted or declined.)
+// 2. The holder can give it to them free, release it (enquirers get first refusal for enquiry_hours, first come first
+//    served, then whoever the family chose under "who can book"), say they're using it (the queue closes), or reply not
+//    sure yet (the enquirer is told and keeps their place).
 const isAdminOf = (u, fid) => u && u.role === 'family_admin' && u.family_id === fid;
-function doSwap(sw, user) {
-  const a = q1('SELECT * FROM weeks WHERE id=?', sw.offered_week_id), b = q1('SELECT * FROM weeks WHERE id=?', sw.target_week_id);
-  if (a.family_id !== sw.from_family_id || b.family_id !== sw.to_family_id || !swappable(a) || ['pending', 'booked'].includes(b.status)) fail(409, 'One of the weeks has changed since this offer was made');
-  // Holders change for this year only; next year's allocation is unaffected. Both families now plan to use their new weeks.
-  run("UPDATE weeks SET family_id=?, status='own_use', offer_friends=0, offer_swap=0, in_use=1, released_at=NULL, enquiry_until=NULL, price_override=NULL, note=? WHERE id=?", sw.to_family_id, `Swapped from ${famName(sw.from_family_id)}`, a.id);
-  run("UPDATE weeks SET family_id=?, status='own_use', offer_friends=0, offer_swap=0, in_use=1, released_at=NULL, enquiry_until=NULL, price_override=NULL, note=? WHERE id=?", sw.from_family_id, `Swapped from ${famName(sw.to_family_id)}`, b.id);
-  // Uneven swap: the family that received the more valuable week has the difference taken off next year's credits, and the other gains it.
-  const diff = creditValue(b) - creditValue(a), cy = Math.max(a.year, b.year) + 1;
-  if (diff) {
-    const [gainer, payer] = diff > 0 ? [sw.to_family_id, sw.from_family_id] : [sw.from_family_id, sw.to_family_id];
-    const desc = `Swap of week ${a.week_no} ${a.year} (${creditValue(a)} credits) for week ${b.week_no} ${b.year} (${creditValue(b)} credits)`;
-    run('INSERT INTO credit_ledger (family_id,year,amount,description,swap_id,created_by) VALUES (?,?,?,?,?,?)', gainer, cy, Math.abs(diff), desc, sw.id, user.id);
-    run('INSERT INTO credit_ledger (family_id,year,amount,description,swap_id,created_by) VALUES (?,?,?,?,?,?)', payer, cy, -Math.abs(diff), desc, sw.id, user.id);
-  }
-  run("UPDATE swaps SET status='accepted', responded_by=?, responded_at=datetime('now') WHERE id=?", user.id, sw.id);
-  releaseSwaps(a, 'swapped', user, sw.id); releaseSwaps(b, 'swapped', user, sw.id);
-  closeEnquiries({ ...b, family_id: sw.from_family_id }, 'swapped', sw.from_family_id); closeEnquiries({ ...a, family_id: sw.to_family_id }, 'swapped');
-  closeFriendEnquiries(a, 'swapped'); closeFriendEnquiries(b, 'swapped');
-  notify([sw.requester_id, ...familyAdmins(sw.from_family_id), ...familyAdmins(sw.to_family_id)].filter(i => i !== user.id),
-    `Swap agreed! ${famName(sw.from_family_id)} now has ${weekLabel(b)} and ${famName(sw.to_family_id)} has ${weekLabel(a)}.`, '#/enquiries');
-  audit(user.id, 'swap.accept', { id: sw.id });
-}
-// Members enquire about another family's week from the calendar; the enquiry goes to that family's Enquiries page.
-// The holder can give it to them free, release it (enquirers get first refusal), or say they're using it.
-// Trusted friends' booking enquiries are separate. Set this to false to switch members' enquiries off again.
-const MEMBER_REQUESTS_OPEN = true;
 route('POST', '/api/enquiries', ({ user, body }) => {
-  if (!MEMBER_REQUESTS_OPEN) fail(400, 'Requests for other families’ weeks are switched off for now');
   need(user, isFamily(user), 'Only family members can enquire about weeks');
   resolveFirstRefusal();
   const w = q1('SELECT * FROM weeks WHERE id=?', body.week_id) || fail(404, 'Week not found');
@@ -913,8 +743,6 @@ route('POST', '/api/enquiries', ({ user, body }) => {
   notify(familyAdmins(w.family_id), `${user.name} (${famName(user.family_id)}) enquired about your ${weekLabel(w)}. On the Enquiries page you can give it to them free, release it (the families who asked get first refusal, first come first served) or say you’re using it.${queue.length > 1 ? ` ${queue.length} families have now asked.` : ''}`, '#/enquiries');
   audit(user.id, 'enquiry.create', { id }); return { id, position: pos, queue: queue.length };
 });
-// Swaps between families are no longer made during a signed-off year (see the next-year change requests).
-route('POST', '/api/enquiries/:id/pick', () => fail(400, 'Swaps are now only for next year’s allocation, through the site admin'));
 // the holder isn't sure yet: the requesting family is told and keeps its place in the queue
 route('POST', '/api/enquiries/:id/reply', ({ user, params }) => {
   const e = q1("SELECT * FROM enquiries WHERE id=? AND status='open'", params.id) || fail(404, 'This request is closed');
@@ -935,8 +763,7 @@ route('POST', '/api/enquiries/:id/give', ({ user, params }) => {
   const id = tx(() => {
     const ins = run(`INSERT INTO bookings (week_id,user_id,seller_family_id,buyer_family_id,amount,method,status,reference,notes,confirmed_at,confirmed_by,letting_cost,gift)
       VALUES (?,?,?,?,0,'account','confirmed',?,?,datetime('now'),?,0,1)`, w.id, e.user_id, w.family_id, e.family_id, ref, `Given free by ${user.name} after an enquiry`, user.id);
-    run("UPDATE weeks SET status='booked', offer_friends=0, offer_swap=0, in_use=0, enquiry_until=NULL WHERE id=?", w.id);
-    releaseSwaps(w, 'given to another family', user);
+    run("UPDATE weeks SET status='booked', offer_friends=0, in_use=0, enquiry_until=NULL WHERE id=?", w.id);
     closeEnquiries(w, 'given', e.family_id);
     closeFriendEnquiries(w, 'taken');
     return Number(ins.lastInsertRowid);
@@ -986,7 +813,7 @@ route('POST', '/api/friend-enquiries/:id/answer', ({ user, params, body }) => {
   const price = priceOf(w, s);
   const b = tx(() => {
     run("UPDATE friend_enquiries SET status='accepted', answered_by=?, closed_at=datetime('now') WHERE id=?", user.id, e.id);
-    run("UPDATE weeks SET status='offered', offer_friends=1, offer_swap=0, in_use=0, enquiry_until=NULL, released_at=COALESCE(released_at, datetime('now')) WHERE id=?", w.id);
+    run("UPDATE weeks SET status='offered', offer_friends=1, in_use=0, enquiry_until=NULL, released_at=COALESCE(released_at, datetime('now')) WHERE id=?", w.id);
     const bk = createBooking(friend, q1('SELECT * FROM weeks WHERE id=?', w.id), { method: 'bank', guest_name: e.guest_name, party_size: e.party_size, notes: `Let by ${user.name} after a booking enquiry` }, price);
     run('UPDATE friend_enquiries SET booking_id=? WHERE id=?', bk.id, e.id);
     return bk;
@@ -1000,39 +827,32 @@ route('GET', '/api/enquiries', ({ user }) => {
   const fid = user.family_id, s = settings(), now = nowSql();
   const view = e => {
     const w = q1('SELECT * FROM weeks WHERE id=?', e.week_id), queue = openEnquiries(w.id);
-    const offer = q1('SELECT * FROM swaps WHERE enquiry_id=? ORDER BY id DESC', e.id), ofw = offer && q1('SELECT * FROM weeks WHERE id=?', offer.offered_week_id);
-    const windowOpen = w.status === 'offered' && w.enquiry_until && w.enquiry_until > now, ours = e.family_id === fid, live = offer && ['pending', 'proposed'].includes(offer.status);
+    const windowOpen = w.status === 'offered' && w.enquiry_until && w.enquiry_until > now, ours = e.family_id === fid;
     const free = e.status === 'open' && !w.in_use && !['pending', 'booked', 'offered'].includes(w.status);
     return { id: e.id, status: e.status, close_reason: e.close_reason, message: e.message, created_at: e.created_at, claim: e.claim,
       family: famName(e.family_id), user: q1('SELECT name FROM users WHERE id=?', e.user_id).name, mine: ours,
-      week: { ...swapWeekView(w), family_name: famName(w.family_id), plan: planOf(w), state: w.status, member_price: memberPriceOf(w, s), first_refusal_until: windowOpen ? w.enquiry_until : null },
+      week: { ...weekBrief(w), family_name: famName(w.family_id), plan: planOf(w), state: w.status, price: priceOf(w, s), first_refusal_until: windowOpen ? w.enquiry_until : null },
       position: e.status === 'open' ? queue.findIndex(x => x.id === e.id) + 1 : null, queue: queue.length,
       can_claim: ours && e.status === 'open' && windowOpen, can_withdraw: ours && e.status === 'open' && (e.user_id === user.id || isAdminOf(user, fid)),
-      reply: e.reply, can_reply: free && !live && isAdminOf(user, w.family_id) && e.reply !== 'unsure',
+      reply: e.reply, can_reply: free && isAdminOf(user, w.family_id) && e.reply !== 'unsure',
       given: e.status === 'won' && !!q1("SELECT 1 FROM bookings WHERE week_id=? AND buyer_family_id=? AND gift=1 AND status='confirmed'", w.id, e.family_id),
-      can_give: e.status === 'open' && !w.in_use && !['pending', 'booked'].includes(w.status) && w.start_date >= today() && isAdminOf(user, w.family_id),
-      offer: offer && { id: offer.id, status: offer.status, picked: !!offer.picked, decline_reason: offer.decline_reason, offered: swapWeekView(ofw), by: q1('SELECT name FROM users WHERE id=?', offer.requester_id).name,
-        can_accept: offer.status === 'pending' && isAdminOf(user, offer.to_family_id), can_decline: live && isAdminOf(user, offer.to_family_id),
-        can_confirm: offer.status === 'proposed' && isAdminOf(user, offer.from_family_id), can_cancel: live && (offer.requester_id === user.id || isAdminOf(user, offer.from_family_id)) } };
+      can_give: e.status === 'open' && !w.in_use && !['pending', 'booked'].includes(w.status) && w.start_date >= today() && isAdminOf(user, w.family_id) };
   };
   const incoming = q(`SELECT e.* FROM enquiries e JOIN weeks w ON w.id=e.week_id WHERE w.family_id=? AND e.family_id<>?
     AND (e.status='open' OR e.closed_at > datetime('now','-60 days')) ORDER BY w.start_date, e.created_at, e.id`, fid, fid);
   const outgoing = q(`SELECT * FROM enquiries WHERE family_id=? AND (status='open' OR closed_at > datetime('now','-60 days')) ORDER BY status<>'open', created_at DESC`, fid);
-  const swaps = q("SELECT * FROM swaps WHERE status='accepted' AND (from_family_id=? OR to_family_id=?) ORDER BY responded_at DESC LIMIT 10", fid, fid).map(sw => ({
-    id: sw.id, from_family: famName(sw.from_family_id), to_family: famName(sw.to_family_id), at: sw.responded_at,
-    offered: swapWeekView(q1('SELECT * FROM weeks WHERE id=?', sw.offered_week_id)), target: swapWeekView(q1('SELECT * FROM weeks WHERE id=?', sw.target_week_id)) }));
   const admin = isAdminOf(user, fid), price = w => priceOf(w, s);
   const friends = q(`SELECT f.* FROM friend_enquiries f JOIN weeks w ON w.id=f.week_id WHERE w.family_id=? AND (f.status='open' OR f.closed_at > datetime('now','-30 days')) ORDER BY w.start_date, f.created_at`, fid).map(f => {
     const w = q1('SELECT * FROM weeks WHERE id=?', f.week_id), fr = q1('SELECT name, email, phone, family_id FROM users WHERE id=?', f.user_id), free = !w.in_use && !['pending', 'booked'].includes(w.status) && w.start_date >= today();
     return { id: f.id, status: f.status, close_reason: f.close_reason, created_at: f.created_at, message: f.message, guest_name: f.guest_name, party_size: f.party_size,
       friend: fr.name, friend_of: famName(fr.family_id), contact: admin ? { email: fr.email, phone: fr.phone } : null, price: price(w), members_asked: openEnquiries(w.id).length,
-      week: { ...swapWeekView(w), family_name: famName(w.family_id), plan: planOf(w), state: w.status, member_price: memberPriceOf(w, s), first_refusal_until: null },
+      week: { ...weekBrief(w), family_name: famName(w.family_id), plan: planOf(w), state: w.status, price: priceOf(w, s), first_refusal_until: null },
       can_answer: admin && f.status === 'open' && free };
   });
-  const qw = x => { const w = q1('SELECT * FROM weeks WHERE id=?', x.week_id); return { ...questionView(x), week: { ...swapWeekView(w), family_name: famName(w.family_id), plan: planOf(w), state: w.status, first_refusal_until: null }, can_reply: !x.reply && w.family_id === fid }; };
+  const qw = x => { const w = q1('SELECT * FROM weeks WHERE id=?', x.week_id); return { ...questionView(x), week: { ...weekBrief(w), family_name: famName(w.family_id), plan: planOf(w), state: w.status, first_refusal_until: null }, can_reply: !x.reply && w.family_id === fid }; };
   const questions_in = q(`SELECT x.* FROM week_questions x JOIN weeks w ON w.id=x.week_id WHERE w.family_id=? AND (x.reply IS NULL OR x.replied_at > datetime('now','-60 days')) ORDER BY w.start_date, x.id`, fid).map(qw);
   const questions_out = q(`SELECT * FROM week_questions WHERE family_id=? AND (reply IS NULL OR replied_at > datetime('now','-60 days')) ORDER BY id DESC`, fid).map(qw);
-  return { incoming: incoming.map(view), outgoing: outgoing.map(view), swaps, friends, questions_in, questions_out };
+  return { incoming: incoming.map(view), outgoing: outgoing.map(view), friends, questions_in, questions_out };
 });
 route('POST', '/api/enquiries/:id/claim', ({ user, params, body }) => {
   const e = q1("SELECT * FROM enquiries WHERE id=? AND status='open'", params.id) || fail(404, 'This enquiry is closed');
@@ -1042,7 +862,7 @@ route('POST', '/api/enquiries/:id/claim', ({ user, params, body }) => {
   if (body.want) {
     const method = body.method === 'account' ? 'account' : 'bank';
     if (method === 'account' && !(user.role === 'family_admin' || s.allow_member_account_charge === '1')) fail(403, 'Paying from the family account is not allowed for your login');
-    if (method === 'account' && creditAvailable(e.family_id) + 0.005 < memberPriceOf(w, s)) fail(400, `Your household’s credit doesn’t cover ${s.currency}${memberPriceOf(w, s)}. Top up from the Account page, or pay by bank transfer.`);
+    if (method === 'account' && creditAvailable(e.family_id) + 0.005 < priceOf(w, s)) fail(400, `Your household’s credit doesn’t cover ${s.currency}${priceOf(w, s)}. Top up from the Account page, or pay by bank transfer.`);
     run("UPDATE enquiries SET claim='yes', claim_method=?, claim_guest=?, claim_party=?, claimed_at=datetime('now'), user_id=? WHERE id=?", method, body.guest_name || user.name, Number(body.party_size) || null, user.id, e.id);
   } else run("UPDATE enquiries SET claim='no', claimed_at=datetime('now') WHERE id=?", e.id);
   resolveFirstRefusal();
@@ -1053,58 +873,8 @@ route('POST', '/api/enquiries/:id/claim', ({ user, params, body }) => {
 route('POST', '/api/enquiries/:id/withdraw', ({ user, params }) => {
   const e = q1("SELECT * FROM enquiries WHERE id=? AND status='open'", params.id) || fail(404, 'This enquiry is already closed');
   need(user, e.user_id === user.id || isAdminOf(user, e.family_id));
-  tx(() => {
-    run("UPDATE enquiries SET status='withdrawn', closed_at=datetime('now') WHERE id=?", e.id);
-    run("UPDATE swaps SET status='cancelled' WHERE enquiry_id=? AND status IN ('pending','proposed')", e.id);
-  });
+  run("UPDATE enquiries SET status='withdrawn', closed_at=datetime('now') WHERE id=?", e.id);
   resolveFirstRefusal();
-  return { ok: true };
-});
-route('POST', '/api/swaps/:id/accept', ({ user, params }) => {
-  const sw = q1("SELECT * FROM swaps WHERE id=? AND status='pending'", params.id) || fail(404, 'This swap offer is no longer open');
-  need(user, isAdminOf(user, sw.to_family_id), 'Only the family admin can accept a swap offer');
-  const by = q1('SELECT * FROM users WHERE id=?', sw.requester_id);
-  if (isAdminOf(by, sw.from_family_id)) { tx(() => doSwap(sw, user)); return { status: 'accepted' }; }
-  run("UPDATE swaps SET status='proposed', proposed_by=?, proposed_at=datetime('now') WHERE id=?", user.id, sw.id);
-  const w = q1('SELECT * FROM weeks WHERE id=?', sw.target_week_id), off = q1('SELECT * FROM weeks WHERE id=?', sw.offered_week_id);
-  notify([...familyAdmins(sw.from_family_id), sw.requester_id], `${famName(sw.to_family_id)} have accepted ${by.name}’s offer of your ${weekLabel(off)} for their ${weekLabel(w)}. Your family admin needs to confirm.`, '#/enquiries');
-  return { status: 'proposed' };
-});
-route('POST', '/api/swaps/:id/respond', ({ user, params, body }) => {
-  // holder declines a swap offer: 'in_use' (we're using it → the week becomes Using it, the queue closes) or 'unsure' (the enquiry stays in the queue)
-  const sw = q1("SELECT * FROM swaps WHERE id=? AND status IN ('pending','proposed')", params.id) || fail(404, 'This swap offer is no longer open');
-  need(user, isAdminOf(user, sw.to_family_id), 'Only the family admin can decline a swap offer');
-  const target = q1('SELECT * FROM weeks WHERE id=?', sw.target_week_id), reason = body.reason === 'in_use' ? 'in_use' : 'unsure';
-  tx(() => {
-    run("UPDATE swaps SET status='declined', decline_reason=?, responded_by=?, responded_at=datetime('now') WHERE id=?", reason, user.id, sw.id);
-    if (reason === 'in_use' && !['pending', 'booked'].includes(target.status)) {
-      run("UPDATE weeks SET in_use=1, offer_swap=0, offer_friends=0, status='own_use', released_at=NULL, enquiry_until=NULL WHERE id=?", target.id);
-      const now = q1('SELECT * FROM weeks WHERE id=?', target.id); releaseSwaps(now, 'in_use', user, sw.id); closeEnquiries(now, 'using'); closeFriendEnquiries(now, 'using');
-    }
-  });
-  notify([sw.requester_id, ...familyAdmins(sw.from_family_id)], reason === 'in_use'
-    ? `${famName(sw.to_family_id)} ${sw.picked ? 'withdrew the swap for' : 'declined the swap offer for'} ${weekLabel(target)}: they are using that week.`
-    : `${famName(sw.to_family_id)} ${sw.picked ? 'withdrew the swap they proposed for' : 'declined the swap offer for'} ${weekLabel(target)} for now. Your family stays in the queue for it.`, '#/enquiries');
-  audit(user.id, 'swap.decline', { id: sw.id, reason }); return { ok: true };
-});
-route('POST', '/api/swaps/:id/confirm', ({ user, params, body }) => {
-  const sw = q1("SELECT * FROM swaps WHERE id=? AND status='proposed'", params.id) || fail(404, 'Nothing to confirm');
-  need(user, isAdminOf(user, sw.from_family_id), 'Only your family admin can confirm a swap');
-  if (!body.accept) {
-    run("UPDATE swaps SET status='cancelled' WHERE id=?", sw.id);
-    const tw = q1('SELECT * FROM weeks WHERE id=?', sw.target_week_id), ow = q1('SELECT * FROM weeks WHERE id=?', sw.offered_week_id);
-    notify(familyAdmins(sw.to_family_id), sw.picked
-      ? `${famName(sw.from_family_id)} declined swapping their ${weekLabel(ow)} for your ${weekLabel(tw)}. They're still in the queue, so you can pick another of their weeks.`
-      : `${famName(sw.from_family_id)} have withdrawn their swap offer for ${weekLabel(tw)}.`, '#/enquiries');
-    return { ok: true };
-  }
-  tx(() => doSwap(sw, user)); return { ok: true };
-});
-route('POST', '/api/swaps/:id/cancel', ({ user, params }) => {
-  const sw = q1("SELECT * FROM swaps WHERE id=? AND status IN ('pending','proposed')", params.id) || fail(404, 'This swap offer is no longer open');
-  need(user, sw.requester_id === user.id || isAdminOf(user, sw.from_family_id));
-  run("UPDATE swaps SET status='cancelled' WHERE id=?", sw.id);
-  notify(familyAdmins(sw.to_family_id), `${famName(sw.from_family_id)} withdrew their swap offer for ${weekLabel(q1('SELECT * FROM weeks WHERE id=?', sw.target_week_id))}.`, '#/enquiries');
   return { ok: true };
 });
 
@@ -1134,9 +904,9 @@ function resetPlan(user) {
   const charge = y => { const b = budgetSummary(y); return { year: y, label: b.label, budget: b.total, charges: b.total ? b.raised : 0 }; };
   return {
     demo_logins: n("users WHERE lower(email) LIKE '%@example.com'"), proposals: n('outgoing_proposals'),
-    bookings: n('bookings'), enquiries: n('enquiries') + n('friend_enquiries') + n('week_questions'), swaps: n('swaps') + n('change_requests'), topups: n('topups'), bank_balances: n('bank_balances'), notifications: n('notifications'),
-    ledger_lines: n('ledger'), credit_lines: n('credit_ledger'),
-    weeks_reset: q1("SELECT COUNT(*) n FROM weeks WHERE family_id IS NOT NULL AND (status<>'own_use' OR offer_friends=1 OR offer_swap=1 OR in_use=1 OR price_override IS NOT NULL OR note IS NOT NULL OR gained_by_request=1 OR released_at IS NOT NULL)").n,
+    bookings: n('bookings'), enquiries: n('enquiries') + n('friend_enquiries') + n('week_questions'), topups: n('topups'), bank_balances: n('bank_balances'), notifications: n('notifications'),
+    ledger_lines: n('ledger'),
+    weeks_reset: q1("SELECT COUNT(*) n FROM weeks WHERE family_id IS NOT NULL AND (status<>'own_use' OR offer_friends=1 OR in_use=1 OR price_override IS NOT NULL OR note IS NOT NULL OR released_at IS NOT NULL)").n,
     paid: charge(RESET_PAID_YEAR), unpaid: charge(RESET_UNPAID_YEAR), signed_off: signedOff(RESET_UNPAID_YEAR) && RESET_UNPAID_YEAR > thisYear(),
   };
 }
@@ -1145,8 +915,8 @@ route('POST', '/api/admin/reset', ({ user, body }) => {
   needAdmin(user); if (body.confirm !== 'RESET') fail(400, 'Type RESET to confirm');
   const plan = resetPlan(user), cur = settings().currency;
   tx(() => {
-    for (const t of ['bookings', 'enquiries', 'friend_enquiries', 'swaps', 'change_requests', 'topups', 'bank_balances', 'notifications', 'credit_ledger', 'ledger', 'outgoing_proposals', 'week_questions', 'audit']) run(`DELETE FROM ${t}`);
-    run("UPDATE weeks SET status=CASE WHEN family_id IS NULL THEN 'syndicate' ELSE 'own_use' END, offer_friends=0, offer_swap=0, in_use=0, released_at=NULL, enquiry_until=NULL, price_override=NULL, note=NULL, sale_to='all', gained_by_request=0");
+    for (const t of ['bookings', 'enquiries', 'friend_enquiries', 'topups', 'bank_balances', 'notifications', 'ledger', 'outgoing_proposals', 'week_questions', 'audit']) run(`DELETE FROM ${t}`);
+    run("UPDATE weeks SET status=CASE WHEN family_id IS NULL THEN 'syndicate' ELSE 'own_use' END, offer_friends=0, in_use=0, released_at=NULL, enquiry_until=NULL, price_override=NULL, note=NULL, sale_to='all'");
     for (const [year, paid] of [[RESET_PAID_YEAR, true], [RESET_UNPAID_YEAR, false]]) {
       const b = budgetSummary(year); if (!b.total) continue;
       for (const f of b.split) {
@@ -1325,15 +1095,6 @@ route('POST', '/api/admin/families', ({ user, body }) => {
   const id = Number(run('INSERT INTO families (name,share_units,color) VALUES (?,?,?)', body.name.trim(), Math.max(0, Math.round(Number(body.share_units) || 0)), body.color || '#6b8f71').lastInsertRowid);
   return { id };
 });
-route('PUT', '/api/admin/families/:id', ({ user, params, body }) => {
-  needAdmin(user); const f = q1('SELECT * FROM families WHERE id=?', params.id) || fail(404, 'Not found');
-  if (body.year && body.share_units != null) {   // shares for one year
-    const units = Number(body.share_units); if (!(units >= 0)) fail(400, 'Shares must be a number');
-    setShares(f.id, Number(body.year), units); audit(user.id, 'family.shares', { family: f.name, year: Number(body.year), units }); return { ok: true };
-  }
-  run('UPDATE families SET name=?, share_units=?, color=?, active=? WHERE id=?', body.name ?? f.name, body.share_units != null ? Number(body.share_units) : f.share_units, body.color ?? f.color, body.active != null ? (body.active ? 1 : 0) : f.active, f.id);
-  return { ok: true };
-});
 // save the Families page for one year: names, colours, active, and that year's shares (active families must total 52)
 const TOTAL_SHARES = 52;
 route('POST', '/api/admin/families/save', ({ user, body }) => {
@@ -1353,12 +1114,6 @@ route('POST', '/api/admin/families/save', ({ user, body }) => {
     }
   });
   audit(user.id, 'family.save', { year, shares: Object.fromEntries(clean.map(r => [r.name, r.units])) }); return { ok: true };
-});
-route('POST', '/api/admin/families/shares-from-weeks', ({ user, body }) => {
-  needAdmin(user); const y = Number(body.year);
-  const rows = q('SELECT original_family_id fid, COUNT(*) n FROM weeks WHERE year=? AND original_family_id IS NOT NULL GROUP BY original_family_id', y);
-  if (!rows.length) fail(400, `No week allocation for ${y}`);
-  tx(() => { for (const r of rows) setShares(r.fid, y, r.n); }); audit(user.id, 'family.shares_from_weeks', { year: y }); return { ok: true };
 });
 route('POST', '/api/admin/years', ({ user, body }) => { needAdmin(user); return { weeks: generateYear(Number(body.year)) }; });
 route('PUT', '/api/admin/weeks/:id', ({ user, params, body }) => {
@@ -1386,7 +1141,7 @@ route('POST', '/api/admin/allocation/import', ({ user, body }) => {
       if (['pending', 'booked'].includes(w.status)) continue;
       const f = r.family ? findFam(r.family) : null;
       if (r.family && !f) { if (body.create_families) { const id = Number(run('INSERT INTO families (name,color) VALUES (?,?)', String(r.family).trim(), palette[fams.length % palette.length]).lastInsertRowid); fams.push({ id, name: String(r.family).trim() }); run("UPDATE weeks SET family_id=?, original_family_id=?, status='own_use' WHERE id=?", id, id, w.id); n++; } else unknown.add(r.family); continue; }
-      run('UPDATE weeks SET family_id=?, original_family_id=?, status=? , offer_friends=0, offer_swap=0 WHERE id=?', f ? f.id : null, f ? f.id : null, f ? 'own_use' : 'syndicate', w.id);
+      run('UPDATE weeks SET family_id=?, original_family_id=?, status=? , offer_friends=0 WHERE id=?', f ? f.id : null, f ? f.id : null, f ? 'own_use' : 'syndicate', w.id);
       if (r.season && ['summer', 'shoulder', 'winter'].includes(String(r.season).toLowerCase())) run('UPDATE weeks SET season=? WHERE id=?', String(r.season).toLowerCase(), w.id);
       n++;
     }
@@ -1406,7 +1161,7 @@ route('POST', '/api/admin/allocation/rotate', ({ user, body }) => {
   const N = src.length;
   tx(() => { for (const w of q('SELECT * FROM weeks WHERE year=?', to)) { if (['pending', 'booked'].includes(w.status)) continue;
     const s = src[((w.week_no - 1 - shift) % N + N) % N]; const f = w.week_no > N ? null : s.f;
-    run("UPDATE weeks SET family_id=?, original_family_id=?, status=?, offer_friends=0, offer_swap=0 WHERE id=?", f, f, f ? 'own_use' : 'syndicate', w.id); } });
+    run("UPDATE weeks SET family_id=?, original_family_id=?, status=?, offer_friends=0 WHERE id=?", f, f, f ? 'own_use' : 'syndicate', w.id); } });
   return { ok: true };
 });
 
@@ -1511,7 +1266,7 @@ route('POST', '/api/expenditure', ({ user, body }) => {
   if (!title) fail(400, 'Say what the expenditure is for'); if (body.amount === '' || body.amount == null || isNaN(amount) || amount < 0) fail(400, 'Enter an estimated cost');
   if (year < thisYear() || year > thisYear() + 5) fail(400, 'Choose a coming budget year');
   const id = run('INSERT INTO outgoing_proposals (family_id,user_id,year,title,amount,details) VALUES (?,?,?,?,?,?)', isFamily(user) ? user.family_id : null, user.id, year, title.slice(0, 200), round2(amount), String(body.details || '').trim().slice(0, 2000) || null).lastInsertRowid;
-  notify(siteAdmins().filter(i => i !== user.id), `${user.name}${isFamily(user) ? ` (${famName(user.family_id)})` : ''} proposed expenditure for the ${year} budget: ${title} (${settings().currency}${round2(amount)}). Accept or reject it after the AGM or a board meeting.`, '#/admin/budget');
+  notify(siteAdmins().filter(i => i !== user.id), `${user.name}${isFamily(user) ? ` (${famName(user.family_id)})` : ''} proposed expenditure for the ${year} budget: ${title} (${settings().currency}${round2(amount)}). Accept or reject it after the AGM or a board meeting.`, '#/admin/expenditure');
   audit(user.id, 'expenditure.propose', { id, year, title, amount }); return { id: Number(id) };
 });
 route('POST', '/api/expenditure/:id/withdraw', ({ user, params }) => {
@@ -1558,22 +1313,10 @@ route('POST', '/api/admin/expenditure/:id/decide', ({ user, params, body }) => {
   audit(user.id, accept ? 'expenditure.accept' : 'expenditure.reject', { id: p.id, meeting, year, amount, funding });
   return { ok: true, reissue: funding === 'budget' && issued ? year : null };
 });
-route('GET', '/api/credits', ({ user, query }) => {
-  need(user, isFamily(user) || user.is_site_admin, 'Credits are for syndicate families');
-  return creditSummary(Number(query.year) || new Date().getFullYear());
+route('GET', '/api/lets', ({ user, query }) => {
+  need(user, isFamily(user) || user.is_site_admin, 'Lets are for syndicate families');
+  return letsSummary(Number(query.year) || workingYear());
 });
-route('GET', '/api/credits/history', ({ user, query }) => {
-  need(user, isFamily(user) || user.is_site_admin);
-  const fid = user.is_site_admin && query.family_id ? Number(query.family_id) : user.family_id;
-  return q('SELECT * FROM credit_ledger WHERE family_id=? ORDER BY year DESC, id DESC', fid);
-});
-route('POST', '/api/admin/credits', ({ user, body }) => {
-  needAdmin(user); const amt = Math.round(Number(body.amount)); if (!amt) fail(400, 'Amount required');
-  run('INSERT INTO credit_ledger (family_id,year,amount,description,created_by) VALUES (?,?,?,?,?)', Number(body.family_id), Number(body.year), amt, body.description || 'Adjustment by site admin', user.id);
-  audit(user.id, 'credits.adjust', body); return { ok: true };
-});
-// The yearly pot has been replaced by crediting each let directly (see confirmBooking). Earlier distributions stay in the ledger.
-route('POST', '/api/admin/pot/distribute', () => fail(400, 'Let income is now credited to each household when the guest’s payment is confirmed'));
 // the site admin removes a payment or adjustment recorded by mistake. Lines that belong to a booking are reversed by
 // cancelling the booking, and service charges by re-issuing them, so neither can be removed here.
 route('DELETE', '/api/admin/ledger/:id', ({ user, params }) => {
@@ -1654,7 +1397,7 @@ const server = http.createServer(async (req, res) => {
       const chunks = []; let size = 0; for await (const c of req) { size += c.length; if (size > 5e6) fail(413, 'Too large'); chunks.push(c); }
       body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {};
     }
-    creditMemo = new Map(); contactMemo = new Map();
+    contactMemo = new Map();
     const r = routes.find(r => r.method === req.method && r.re.test(url.pathname)); if (!r) fail(404, 'Not found');
     const params = url.pathname.match(r.re).groups || {};
     const user = currentUser(req); actingAdmin = user && user.viewer || null;
@@ -1668,6 +1411,8 @@ const server = http.createServer(async (req, res) => {
 });
 
 // ---------------------------------------------------------------- demo seed (first run only)
+// Assumed English school holidays for the demo years; the site admin checks and adjusts them under Weeks.
+const SCHOOL_HOLIDAYS = { 2026: [8, 14, 15, 22, 31, 32, 33, 34, 35, 36, 44, 52, 53], 2027: [7, 13, 14, 22, 30, 31, 32, 33, 34, 35, 43, 51, 52] };
 const palette = ['#2f7d6d', '#c0603f', '#4a6fa5', '#b08a2e', '#7b5ea7', '#3e8e9e', '#a0485e', '#6b8f3a'];
 if (!q1('SELECT 1 FROM families')) {
   console.log('First run: loading syndicate families, the 2026 & 2027 allocations, the 2026 budget and demo logins…');
@@ -1695,7 +1440,7 @@ if (!q1('SELECT 1 FROM families')) {
   add('White', 'Demo family member', 'member@example.com', 'family_member', 0, 'Family');
   add('White', 'Demo trusted friend', 'friend@example.com', 'friend', 0, 'Friend');
   for (const n of names.filter(n => n !== 'White')) add(n, `${n} admin (demo)`, `${n.toLowerCase().replace(/[^a-z]/g, '')}@example.com`, 'family_admin');
-  // a few demo offers so the letting and swap features have something to show
+  // a few released weeks, weeks in use and enquiries so there's something to see
   const plan = (n, f) => run(`UPDATE weeks SET ${f} WHERE year=2027 AND week_no=?`, n);
   for (const n of [19, 33, 37, 52]) plan(n, "status='offered', offer_friends=1, released_at=datetime('now','-8 days')"); // released
   plan(25, "status='offered', offer_friends=1, released_at=datetime('now','-2 days')");              // released (members-only window)
@@ -1715,65 +1460,8 @@ if (!q1('SELECT 1 FROM families')) {
     ['Annual reserve towards drive', 1000, 'Regular', 'Agreed in 2022'], ['Provision for new electric heaters', 4000, '', 'Agreed for Summer 2026']];
   BUDGET_2026.forEach(([d, a, c, n], k) => run('INSERT INTO budget_items (year,category,description,amount,sort,notes) VALUES (2026,?,?,?,?,?)', c || null, d, a, k, n || null));
   run("INSERT INTO budget_years (year,label,rate_per_week) VALUES (2026,'July 2025 – June 2026',370)");
+  for (const f of q('SELECT id, share_units FROM families')) for (const y of [2026, 2027]) run('INSERT OR IGNORE INTO family_shares (family_id,year,units) VALUES (?,?,?)', f.id, y, f.share_units);
 }
-// One-off move from the yearly let-income pot to crediting each let directly: paid lets still waiting for a pot share-out
-// are credited now to the family that released the week, less the letting cost. Years already shared out stay as they were.
-if (!q1("SELECT 1 FROM settings WHERE key='income_model'")) {
-  const s = settings(); let n = 0;
-  tx(() => {
-    for (const b of q(`SELECT b.* FROM bookings b JOIN weeks w ON w.id=b.week_id WHERE b.status='confirmed'
-        AND NOT EXISTS (SELECT 1 FROM ledger l WHERE l.booking_id=b.id AND l.type='rental_credit') AND NOT EXISTS (SELECT 1 FROM ledger p WHERE p.pot_year=w.year)`)) {
-      const w = q1('SELECT * FROM weeks WHERE id=?', b.week_id), cost = round2(Math.min(b.amount, Number(s.letting_cost) || 0)), credit = round2(b.amount - cost);
-      const guest = b.guest_name || q1('SELECT name FROM users WHERE id=?', b.user_id).name;
-      run('UPDATE bookings SET letting_cost=? WHERE id=?', cost, b.id);
-      if (credit > 0) run("INSERT INTO ledger (family_id,year,type,description,amount,booking_id,created_by) VALUES (?,?,'rental_credit',?,?,?,?)",
-        b.seller_family_id, w.year, `Week ${w.week_no} ${w.year} let to ${guest}: ${s.currency}${b.amount} less ${s.currency}${cost} letting cost`, -credit, b.id, b.confirmed_by);
-      n++;
-    }
-    run("INSERT INTO settings (key,value) VALUES ('income_model','direct')");
-  });
-  if (n) console.log(`Let income: ${n} paid let(s) credited to the families that released them`);
-}
-// One-off: credits switched off for now, so every season is given the same value (friend prices per season are unaffected).
-if (!q1("SELECT 1 FROM settings WHERE key='credits_equal'")) tx(() => {
-  run("DELETE FROM settings WHERE key IN ('credit_school','credit_summer','credit_shoulder','credit_winter')");
-  run("INSERT INTO settings (key,value) VALUES ('credits_equal','1')");
-});
-// One-off: with member requests switched off, requests still open are closed (and any first-refusal window ends now).
-if (!MEMBER_REQUESTS_OPEN && !q1("SELECT 1 FROM settings WHERE key='member_requests_off'")) tx(() => {
-  for (const e of q("SELECT * FROM enquiries WHERE status='open'")) {
-    const w = q1('SELECT * FROM weeks WHERE id=?', e.week_id);
-    run("UPDATE enquiries SET status='closed', close_reason='switched_off', closed_at=datetime('now') WHERE id=?", e.id);
-    run("UPDATE weeks SET enquiry_until=MIN(enquiry_until, datetime('now')) WHERE id=? AND enquiry_until IS NOT NULL", w.id);
-    notify([e.user_id], `Requests for other families’ weeks are switched off for now, so your request for ${weekLabel(w)} has been closed. If it’s released, you can still book it from the calendar.`, '#/calendar');
-  }
-  run("INSERT INTO settings (key,value) VALUES ('member_requests_off','1')");
-});
-// One-off: change requests through the portal are removed, so any still waiting are closed and the families told.
-if (!q1("SELECT 1 FROM settings WHERE key='change_requests_removed'")) tx(() => {
-  for (const r of q("SELECT * FROM change_requests WHERE status='open'")) {
-    run("UPDATE change_requests SET status='lapsed', admin_note=?, decided_at=datetime('now') WHERE id=?", 'Change requests were removed from the portal', r.id);
-    const g = q1('SELECT * FROM weeks WHERE id=?', r.give_week_id);
-    notify(familyAdmins(r.family_id), `Allocation changes are now arranged directly with the site admin, so your request to change ${weekLabel(g)} has been closed. Please contact the site admin if you’d still like it.`, '#/calendar');
-  }
-  run("INSERT INTO settings (key,value) VALUES ('change_requests_removed','1')");
-});
-// One-off: shares become per year. Every existing year is pinned to today's figure, so changing one year leaves the others alone.
-if (!q1("SELECT 1 FROM settings WHERE key='shares_per_year'")) tx(() => {
-  const years = q('SELECT DISTINCT year FROM weeks UNION SELECT year FROM budget_years UNION SELECT DISTINCT year FROM budget_items').map(r => r.year);
-  for (const f of q('SELECT id, share_units FROM families')) for (const y of years) run('INSERT OR IGNORE INTO family_shares (family_id,year,units) VALUES (?,?,?)', f.id, y, f.share_units);
-  run("INSERT INTO settings (key,value) VALUES ('shares_per_year','1')");
-});
-// One-off: in-year swaps are retired. Willing to swap becomes Undecided; open swap offers lapse (the enquiries stay in the queue).
-if (!q1("SELECT 1 FROM settings WHERE key='in_year_swaps'")) tx(() => {
-  for (const sw of q("SELECT * FROM swaps WHERE status IN ('pending','proposed')")) {
-    run("UPDATE swaps SET status='void' WHERE id=?", sw.id);
-    notify([...new Set([sw.requester_id, ...familyAdmins(sw.from_family_id), ...familyAdmins(sw.to_family_id)])],
-      `Swaps during the year have been replaced by buying and selling, so the swap for ${weekLabel(q1('SELECT * FROM weeks WHERE id=?', sw.target_week_id))} has lapsed. Any enquiry stays in the queue.`, '#/enquiries');
-  }
-  run('UPDATE weeks SET offer_swap=0 WHERE offer_swap=1');
-  run("INSERT INTO settings (key,value) VALUES ('in_year_swaps','retired')");
-});
 // Until the site admin has set a password, print their set-up link on every start (visible in the host's logs).
 for (const u of q("SELECT name, invite_token FROM users WHERE is_site_admin=1 AND invite_token IS NOT NULL AND password_hash IS NULL")) console.log(`Site admin set-up link for ${u.name}: ${BASE_URL}/#/invite/${u.invite_token}`);
 

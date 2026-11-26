@@ -39,10 +39,10 @@ function currentTab() { return (location.hash.replace('#/', '').split('/')[0]) |
 async function route() {
   closeOverlay(); const tab = currentTab();
   if (tab === 'weeks') { S.filter = isFam() ? 'mine' : S.filter; location.replace('#/calendar'); return; }   // My weeks is retired: its links open the calendar
-  const allowed = new Set(navTabs().map(t => t[0].split('/')[0])); if (allowed.has('enquiries')) allowed.add('swaps');
+  const allowed = new Set(navTabs().map(t => t[0].split('/')[0]));
   if (!allowed.has(tab)) { if (location.hash !== '#/home') location.hash = '#/home'; else renderShell('home'); return; }
   renderShell(tab); const main = $('main');
-  const views = { home: viewHome, calendar: viewCalendar, enquiries: viewEnquiries, swaps: viewEnquiries, bookings: viewBookings, account: viewAccount, expenditure: viewExpenditure, people: viewPeople, admin: viewAdmin };
+  const views = { home: viewHome, calendar: viewCalendar, enquiries: viewEnquiries, bookings: viewBookings, account: viewAccount, expenditure: viewExpenditure, people: viewPeople, admin: viewAdmin };
   try { await (views[tab] || viewHome)(main); } catch (e) { main.innerHTML = `<div class="card empty">${esc(e.message)}</div>`; }
 }
 
@@ -82,7 +82,7 @@ function navOn(k, tab) {
 //   family member  → Home, Calendar, Enquiries, Bookings, Family & friends
 //   family admin   → the same plus Account (and setting plans for the family's weeks from the calendar, managing people)
 //   site admin     → a separate login with no family: Home, Calendar and the admin pages
-const ADMIN_PAGES = [['admin/overview', 'Payments'], ['admin/budget', 'Expenditure'], ['admin/weeks', 'Weeks'], ['admin/credits', 'Lets'], ['admin/families', 'Families'], ['admin/users', 'Users'], ['admin/settings', 'Settings'], ['admin/audit', 'Activity']];
+const ADMIN_PAGES = [['admin/overview', 'Payments'], ['admin/expenditure', 'Expenditure'], ['admin/weeks', 'Weeks'], ['admin/lets', 'Lets'], ['admin/families', 'Families'], ['admin/users', 'Users'], ['admin/settings', 'Settings'], ['admin/audit', 'Activity']];
 const isSiteRole = () => S.me.user.role === 'site_admin';
 // Who is logged in: name, role and household (site admins have no household). Escaped, ready for HTML.
 function whoAmI() {
@@ -92,11 +92,11 @@ function whoAmI() {
   return { name: esc(u.name), role: esc(role), house: esc(house), nameIsRole };
 }
 const NAV_ICON = { home: 'house', calendar: 'calendar-days', weeks: 'calendar-range', enquiries: 'messages-square', bookings: 'bed-double', account: 'wallet', people: 'users', admin: 'settings',
-  'admin/overview': 'banknote', 'admin/budget': 'receipt', expenditure: 'receipt', 'admin/weeks': 'calendar-range', 'admin/credits': 'coins', 'admin/families': 'users-round', 'admin/users': 'user-cog', 'admin/settings': 'settings', 'admin/audit': 'history' };
+  'admin/overview': 'banknote', 'admin/expenditure': 'receipt', expenditure: 'receipt', 'admin/weeks': 'calendar-range', 'admin/lets': 'coins', 'admin/families': 'users-round', 'admin/users': 'user-cog', 'admin/settings': 'settings', 'admin/audit': 'history' };
 function navTabs() {
   if (isSiteRole()) return [['home', 'Overview'], ['calendar', 'Calendar'], ...ADMIN_PAGES];
   const friend = S.me.user.role === 'friend', fam = isFam();
-  return [['home', 'Overview'], ['calendar', friend ? 'Available weeks' : 'Calendar'], fam && ['enquiries', 'Enquiries', S.me.pendingSwaps],
+  return [['home', 'Overview'], ['calendar', friend ? 'Available weeks' : 'Calendar'], fam && ['enquiries', 'Enquiries', S.me.enquiryCount],
     ['bookings', friend ? 'My bookings' : 'Bookings'], isFamAdmin() && ['account', 'Account'], isFamAdmin() && ['expenditure', 'Expenditure'], ['people', friend ? 'My details' : 'Family & friends'], isSite() && ['admin', 'Site admin']].filter(Boolean);
 }
 function renderShell(tab) {
@@ -218,7 +218,7 @@ async function viewHome(main) {
   const weekRow = (x, right) => `<button class="list-row" data-open-week="${x.week_id}" data-year="${x.year}"><span class="grow" style="min-width:0"><b>${esc(x.title)}</b><div class="tiny muted">${esc(x.detail || '')}</div></span>${right || ''}</button>`;
   const links = friend ? [['#/calendar', 'Browse available weeks'], ['#/bookings', 'My bookings'], ['#/people', 'Update my details']]
     : [['#/calendar', 'Browse the calendar'], ['#/weeks', isFamAdmin() ? 'Set your household’s weeks' : 'Your household’s weeks'], ['#/enquiries', 'Enquiries'], ['#/people', isFamAdmin() ? 'Add family or friends' : 'Add a trusted friend'], ...(isFamAdmin() ? [['#/account', 'Household account']] : [])];
-  const f = h.family, c = f && f.credits;
+  const f = h.family, c = f && f.lets;
   const going = h.upcoming.find(x => ['using', 'booked', 'reserved'].includes(x.plan)) || null;
   const upTag = x => x.plan === 'using' || x.plan === 'booked' ? '<span class="tag booked">Going</span>' : x.plan === 'reserved' ? '<span class="tag pending">Awaiting payment</span>' : x.plan === 'let' ? '<span class="tag booked">Let</span>' : x.plan === 'released' ? '<span class="tag available">Released</span>' : x.plan === 'swap' ? '<span class="tag outline">Will swap</span>' : '<span class="tag">Undecided</span>';
   main.innerHTML = `${welcomeHeader(greet)}${residenceStrip(h, going)}
@@ -228,8 +228,8 @@ async function viewHome(main) {
       ${panelCard('calendar-clock', 'Upcoming stays', h.upcoming.length ? h.upcoming.map(x => weekRow(x, upTag(x))).join('') : quiet(friend ? 'You have no upcoming stays yet.' : 'Nothing coming up.'), friend ? '' : '<a href="#/weeks">All your household’s weeks →</a>')}
       ${panelCard('key-round', friend ? 'Weeks you can book' : 'Weeks available to book', h.available.length ? h.available.map(x => weekRow({ ...x, detail: x.family ? `From ${x.family}` : '' }, `<span class="tag available">${money(x.price)}</span>`)).join('')
         : quiet('Nothing is available right now. You’ll get a notice when a week is released.'), `<a href="#/calendar">${friend ? 'All available weeks' : 'Open the calendar'} →</a>`)}
-      ${friend || !S.me.settings.member_requests ? '' : panelCard('messages-square', 'Your enquiries', h.enquiries.length ? h.enquiries.map(x => weekRow({ ...x, detail: `${x.holder} · ${PLAN[x.plan] ? PLAN[x.plan].label : ''}` }, `<span class="tag pending">${ordinal(x.position)} of ${x.queue}</span>`)).join('')
-        : quiet('Open any other household’s week on the calendar to enquire about it. If they release it, you get first refusal.'), '<a href="#/enquiries">All enquiries →</a>')}
+      ${friend ? '' : panelCard('messages-square', 'Your enquiries', h.enquiries.length ? h.enquiries.map(x => weekRow({ ...x, detail: `${x.holder} · ${PLAN[x.plan] ? PLAN[x.plan].label : ''}` }, `<span class="tag pending">${ordinal(x.position)} of ${x.queue}</span>`)).join('')
+        : quiet('Open any other household’s week on the calendar to enquire about it or ask a question.'), '<a href="#/enquiries">All enquiries →</a>')}
       ${f ? panelCard('coins', `${esc(f.name)} at a glance · ${f.year}`, `<dl class="kv" style="grid-template-columns:1fr auto">
           ${c ? `<dt>Weeks released</dt><dd class="num">${c.released}</dd>
           <dt>Let income credited</dt><dd class="num">${money(c.let_income, 2)} <span class="muted small">(${c.lets} let${c.lets === 1 ? '' : 's'})</span></dd>` : ''}
@@ -245,13 +245,13 @@ function adminHome(main, h, greet) {
   main.innerHTML = `${welcomeHeader(greet)}${residenceStrip(h)}
     <div class="grid-3" style="margin-bottom:var(--sp-6)">
       <div class="card"><span class="eyebrow">Households · logins</span><div class="stat num">${h.counts.families} <span class="small muted">· ${h.counts.logins}</span></div></div>
-      <div class="card"><span class="eyebrow">Weeks released in ${h.credits.year}</span><div class="stat num">${h.counts.released}</div><div class="small muted">${h.counts.enquiries} open enquir${h.counts.enquiries === 1 ? 'y' : 'ies'}</div></div>
-      <div class="card"><span class="eyebrow">${h.credits.year} lets</span><div class="stat num credit">${money(h.credits.income.credited, 2)}</div><div class="small muted">credited to households from ${h.credits.income.lets} let${h.credits.income.lets === 1 ? '' : 's'} · ${money(h.credits.income.fund, 2)} to the maintenance fund</div></div></div>
+      <div class="card"><span class="eyebrow">Weeks released in ${h.lets.year}</span><div class="stat num">${h.counts.released}</div><div class="small muted">${h.counts.enquiries} open enquir${h.counts.enquiries === 1 ? 'y' : 'ies'}</div></div>
+      <div class="card"><span class="eyebrow">${h.lets.year} lets</span><div class="stat num credit">${money(h.lets.income.credited, 2)}</div><div class="small muted">credited to households from ${h.lets.income.lets} let${h.lets.income.lets === 1 ? '' : 's'} · ${money(h.lets.income.fund, 2)} to the maintenance fund</div></div></div>
     <section class="stack" style="margin-bottom:var(--sp-6)"><div class="section-title"><h2>Outstanding actions</h2>${h.attention.length ? `<span class="muted small">${h.attention.length} to look at</span>` : ''}</div>
       ${h.attention.length ? h.attention.map(todoItem).join('') : todoItem({ tone: 'info', title: 'All clear', detail: 'No syndicate jobs waiting.' })}</section>
     <div class="home-grid">
       ${panelCard('wallet', 'Household balances', owing.length ? `<table><tbody>${owing.map(b => `<tr><td><a href="#/admin/account-${b.id}">${esc(b.name)}</a></td><td class="r num">${b.balance > 0 ? money(b.balance, 2) + ' owed' : money(-b.balance, 2) + ' credit'}</td></tr>`).join('')}</tbody></table>` : quiet('Every household is settled.'), '<a href="#/admin/overview">Payments and balances →</a>')}
-      ${panelCard('coins', `Lets ${h.credits.year}`, h.credits.rows.some(r => r.lets) ? `<table><tbody>${h.credits.rows.filter(r => r.lets).map(r => `<tr><td>${esc(r.name)}</td><td class="r num">${r.lets} let${r.lets === 1 ? '' : 's'}</td><td class="r num">${money(r.let_income, 2)}</td></tr>`).join('')}</tbody></table>` : quiet('No weeks let yet this year.'), '<a href="#/admin/credits">Lets →</a>')}
+      ${panelCard('coins', `Lets ${h.lets.year}`, h.lets.rows.some(r => r.lets) ? `<table><tbody>${h.lets.rows.filter(r => r.lets).map(r => `<tr><td>${esc(r.name)}</td><td class="r num">${r.lets} let${r.lets === 1 ? '' : 's'}</td><td class="r num">${money(r.let_income, 2)}</td></tr>`).join('')}</tbody></table>` : quiet('No weeks let yet this year.'), '<a href="#/admin/lets">Lets →</a>')}
       ${panelCard('history', 'Recent activity', h.activity.length ? h.activity.map(a => `<div class="list-row" style="cursor:default"><span class="grow small"><b>${esc(a.name || 'System')}</b> ${esc(a.action.replace('.', ' '))}<div class="tiny muted">${stamp(a.created_at)}</div></span></div>`).join('') : quiet('Nothing yet.'), '<a href="#/admin/audit">Activity log →</a>')}
       ${panelCard('bell', 'Recent notices', h.notifications.length ? h.notifications.map(n => `<a class="list-row ${n.read ? '' : 'unread'}" href="${esc(n.link || '#/home')}"><span class="grow small">${esc(n.text)}<div class="tiny muted">${stamp(n.created_at)}</div></span></a>`).join('') : quiet('No notices yet.'))}
       ${panelCard('arrow-right', 'Quick links', `<div class="quick">${ADMIN_PAGES.map(([k, l]) => `<a class="btn sm" href="#/${k}">${l}</a>`).join('')}<a class="btn sm" href="#/calendar">Calendar</a></div>`)}
@@ -269,16 +269,6 @@ const BAND = { school: 'School holidays', summer: 'Summer', shoulder: 'Shoulder'
 // who can book a released week; the family chooses when it releases
 const SALE_TO = () => ({ all: 'Members and trusted friends, straight away', members_first: `Members first for ${S.me.settings.members_first_days || 7} days, then trusted friends`,
   own: 'Members and our own trusted friends', members: 'Other syndicate members only' });
-function statusBadge(w) {
-  if (w.status === 'syndicate') return '<span class="badge">Syndicate</span>';
-  if (w.status === 'booked') return `<span class="badge blue">${w.booking?.gift ? `Given to ${esc(w.booking.given_to)}` : w.booking?.mine ? 'Your booking' : 'Let'}</span>`;
-  if (w.status === 'pending') return `<span class="badge amber">${w.booking?.mine ? 'Awaiting your payment' : 'Reserved'}</span>`;
-  if (S.me.user.role === 'friend') return w.can_book ? `<span class="badge green">${money(w.price)}</span>` : '';
-  const b = [];
-  if (w.plan === 'using') b.push('<span class="badge accent">In use</span>');
-  if (w.plan === 'released') b.push(`<span class="badge green">${money(w.price)}</span>`);
-  return b.join(' ');
-}
 // What a week means to the person looking: one of five muted states, always with a text label.
 function weekState(w) {
   const friend = S.me.user.role === 'friend', fam = esc(w.family_name);
@@ -302,12 +292,9 @@ function weekState(w) {
 function filterMatch(w) {
   switch (S.filter) {
     case 'book': return w.can_book;
-    case 'swap': return w.can_enquire || !!w.my_enquiry;
-    case 'enquire': return w.can_friend_enquire || !!w.my_friend_enquiry;
     case 'mine': return w.is_mine || w.booking?.mine || w.booking?.ours;
     // released weeks to buy, and other families' weeks they haven't decided about yet
     case 'open': return !w.is_mine && !!w.family_id && w.start_date >= todayStr() && !['pending', 'booked'].includes(w.status) && (w.plan === 'released' || w.plan === 'undecided');
-    case 'offered': return w.status === 'offered';
     default: return true;
   }
 }
@@ -320,7 +307,7 @@ async function viewCalendar(main) {
     : role === 'friend' ? [] : [['all', 'All weeks'], ['book', 'Available to buy']].filter(Boolean);
   if (!filters.filter(Boolean).some(([k]) => k === S.filter)) S.filter = 'all';
   const intro = isSiteRole() ? 'Every household’s weeks. Open a week to see it, or to change its settings on the household’s behalf.' : role === 'friend' ? 'Weeks marked <b>Book now</b> can be booked straight away. Weeks marked <b>Enquire</b> haven’t been decided yet: ask, and the household will let you know.'
-    : (S.me.settings.member_requests ? 'Open any other household’s week to enquire about it, or to book it if it’s been released. ' : 'Open a week to see it, or to book it if it’s been released. ') + 'Open one of your own weeks to set your plans for it.';
+    : 'Open any other household’s week to enquire about it, ask a question, or book it if it’s been released. '+ 'Open one of your own weeks to set your plans for it.';
   const byMonth = {};
   for (const w of S.weeks) (byMonth[w.start_date.slice(0, 7)] ||= []).push(w);
   const visible = S.weeks.filter(filterMatch).length;
@@ -350,7 +337,7 @@ async function openWeek(w) {
     <dt>Season</dt><dd><i class="season ${w.school_holiday ? 'school' : w.season}"></i> ${seasonName}${w.school_holiday ? ' · <b>school holidays</b>' : ''}</dd>
     ${role !== 'friend' ? `<dt>Holder</dt><dd><i class="swatch" style="background:${w.family_color}"></i> ${esc(w.family_name)}${w.original_family_id && w.original_family_id !== w.family_id ? ' <span class="muted small">(swapped)</span>' : ''}</dd>` : ''}
     ${w.status === 'offered' && w.offer_friends && (w.can_book || role !== 'friend') ? (role === 'friend' ? `<dt>Price</dt><dd><b>${money(w.price)}</b></dd>`
-      : `<dt>Price</dt><dd><b>${money(w.friend_price)}</b>${w.price_override != null ? ' <span class="muted small">(set by family)</span>' : ''}
+      : `<dt>Price</dt><dd><b>${money(w.price)}</b>${w.price_override != null ? ' <span class="muted small">(set by family)</span>' : ''}
         <div class="tiny muted">${w.sale_to === 'members' ? 'Members only' : (w.friends_from > todayStr() ? `Members only until ${dfmt(w.friends_from)}, then ` : 'Open to ') + (w.sale_to === 'own' ? `${esc(w.family_name)}’s trusted friends` : 'trusted friends')}</div></dd>`) : ''}
     ${w.note && role !== 'friend' ? `<dt>Note</dt><dd>${esc(w.note)}</dd>` : ''}
     ${w.booking?.gift ? `<dt>Given to</dt><dd>${esc(w.booking.given_to)} · <span class="badge green">Free</span><div class="tiny muted">${esc(w.family_name)} let them use it free of charge${w.booking.reference ? ` · ref ${esc(w.booking.reference)}` : ''}</div>${isSiteRole() ? `<button class="btn sm danger" data-admin-cancel style="margin-top:8px">${icon('x')}Cancel</button>` : ''}</dd>`
@@ -359,7 +346,6 @@ async function openWeek(w) {
   if (w.status === 'syndicate') html += '<div class="section notice">This week is held by the syndicate (e.g. maintenance or the extra 53rd week) and isn’t allocated to a family.</div>';
 
   html += relNote;
-  if (w.is_mine && w.gained_by_request && w.income_cap != null) html += `<div class="section notice small">This week came to your household through a change request. If you let it, your credit is capped at ${money(w.income_cap)} (the service charge per share); anything above that goes to the maintenance fund.</div>`;
   if (w.can_manage && !['pending', 'booked'].includes(w.status) && !past) {
     html += `<form class="section" id="offerForm"><div class="row between"><h3 style="margin:0">${w.is_mine ? 'Your family’s plans for this week' : `${esc(w.family_name)}’s plans for this week (as site admin)`}</h3></div>
       <div style="margin-top:10px">${planFields(w, s)}</div>
@@ -384,7 +370,7 @@ async function openWeek(w) {
   }
 
   if (isFam() && !w.is_mine && w.family_id) {
-    const enq = S.me.settings.member_requests && !past;
+    const enq = !past;
     if (enq) html += await enquirySection(w, s);
     html += questionsBlock(w, !!w.can_ask && !(enq && w.can_enquire));
   }
@@ -407,7 +393,7 @@ async function openWeek(w) {
   if (of) {
     bindPlanFields(of);
     of.onsubmit = guard(async e => { e.preventDefault(); const d = formData(of);
-      if (d.plan === 'using' && (w.pending_swaps || w.enquiries || w.friend_enquiries) && !confirm('Marking this week “Using it” closes the enquiries waiting for it. Continue?')) return;
+      if (d.plan === 'using' && (w.enquiries || w.friend_enquiries) && !confirm('Marking this week “Using it” closes the enquiries waiting for it. Continue?')) return;
       if (d.plan === 'released' && w.plan !== 'released' && w.enquiries && !confirm(`Release week ${w.week_no}? The ${w.enquiries} famil${w.enquiries > 1 ? 'ies' : 'y'} who enquired get first refusal for ${s.enquiry_hours || 48} hours, in queue order.`)) return;
       await api('/weeks/' + w.id, { method: 'PUT', body: d }); toast('Week updated'); closeOverlay(); viewCalendar($('main')); refreshMe(); });
   }
@@ -475,7 +461,7 @@ function payBox(ref, amount) {
 }
 
 // ------------------------------------------------------------ swaps
-const swapWeek = w => `<b>Week ${w.week_no}</b> ${w.year} <span class="muted">· ${range(w)}</span> <i class="season ${w.school_holiday ? 'school' : w.season}"></i>`;
+const weekTitle = w => `<b>Week ${w.week_no}</b> ${w.year} <span class="muted">· ${range(w)}</span> <i class="season ${w.school_holiday ? 'school' : w.season}"></i>`;
 const ordinal = n => n + (n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] || 'th');
 const whenTime = t => new Date(t.replace(' ', 'T') + 'Z').toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 const asked = t => dfmt(t.slice(0, 10));
@@ -510,12 +496,12 @@ function questionsBlock(w, withForm) {
 async function enquirySection(w, s) {
   const q = w.enquiries || 0;
   if (w.first_refusal_until) return w.my_enquiry
-    ? `<div class="section"><h3>Your family has first refusal</h3><p class="small" style="margin:0">${esc(w.family_name)} have released this week. You’re ${ordinal(w.my_enquiry.position)} of ${q} who enquired; whoever enquired first and says yes gets it. First refusal ends ${whenTime(w.first_refusal_until)}.</p>${claimForm(w.my_enquiry.id, w.member_price, w.my_enquiry.claim, w.first_refusal_until)}</div>`
+    ? `<div class="section"><h3>Your family has first refusal</h3><p class="small" style="margin:0">${esc(w.family_name)} have released this week. You’re ${ordinal(w.my_enquiry.position)} of ${q} who enquired; whoever enquired first and says yes gets it. First refusal ends ${whenTime(w.first_refusal_until)}.</p>${claimForm(w.my_enquiry.id, w.price, w.my_enquiry.claim, w.first_refusal_until)}</div>`
     : `<div class="section notice small">The families who enquired about this week have first refusal until ${whenTime(w.first_refusal_until)}. After that, any member can book it.</div>`;
   if (w.my_enquiry) return `<div class="section"><h3>Your family has enquired</h3><p class="small" style="margin:0">Asked on ${asked(w.my_enquiry.created_at)}. You’re <b>${ordinal(w.my_enquiry.position)} of ${q}</b> in the queue.
     ${esc(w.family_name)} can give it to your family free, or release it, when you’ll get first refusal for ${s.enquiry_hours || 48} hours, in queue order.</p><p class="small" style="margin:8px 0 0"><a href="#/enquiries">See it on the Enquiries page →</a></p></div>`;
   if (w.can_enquire) return `<form class="section" id="enqForm"><h3>Enquire about this week</h3>
-      <p class="muted small" style="margin-top:0">Your enquiry goes to ${esc(w.family_name)}’s Enquiries page. They can give the week to your family free, or release it: then families who enquired get first refusal for ${s.enquiry_hours || 48} hours at ${money(w.member_price)}, first come first served.${q ? ` <b>${q} famil${q > 1 ? 'ies have' : 'y has'} already enquired.</b>` : ''}</p>
+      <p class="muted small" style="margin-top:0">Your enquiry goes to ${esc(w.family_name)}’s Enquiries page. They can give the week to your family free, or release it: then families who enquired get first refusal for ${s.enquiry_hours || 48} hours at ${money(w.price)}, first come first served.${q ? ` <b>${q} famil${q > 1 ? 'ies have' : 'y has'} already enquired.</b>` : ''}</p>
       <div class="field"><label>What’s it about?</label>
         <label class="check"><input type="radio" name="kind" value="week" checked><span><b>We’d like this week</b>If they don’t need it. Your family joins the queue.</span></label>
         <label class="check" style="margin-top:8px"><input type="radio" name="kind" value="question"><span><b>Just a question</b>Arrival times, arriving a day early, anything. No queue.</span></label></div>
@@ -523,27 +509,14 @@ async function enquirySection(w, s) {
       <button class="btn primary">Enquire</button>${w.holder_contact ? `<p class="tiny muted" style="margin:14px 0 6px">Or ask ${w.holder_contact.name ? esc(w.holder_contact.name) : 'them'} directly:</p>${contactButtons(w.holder_contact)}` : ''}</form>`;
   return '';
 }
-function offerBox(e) {
-  const o = e.offer; if (!o) return '';
-  const st = { pending: `<span class="badge amber">Waiting for ${e.mine ? esc(e.week.family_name) : 'you'}</span>`, proposed: `<span class="badge amber">${o.picked ? 'Waiting' : 'Accepted; waiting'} for ${e.mine ? (isFamAdmin() ? 'you' : 'your family admin') : esc(e.family)} to confirm</span>`,
-    accepted: '<span class="badge green">Swapped</span>', declined: `<span class="badge">${o.decline_reason === 'in_use' ? 'Declined: in use' : 'Declined for now'}</span>`, cancelled: '<span class="badge">Withdrawn</span>', void: '<span class="badge">Lapsed</span>' }[o.status];
-  const btns = o.picked
-    ? [o.can_decline && `<button class="btn sm" data-dec-unsure="${o.id}">Withdraw</button>`, o.can_confirm && `<button class="btn green sm" data-confirm="${o.id}">Confirm swap</button><button class="btn sm" data-reject="${o.id}">Decline</button>`].filter(Boolean)
-    : [o.can_accept && `<button class="btn green sm" data-accept="${o.id}">Accept swap</button>`, o.can_decline && `<button class="btn sm" data-dec-inuse="${o.id}">Decline: we’re using it</button><button class="btn sm" data-dec-unsure="${o.id}">Decline: not sure yet</button>`,
-      o.can_confirm && `<button class="btn green sm" data-confirm="${o.id}">Confirm swap</button><button class="btn sm" data-reject="${o.id}">Withdraw offer</button>`, o.can_cancel && !o.can_confirm && `<button class="btn sm danger" data-cancel-offer="${o.id}">Withdraw offer</button>`].filter(Boolean);
-  const head = o.picked ? (e.mine ? `${esc(e.week.family_name)} picked your ${swapWeek(o.offered)} in exchange` : `You picked their ${swapWeek(o.offered)} in exchange`)
-    : `${e.mine ? 'You offer' : 'They offer'} ${swapWeek(o.offered)} <span class="tiny muted">by ${esc(o.by)}</span>`;
-  return `<div class="offer"><div class="row between"><div class="small">${head}</div>${st}</div>
-    ${btns.length ? `<div class="row" style="margin-top:8px;gap:8px">${btns.join('')}</div>` : ''}</div>`;
-}
 function incomingCard(g) {
   const w = g.week, open = g.items.filter(e => e.status === 'open'), fopen = g.friends.filter(f => f.status === 'open'), admin = isFamAdmin(), free = !['pending', 'booked'].includes(w.state);
   const planBtns = admin && free && (open.length || fopen.length) ? [['released', 'Release it'], ['using', 'We’re using it']].filter(([k]) => k !== w.plan)
     .map(([k, l]) => `<button class="btn sm" data-plan-week="${w.id}" data-plan="${k}">${l}</button>`).join('') : '';
-  return `<div class="card flat" style="padding:16px"><div class="row between"><div>${swapWeek(w)}</div><span class="badge">${PLAN[w.plan].label}</span></div>
+  return `<div class="card flat" style="padding:16px"><div class="row between"><div>${weekTitle(w)}</div><span class="badge">${PLAN[w.plan].label}</span></div>
     ${w.first_refusal_until ? `<p class="small" style="margin:8px 0 0">Released. The families who enquired have first refusal until ${whenTime(w.first_refusal_until)}.</p>` : ''}
     ${g.items.length ? `<ol class="queue">${g.items.map(e => `<li class="${e.status === 'open' ? '' : 'done'}"><div class="row between"><div><b>${esc(e.family)}</b> <span class="muted small">${esc(e.user)} · asked ${asked(e.created_at)}</span></div>${e.status === 'open' ? (e.claim === 'yes' ? '<span class="badge green">Said yes</span>' : e.claim === 'no' ? '<span class="badge">Passed</span>' : '') : enquiryStatus(e)}</div>
-      ${e.message ? `<div class="small" style="margin-top:4px">“${esc(e.message)}”</div>` : ''}${offerBox(e)}${pickBox(e, e.can_give ? `<button class="btn green sm" data-give="${e.id}" data-give-fam="${esc(e.family)}" data-give-week="${w.week_no}" data-give-others="${open.length - 1}" data-give-friends="${fopen.length}">Give it to them free</button>` : '')}</li>`).join('')}</ol>` : ''}
+      ${e.message ? `<div class="small" style="margin-top:4px">“${esc(e.message)}”</div>` : ''}${pickBox(e, e.can_give ? `<button class="btn green sm" data-give="${e.id}" data-give-fam="${esc(e.family)}" data-give-week="${w.week_no}" data-give-others="${open.length - 1}" data-give-friends="${fopen.length}">Give it to them free</button>` : '')}</li>`).join('')}</ol>` : ''}
     ${g.questions.length ? `<div class="small muted" style="margin:12px 0 0">Questions from other families</div>${g.questions.map(questionIn).join('')}` : ''}
     ${g.friends.length ? `<div class="small muted" style="margin:12px 0 0">Booking enquiries from trusted friends</div>${g.friends.map(friendEnquiry).join('')}` : ''}
     ${planBtns ? `<div class="row" style="margin-top:10px;gap:8px"><span class="tiny muted">Your plans for this week:</span>${planBtns}</div>` : ''}
@@ -557,7 +530,7 @@ function questionIn(x) {
       : x.can_reply ? `<div class="row" data-qbox="${x.id}" style="margin-top:8px;gap:8px;align-items:flex-end;flex-wrap:nowrap"><textarea rows="1" style="flex:1" placeholder="Your reply"></textarea><button class="btn sm primary" data-qreply="${x.id}">Reply</button></div>` : ''}</div>`;
 }
 function questionOut(x) {
-  return `<div class="card flat" style="padding:16px"><div class="row between"><div>${swapWeek(x.week)} <span class="muted small">· ${esc(x.week.family_name)}</span></div>${x.reply ? '<span class="badge green">Replied</span>' : '<span class="badge amber">Waiting for a reply</span>'}</div>
+  return `<div class="card flat" style="padding:16px"><div class="row between"><div>${weekTitle(x.week)} <span class="muted small">· ${esc(x.week.family_name)}</span></div>${x.reply ? '<span class="badge green">Replied</span>' : '<span class="badge amber">Waiting for a reply</span>'}</div>
     <p class="tiny muted" style="margin:6px 0 0">Question from ${esc(x.by)} on ${asked(x.created_at)}</p><div class="small" style="margin-top:4px">“${esc(x.message)}”</div>
     ${x.reply ? `<div class="small" style="margin-top:8px"><b>${esc(x.week.family_name)}</b>${x.replied_by ? ` <span class="muted">(${esc(x.replied_by)})</span>` : ''}: ${esc(x.reply)}</div>` : ''}</div>`;
 }
@@ -573,16 +546,16 @@ function friendEnquiry(f) {
 }
 // on the holder's side of an enquiry: tell them you're not sure yet (they keep their place in the queue)
 function pickBox(e, give = '') {
-  if (e.status !== 'open' || (e.offer && ['pending', 'proposed'].includes(e.offer.status))) return '';
+  if (e.status !== 'open') return '';
   const unsure = e.reply === 'unsure' ? '<span class="badge">You replied: not sure yet</span>' : e.can_reply ? `<button class="btn sm" data-unsure="${e.id}">Not sure yet</button><span class="tiny muted">They stay in the queue.</span>` : '';
   return give || unsure ? `<div class="row" style="margin-top:8px;gap:8px;flex-wrap:wrap;align-items:center">${give}${unsure}</div>` : '';
 }
 function outgoingCard(e) {
-  return `<div class="card flat" style="padding:16px"><div class="row between"><div>${swapWeek(e.week)} <span class="muted small">· ${esc(e.week.family_name)}</span></div>${enquiryStatus(e)}</div>
+  return `<div class="card flat" style="padding:16px"><div class="row between"><div>${weekTitle(e.week)} <span class="muted small">· ${esc(e.week.family_name)}</span></div>${enquiryStatus(e)}</div>
     <p class="tiny muted" style="margin:6px 0 0">${esc(e.user)} asked on ${asked(e.created_at)}${e.status === 'open' ? ` · they’ve marked it <b>${PLAN[e.week.plan].label}</b>` : ''}</p>
     ${e.message ? `<div class="small" style="margin-top:4px">“${esc(e.message)}”</div>` : ''}
-    ${e.can_claim ? claimForm(e.id, e.week.member_price, e.claim, e.week.first_refusal_until) : ''}
-    ${offerBox(e)}
+    ${e.can_claim ? claimForm(e.id, e.week.price, e.claim, e.week.first_refusal_until) : ''}
+    
     ${e.status === 'open' && e.reply === 'unsure' && !e.week.first_refusal_until ? `<p class="tiny muted" style="margin:8px 0 0"><b>${esc(e.week.family_name)} replied: not sure yet.</b> You stay in the queue.</p>` : ''}
     ${e.can_withdraw ? `<div class="row" style="margin-top:10px"><button class="btn sm danger" data-withdraw="${e.id}">Withdraw enquiry</button></div>` : ''}</div>`;
 }
@@ -602,12 +575,6 @@ function bindEnquiryActions(root, reload) {
   act('[data-qreply]', async b => { const t = b.closest('[data-qbox]').querySelector('textarea').value.trim(); if (!t) { toast('Write your reply first', true); return false; }
     await api(`/questions/${b.dataset.qreply}/reply`, { body: { reply: t } }); toast('Reply sent'); });
   act('[data-unsure]', async b => { await api(`/enquiries/${b.dataset.unsure}/reply`, { body: { reply: 'unsure' } }); toast('They’ve been told you’re not sure yet'); });
-  act('[data-accept]', async b => { if (!confirm('Accept this swap?')) return false; const r = await api(`/swaps/${b.dataset.accept}/accept`, { body: {} }); toast(r.status === 'accepted' ? 'Swap agreed' : 'Accepted. Their family admin now confirms'); });
-  act('[data-confirm]', async b => { if (!confirm('Confirm this swap? The two weeks change hands now, and both are marked “Using it”.')) return false; await api(`/swaps/${b.dataset.confirm}/confirm`, { body: { accept: true } }); toast('Swap agreed'); });
-  act('[data-reject]', async b => { if (!confirm('Decline this swap? Your family stays in the queue for the week.')) return false; await api(`/swaps/${b.dataset.reject}/confirm`, { body: { accept: false } }); toast('Swap declined'); });
-  act('[data-cancel-offer]', async b => { await api(`/swaps/${b.dataset.cancelOffer}/cancel`, { body: {} }); toast('Offer withdrawn'); });
-  act('[data-dec-inuse]', async b => { await api(`/swaps/${b.dataset.decInuse}/respond`, { body: { reason: 'in_use' } }); toast('Declined, and the week is now marked “Using it”'); });
-  act('[data-dec-unsure]', async b => { await api(`/swaps/${b.dataset.decUnsure}/respond`, { body: { reason: 'unsure' } }); toast('Withdrawn. They stay in the queue'); });
   act('[data-plan-week]', async b => { const plan = b.dataset.plan;
     if (plan === 'using' && !confirm('Mark this week “Using it”? The enquiries for it will close.')) return false;
     if (plan === 'released' && !confirm('Release this week? The families who enquired get first refusal, in queue order, then all members.')) return false;
@@ -618,17 +585,15 @@ function enquiryLists(d, opts = {}) {
   (d.questions_in || []).filter(x => !opts.openOnly || !x.reply).forEach(x => group(x.week).questions.push(x));
   d.incoming.filter(e => !opts.openOnly || e.status === 'open').forEach(e => group(e.week).items.push(e));
   (d.friends || []).filter(f => !opts.openOnly || f.status === 'open').forEach(f => group(f.week).friends.push(f));
-  const out = d.outgoing.filter(e => !opts.openOnly || e.status === 'open'), mine = S.me.settings.member_requests, qout = (d.questions_out || []).filter(x => !opts.openOnly || !x.reply);
-  const about = Object.values(groups).sort((a, b) => a.week.start_date.localeCompare(b.week.start_date)).map(incomingCard).join('') || `<div class="card flat empty small">${mine ? 'No enquiries about your weeks' : 'No booking enquiries from trusted friends at the moment'}</div>`;
-  if (!mine) return `<section class="stack" style="max-width:760px">${about}</section>`;
+  const out = d.outgoing.filter(e => !opts.openOnly || e.status === 'open'), qout = (d.questions_out || []).filter(x => !opts.openOnly || !x.reply);
+  const about = Object.values(groups).sort((a, b) => a.week.start_date.localeCompare(b.week.start_date)).map(incomingCard).join('') || '<div class="card flat empty small">No enquiries or questions about your weeks</div>';
   return `<div class="grid-2"><section class="stack"><h3 style="margin-bottom:0">About your family’s weeks</h3>${about}</section>
     <section class="stack"><h3 style="margin-bottom:0">Your family’s enquiries</h3>${out.map(outgoingCard).join('') + qout.map(questionOut).join('') || '<div class="card flat empty small">None yet. Click another family’s week on the calendar to enquire or ask a question.</div>'}</section></div>`;
 }
 async function viewEnquiries(main) {
   const d = await api('/enquiries'), s = S.me.settings;
-  main.innerHTML = `<h1>Enquiries</h1>${s.member_requests ? `<p class="muted">Enquire about any other family’s week marked <b>Enquire</b> on the calendar: your enquiry appears here and on their Enquiries page. The family that holds the week can give it to you free, or release it, when those who enquired get first refusal for ${s.enquiry_hours || 48} hours, first come first served; then it opens to all members, then trusted friends. You can also ask a question about any other family’s week, even one they’re using (what time they’re leaving, whether you could arrive a day early): it doesn’t join the queue, and they reply here. Trusted friends can also ask to book your weeks that are still <b>Undecided</b>: you can let the week to them at the friend price, or decline. For changes to next year’s allocation, ask the site admin.</p>` : `<p class="muted">Trusted friends can ask to book your household’s weeks that are still <b>Undecided</b>. You can let the week to them at the friend price, or decline. (Members asking for other families’ weeks is switched off for now.)</p>`}
-    ${enquiryLists(d)}
-    ${d.swaps.length ? `<h2 style="margin-top:32px">Recent swaps</h2><div class="table-wrap"><table><tbody>${d.swaps.map(x => `<tr><td class="small">${asked(x.at)}</td><td>${esc(x.from_family)} gave ${swapWeek(x.offered)}</td><td>${esc(x.to_family)} gave ${swapWeek(x.target)}</td></tr>`).join('')}</tbody></table></div>` : ''}`;
+  main.innerHTML = `<h1>Enquiries</h1><p class="muted">Enquire about any other family’s week marked <b>Enquire</b> on the calendar: your enquiry appears here and on their Enquiries page. The family that holds the week can give it to you free, or release it, when those who enquired get first refusal for ${s.enquiry_hours || 48} hours, first come first served; then it opens to all members, then trusted friends. You can also ask a question about any other family’s week, even one they’re using (what time they’re leaving, whether you could arrive a day early): it doesn’t join the queue, and they reply here. Trusted friends can also ask to book your weeks that are still <b>Undecided</b>: you can let the week to them at the friend price, or decline. For changes to next year’s allocation, ask the site admin.</p>
+    ${enquiryLists(d)}`;
   bindEnquiryActions(main, () => viewEnquiries(main));
 }
 
@@ -660,8 +625,8 @@ async function viewBookings(main) {
 // ------------------------------------------------------------ family account
 async function viewAccount(main, familyId) {
   const year = S.myYear || S.year, s = S.me.settings;
-  const [a, enq, cs] = await Promise.all([api('/account' + (familyId ? '?family_id=' + familyId : '')), familyId ? null : api('/enquiries'), api('/credits?year=' + year)]);
-  const me = cs.rows.find(r => r.id === (familyId ? Number(familyId) : S.me.user.family_id)) || { value: 0, entitlement: 0, diff: 0, lets: 0, let_income: 0, released_weeks: 0, carried: 0 };
+  const [a, enq, cs] = await Promise.all([api('/account' + (familyId ? '?family_id=' + familyId : '')), familyId ? null : api('/enquiries'), api('/lets?year=' + year)]);
+  const me = cs.rows.find(r => r.id === (familyId ? Number(familyId) : S.me.user.family_id)) || { lets: 0, let_income: 0, released_weeks: 0 };
   const canRm = !!familyId && isSiteRole();   // the site admin can remove a payment or adjustment recorded by mistake
   const typeName = { service_charge: 'Service charge', rental_credit: 'Letting income', purchase: 'Week purchase', payment: 'Payment', adjustment: 'Adjustment' };
   const owes = a.balance > 0.005;
@@ -839,13 +804,14 @@ function bindProposals(root, reload) {
 
 // ------------------------------------------------------------ site admin
 async function viewAdmin(main) {
-  const sub = location.hash.split('/')[2] || 'overview';
-  const tabs = [['overview', 'Payments & balances'], ['budget', 'Expenditure'], ['weeks', 'Weeks & allocation'], ['credits', 'Lets'], ['families', 'Families'], ['users', 'All users'], ['settings', 'Settings & rates'], ['audit', 'Activity log']];
-  main.innerHTML = isSiteRole() ? `<h1>${(tabs.find(t => t[0] === sub) || tabs[0])[1]}</h1><div id="adm"></div>`
-    : `<h1>Site admin</h1><div class="subtabs">${tabs.map(([k, l]) => `<a href="#/admin/${k}" class="${k === sub ? 'on' : ''}">${l}</a>`).join('')}</div><div id="adm"></div>`;
-  const el = $('#adm', main);
+  const raw = location.hash.split('/')[2] || 'overview', sub = { budget: 'expenditure', credits: 'lets' }[raw] || raw;   // older addresses still work
+  const pages = { overview: ['Payments', admOverview], expenditure: ['Expenditure', admExpenditure], weeks: ['Weeks', admWeeks], lets: ['Lets', admLets],
+    families: ['Families', admFamilies], users: ['Users', admUsers], settings: ['Settings', admSettings], audit: ['Activity', admAudit] };
   if (sub.startsWith('account-')) return viewAccount(main, sub.split('-')[1]);
-  await ({ overview: admOverview, budget: admBudget, weeks: admWeeks, credits: admCredits, families: admFamilies, users: admUsers, settings: admSettings, audit: admAudit }[sub] || admOverview)(el);
+  const [title, view] = pages[sub] || pages.overview;
+  main.innerHTML = isSiteRole() ? `<h1>${title}</h1><div id="adm"></div>`
+    : `<h1>Site admin</h1><div class="subtabs">${Object.entries(pages).map(([k, [l]]) => `<a href="#/admin/${k}" class="${k === sub ? 'on' : ''}">${l}</a>`).join('')}</div><div id="adm"></div>`;
+  await view($('#adm', main));
 }
 async function admOverview(el, year) {
   const [o, c, bank] = await Promise.all([api('/admin/overview'), api('/admin/charges' + (year || S.chargeYear ? '?year=' + (year || S.chargeYear) : '')), api('/admin/bank-balances')]);
@@ -925,7 +891,7 @@ async function admOverview(el, year) {
       await api('/admin/ledger', { body: { ...d, family_id: r.id } }); closeOverlay(); toast('Recorded'); reload(); });
   });
 }
-async function admBudget(el, year) {
+async function admExpenditure(el, year) {
   year = year || S.budgetYear || Math.max(...S.me.years.filter(y => y <= new Date().getFullYear()), new Date().getFullYear() - 1); S.budgetYear = year;
   const [b, od] = await Promise.all([api('/admin/budget?year=' + year), api('/expenditure')]);
   const years = [...new Set([...b.years, year, year + 1])].sort();
@@ -947,8 +913,8 @@ async function admBudget(el, year) {
         <dt>Charge per week</dt><dd class="num">${money(b.rate, 2)}</dd><dt>Status</dt><dd>${b.generated ? '<span class="badge green">Issued</span>' : '<span class="badge amber">Not issued</span>'}</dd></dl>
       <a class="btn block" href="#/admin/overview" id="toPay" style="margin-top:14px">Issue and record payments →</a></div>
       ${doneP.length ? `<h3 style="margin:8px 0 0">Proposals decided for ${year}</h3>${doneP.map(p => proposalCard(p, true)).join('')}` : ''}</section></div>`;
-  const reload = () => admBudget(el, year);
-  el.querySelectorAll('[data-y]').forEach(x => x.onclick = () => admBudget(el, Number(x.dataset.y)));
+  const reload = () => admExpenditure(el, year);
+  el.querySelectorAll('[data-y]').forEach(x => x.onclick = () => admExpenditure(el, Number(x.dataset.y)));
   el.querySelectorAll('tr[data-id] input').forEach(inp => inp.onchange = guard(async () => { await api('/admin/budget/' + inp.closest('tr').dataset.id, { method: 'PUT', body: { [inp.name]: inp.value } }); reload(); }));
   el.querySelectorAll('[data-del]').forEach(x => x.onclick = guard(async () => { await api('/admin/budget/' + x.dataset.del, { method: 'DELETE' }); reload(); }));
   $('#addi', el).onclick = guard(async () => { const r = $('#newrow', el); const d = Object.fromEntries([...r.querySelectorAll('input')].map(i => [i.name, i.value])); await api('/admin/budget', { body: { ...d, year } }); reload(); });
@@ -1086,7 +1052,7 @@ async function admSettings(el) {
     const p = await api('/admin/reset'), box = $('#resetPlan', el), yr = x => x.budget ? `${money(x.charges, 2)} from the ${x.year} budget${x.label ? ` (${esc(x.label)})` : ''}` : `no ${x.year} budget yet, so no charges`;
     box.innerHTML = `<ul class="small" style="margin:var(--sp-4) 0;line-height:1.8">
       <li>All logins kept${p.demo_logins ? `, including ${p.demo_logins} demo login${p.demo_logins === 1 ? '' : 's'}` : ''}</li>
-      <li>${p.bookings} booking${p.bookings === 1 ? '' : 's'} and lets, ${p.enquiries} enquir${p.enquiries === 1 ? 'y' : 'ies'}, ${p.swaps} swap${p.swaps === 1 ? '' : 's'} or change request${p.swaps === 1 ? '' : 's'}, ${p.proposals} expenditure proposal${p.proposals === 1 ? '' : 's'}, ${p.topups} top-up${p.topups === 1 ? '' : 's'}, ${p.bank_balances} bank balance${p.bank_balances === 1 ? '' : 's'}, ${p.notifications} notice${p.notifications === 1 ? '' : 's'}</li>
+      <li>${p.bookings} booking${p.bookings === 1 ? '' : 's'} and lets, ${p.enquiries} enquir${p.enquiries === 1 ? 'y' : 'ies'} and questions, ${p.proposals} expenditure proposal${p.proposals === 1 ? '' : 's'}, ${p.topups} top-up${p.topups === 1 ? '' : 's'}, ${p.bank_balances} bank balance${p.bank_balances === 1 ? '' : 's'}, ${p.notifications} notice${p.notifications === 1 ? '' : 's'}</li>
       <li>${p.ledger_lines} account line${p.ledger_lines === 1 ? '' : 's'} cleared, so every family balance starts again from the service charges</li>
       <li>${p.weeks_reset} week${p.weeks_reset === 1 ? '' : 's'} set back to Undecided (who holds them is kept)</li>
       <li><b>2026:</b> ${yr(p.paid)}${p.paid.budget ? ', marked <b>paid in full</b>' : ''}</li>
@@ -1101,9 +1067,9 @@ async function admSettings(el) {
   });
   $('#sf', el).onsubmit = guard(async e => { e.preventDefault(); const d = formData(e.target); d.allow_member_account_charge = e.target.allow_member_account_charge.checked ? '1' : '0'; d.view_as_enabled = e.target.view_as_enabled.checked ? '1' : '0'; await api('/admin/settings', { method: 'PUT', body: d }); toast('Settings saved'); refreshMe(); });
 }
-async function admCredits(el, year) {
+async function admLets(el, year) {
   year = year || S.creditYear || S.year; S.creditYear = year;
-  const [c, all] = await Promise.all([api('/credits?year=' + year), api('/bookings?all=1')]);
+  const [c, all] = await Promise.all([api('/lets?year=' + year), api('/bookings?all=1')]);
   const bks = all.filter(b => b.week.year === year).sort((x, y) => x.week.start_date.localeCompare(y.week.start_date) || y.id - x.id);
   const bState = { pending: ['amber', 'Awaiting payment'], confirmed: ['blue', 'Paid'], cancelled: ['', 'Cancelled'], expired: ['', 'Expired'] };
   const bRow = b => { const [tone, label] = b.gift && b.status === 'confirmed' ? ['green', 'Given free'] : bState[b.status] || ['', b.status], live = ['pending', 'confirmed'].includes(b.status);
@@ -1120,9 +1086,9 @@ async function admCredits(el, year) {
       So far: ${money(c.income.gross, 2)} from ${c.income.lets} let${c.income.lets === 1 ? '' : 's'}, of which <b>${money(c.income.fund, 2)}</b> to the maintenance fund. Credit comes off the household’s service charge and any extra carries forward.</p></div>
     <section class="stack" style="margin-top:28px"><h2>Bookings ${year}</h2><p class="muted small" style="margin:0">Every booking of a ${year} week. You can cancel one that is awaiting payment or paid: the guest and the household are told, any let income credited is reversed and the week goes back on offer.</p>
     ${bks.length ? `<div class="table-wrap"><table><thead><tr><th>Week</th><th>Guest</th><th>Household</th><th class="r">Amount</th><th>Paid by</th><th>Ref</th><th>Status</th><th></th></tr></thead><tbody>${bks.map(bRow).join('')}</tbody></table></div>` : `<div class="card flat empty small">No bookings for ${year} yet</div>`}</section>`;
-  el.querySelectorAll('[data-y]').forEach(b => b.onclick = () => admCredits(el, Number(b.dataset.y)));
+  el.querySelectorAll('[data-y]').forEach(b => b.onclick = () => admLets(el, Number(b.dataset.y)));
   el.querySelectorAll('[data-bcancel]').forEach(btn => btn.onclick = () => { const b = bks.find(x => x.id == btn.dataset.bcancel);
-    cancelBookingModal({ ...b, gift: !!b.gift, guest: b.guest_name || b.booker, label: `Week ${b.week.week_no} · ${dfmt(b.week.start_date, { day: 'numeric', month: 'short', year: 'numeric' })}` }, () => { admCredits(el, year); refreshMe(); }); });
+    cancelBookingModal({ ...b, gift: !!b.gift, guest: b.guest_name || b.booker, label: `Week ${b.week.week_no} · ${dfmt(b.week.start_date, { day: 'numeric', month: 'short', year: 'numeric' })}` }, () => { admLets(el, year); refreshMe(); }); });
 }
 async function admAudit(el) {
   const rows = await api('/admin/audit');
