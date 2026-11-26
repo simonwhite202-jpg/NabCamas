@@ -428,8 +428,8 @@ function confirmBooking(b, byUser) {
   notify([b.user_id], `Confirmed: ${weekLabel(w)} is booked. Reference ${b.reference}.`, '#/bookings');
   notify(familyAdmins(b.seller_family_id), `${weekLabel(w)} has been let to ${guest}. ${s.currency}${credit} has been credited to your account (the ${s.currency}${b.amount} paid, less the ${s.currency}${cost} letting cost for the maintenance fund).`, '#/account');
 }
-// the year the portal opens on: from October, next year if its weeks exist; otherwise this year
-const workingYear = () => { const y = thisYear() + (new Date().getMonth() >= 9 ? 1 : 0); return q1('SELECT 1 FROM weeks WHERE year=?', y) ? y : thisYear(); };
+// the year the portal opens on: the current calendar year (or, if its weeks aren't set up, the latest year that is)
+const workingYear = () => q1('SELECT 1 FROM weeks WHERE year=?', thisYear()) ? thisYear() : (q1('SELECT MAX(year) y FROM weeks') || {}).y || thisYear();
 
 // ---------------------------------------------------------------- routes
 const routes = [];

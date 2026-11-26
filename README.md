@@ -243,7 +243,7 @@ Opening a page you don't have access to takes you back to Home.
 
 ## How the pages fit together
 
-- **One year for every page.** Pages that show a year (Calendar, Payments, Expenditure, Weeks, Lets, Families, the family Expenditure page and the Account page) share it. The portal opens on the *working year*: from October, next year if its weeks exist, otherwise this year. Pick another year on any page and the others follow.
+- **One year for every page.** Pages that show a year (Calendar, Payments, Expenditure, Weeks, Lets, Families, the family Expenditure page and the Account page) share it. The portal opens on the current calendar year (2026 until 1 January 2027). Pick another year on any page and the others follow.
 - **The years listed** are the years whose weeks exist. To add one, use **Add year…** on **Weeks**; it then appears on every page, ready for its budget and allocation.
 - **The bar at the top of a page** has the year picker (and the calendar's filters) on the left, and the page's actions on the right, such as Import, Copy, Add year, Add family or Add person.
 - **Buttons:**
