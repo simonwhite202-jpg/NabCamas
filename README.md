@@ -120,7 +120,7 @@ Opening a page you don't have access to takes you back to Home.
 - **Wrong-year protection.** The allocation importer compares the file's title, weekday names and dates with the year you're importing into, and warns if they don't match.
 - **Seasons are set per week.** New years get seasons from month settings, and the admin can override any week.
 - **Rotation.** If every family kept the same week numbers each year, they would always get the same season. **Roll forward** copies last year's allocation with an optional shift, or you can import a new allocation each year.
-- **Ownership vs. holding.** Each week records who it was *allocated* to and who currently *holds* it. An approved next-year change request reallocates both weeks for that year only and never touches other years.
+- **Ownership vs. holding.** Each week records who it was *allocated* to and who currently *holds* it. The site admin changes the allocation on **Weeks** before signing it off; a week given free to another family keeps its holder and shows who is using it.
 
 **Letting to friends and families**
 - **Double booking.** Booking a week puts a hold on it immediately. A second person trying to book sees "someone else has just booked this week".
@@ -139,10 +139,9 @@ Opening a page you don't have access to takes you back to Home.
   - The week goes back on offer. The admin can then open it and set it to Undecided or Using it.
   - A guest who paid by bank transfer is refunded outside the site, under whatever cancellation policy you agree.
 
-**Credits (switched off for now)**
-- Week credits are hidden from every screen for now, and every season counts the same in the background. The code is kept for when the syndicate decides how to value weeks (see the four-frameworks paper).
+**Prices and seasons**
 - **Prices still vary by season:** the site admin sets the trusted-friend price for school holidays, summer, shoulder and winter under **Settings**, and members and trusted friends pay the same price. A family can override the price for any one of its weeks.
-- **School holidays:** the site admin marks school-holiday weeks under **Weeks & allocation**. 2026 and 2027 are preloaded with assumed English school holidays, so check them.
+- **School holidays:** the site admin marks school-holiday weeks under **Weeks**. 2026 and 2027 are preloaded with assumed English school holidays, so check them.
 
 
 **Your weeks (on the calendar)**
@@ -163,12 +162,10 @@ Opening a page you don't have access to takes you back to Home.
 - **Your week, your income:** when the payment for a let is confirmed, the household that released the week is credited with what was paid, less the **letting cost** (£100 a let by default, set under Settings), which goes to the maintenance fund. The credit comes off that household's service charge, and anything beyond it carries forward against future charges. A released week that doesn't let earns nothing, so releasing early helps.
 - **Members buying weeks:** members can pay by bank transfer, or from their household's **credit** (account in credit from lets or top-ups) if it covers the price. The seller is credited the price less the letting cost.
 - **Top-ups:** a family admin can top up the household's credit from the Account page. They get the bank details and a reference; the site admin confirms it on the Payments page when the money arrives.
-- **Weeks gained by a change request** (when requests are switched on): if a household lets a week it got through a next-year change request, its credit is capped at that year's service charge per share (£370 in 2026). Anything above goes to the maintenance fund, so there's no profit in asking for peak weeks just to let them.
 - **Cancellations:** if the site admin cancels a paid booking, the credit is reversed.
-- **Moving from the old pot:** on the first start of this version, paid lets that were waiting for a pot share-out are credited to the families that released them. Years already shared out are left as they were.
 
 **Enquiries (signed-off years)**
-- Once a year's allocation is signed off, there are no swaps between families. Weeks change hands only when they are:
+- Once a year's allocation is signed off, weeks change hands only when they are:
   - **given** free to a family that enquired;
   - **released and bought**;
   - **let to a trusted friend**.
@@ -185,7 +182,6 @@ Opening a page you don't have access to takes you back to Home.
   - Everyone in the holding family is notified, and anyone in that family can reply on the Enquiries page.
   - The asker is notified of the reply, which shows on their Enquiries page and in the week's panel.
   - The week's panel also has the holding family's Email and WhatsApp buttons.
-- To switch members' enquiries off again, set `MEMBER_REQUESTS_OPEN` to `false` in `server.js`.
 
 **Next-year allocation: changes and sign-off**
 - Next year's allocation shows as a **Draft** (on the family calendar and the site admin's Overview) until the site admin **signs it off** (the syndicate does this in November). The current year and earlier are always signed off.
@@ -193,8 +189,6 @@ Opening a page you don't have access to takes you back to Home.
   - **Before signing off,** the portal checks each family's allocated weeks against its shares for that year (set on **Families**).
   - **If any differ,** a pop-up lists them, for example "Bonar: 9 weeks allocated, 8 shares, 1 too many", with **Go back and fix** or **Sign off anyway**.
   - The table shows each week's start date, school holidays, season and who it's allocated to. Calendar notes come from the allocation import.
-- Change requests through the portal have been removed; any that were still waiting were closed, and the families told.
-- **Moving from the old swaps:** on the first start of this version, *Willing to swap* becomes *Undecided*. Swap offers still waiting lapse (with a notice); their enquiries stay in the queue.
 
 **Booking enquiries from trusted friends**
 - **Asking:** a trusted friend can enquire about any week its household hasn't decided about yet (*Undecided*). The trusted friend's calendar has no filters. Every week shows one of three things: **Book now · £price** if it's released to them, **Enquire** if its household hasn't decided, or **Unavailable**. A week is unavailable if it's in use, booked, or released only to members for now. They give the lead guest, party size and an optional message. Friends still don't see which household holds a week.
@@ -237,7 +231,7 @@ Opening a page you don't have access to takes you back to Home.
 - **Payments to confirm** and **Top-ups expected** work as before.
 
 **Start afresh (Settings, site admin)**
-- **Check what would be removed** lists, from the live data, everything that will go: bookings and lets, enquiries, swaps, expenditure proposals, top-ups, bank balances, notices and account lines, plus the weeks whose plans reset to Undecided. **Every login is kept**, the demo logins (@example.com) included.
+- **Check what would be removed** lists, from the live data, everything that will go: bookings and lets, enquiries and questions, expenditure proposals, top-ups, bank balances, notices and account lines, plus the weeks whose plans reset to Undecided. **Every login is kept**, the demo logins (@example.com) included.
 - **Download a backup first** saves a copy of the whole database.
 - **Remove it all** (type RESET) does it. Logins, families, who holds each week, budgets and settings are kept. Service charges are reissued from the budgets: **2026 marked paid in full**, **2027 left unpaid** (if there's no 2027 budget yet, add it and press *Issue charges*). The 2027 allocation goes back to draft. To get rid of a demo login later, open it under **Users** and press **Remove**.
 
@@ -246,6 +240,34 @@ Opening a page you don't have access to takes you back to Home.
 - Every family must keep at least one family admin.
 - Passwords are hashed with scrypt, and sessions use HttpOnly cookies. All key actions are recorded in the **Activity log**.
 - **Data protection.** You're storing third parties' contact details, so the add-person form asks the user to confirm consent. Consider a short privacy notice on the site.
+
+## How the pages fit together
+
+- **One year for every page.** Pages that show a year (Calendar, Payments, Expenditure, Weeks, Lets, Families, the family Expenditure page and the Account page) share it. The portal opens on the *working year*: from October, next year if its weeks exist, otherwise this year. Pick another year on any page and the others follow.
+- **The years listed** are the years whose weeks exist. To add one, use **Add year…** on **Weeks**; it then appears on every page, ready for its budget and allocation.
+- **The bar at the top of a page** has the year picker (and the calendar's filters) on the left, and the page's actions on the right, such as Import, Copy, Add year, Add family or Add person.
+- **Buttons:**
+  - **Filled:** saving or committing something (Save, Issue, Sign off, Propose, Book).
+  - **Green:** money arriving or accepting (Paid, Paid in full, Accept).
+  - **Plain:** everything else.
+  - **Red outline:** removing, cancelling or withdrawing.
+- **Admin page titles** match the menu: Payments, Expenditure, Weeks, Lets, Families, Users, Settings, Activity. Old links to `#/admin/budget` and `#/admin/credits` still work.
+
+## Clean-up (November 2026)
+
+Features that had been retired were removed from the code and the database:
+- in-year swaps;
+- next-year change requests made through the portal, and the income cap on weeks gained by request;
+- the credits system and the old let-income pot;
+- the member discount and the weighting by how early a week was released;
+- the switch for members' enquiries, which are always on.
+
+On the first start after the clean-up, the server:
+- drops the `swaps`, `change_requests` and `credit_ledger` tables;
+- drops five unused columns and the retired settings;
+- records that it has done so in `settings` (`cleanup_2026_11`).
+
+Nothing else is touched: families, weeks, bookings, accounts, budgets and logins stay as they are.
 
 ## Putting it live (Railway, about £4–8 a month)
 
