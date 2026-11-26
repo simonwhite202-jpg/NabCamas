@@ -48,7 +48,7 @@ async function route() {
   const allowed = new Set(navTabs().map(t => t[0].split('/')[0]));
   if (!allowed.has(tab)) { if (location.hash !== '#/home') location.hash = '#/home'; else renderShell('home'); return; }
   renderShell(tab); const main = $('main');
-  const views = { home: viewHome, calendar: viewCalendar, enquiries: viewEnquiries, bookings: viewBookings, account: viewAccount, expenditure: viewExpenditure, people: viewPeople, admin: viewAdmin };
+  const views = { home: viewHome, calendar: viewCalendar, enquiries: viewEnquiries, bookings: viewBookings, account: viewAccount, expenditure: viewExpenditure, maintenance: viewMaintenance, guide: viewGuide, people: viewPeople, admin: viewAdmin };
   try { await (views[tab] || viewHome)(main); } catch (e) { main.innerHTML = `<div class="card empty">${esc(e.message)}</div>`; }
 }
 
@@ -84,10 +84,10 @@ function navOn(k, tab) {
   return here.startsWith(k) || (k === 'admin/overview' && (here === 'admin' || here.startsWith('admin/account')));
 }
 // Navigation per role:
-//   trusted friend → Home, Available weeks, My bookings, My details
-//   family member  → Home, Calendar, Enquiries, Bookings, Family & friends
-//   family admin   → the same plus Account (and setting plans for the family's weeks from the calendar, managing people)
-//   site admin     → a separate login with no family: Home, Calendar and the admin pages
+//   trusted friend → Home, Available weeks, My bookings, House guide, Maintenance, My details
+//   family member  → Home, Calendar, Enquiries, Bookings, House guide, Maintenance, Family & friends
+//   family admin   → the same plus Account and Expenditure (and setting plans for the family's weeks from the calendar, managing people)
+//   site admin     → a separate login with no family: Home, Calendar, House guide, Maintenance and the admin pages
 const ADMIN_PAGES = [['admin/overview', 'Payments'], ['admin/expenditure', 'Expenditure'], ['admin/weeks', 'Weeks'], ['admin/lets', 'Lets'], ['admin/families', 'Families'], ['admin/users', 'Users'], ['admin/settings', 'Settings'], ['admin/audit', 'Activity']];
 const isSiteRole = () => S.me.user.role === 'site_admin';
 // Who is logged in: name, role and household (site admins have no household). Escaped, ready for HTML.
@@ -98,12 +98,12 @@ function whoAmI() {
   return { name: esc(u.name), role: esc(role), house: esc(house), nameIsRole };
 }
 const NAV_ICON = { home: 'house', calendar: 'calendar-days', weeks: 'calendar-range', enquiries: 'messages-square', bookings: 'bed-double', account: 'wallet', people: 'users', admin: 'settings',
-  'admin/overview': 'banknote', 'admin/expenditure': 'receipt', expenditure: 'receipt', 'admin/weeks': 'calendar-range', 'admin/lets': 'coins', 'admin/families': 'users-round', 'admin/users': 'user-cog', 'admin/settings': 'settings', 'admin/audit': 'history' };
+  'admin/overview': 'banknote', 'admin/expenditure': 'receipt', expenditure: 'receipt', maintenance: 'wrench', guide: 'book-open', 'admin/weeks': 'calendar-range', 'admin/lets': 'coins', 'admin/families': 'users-round', 'admin/users': 'user-cog', 'admin/settings': 'settings', 'admin/audit': 'history' };
 function navTabs() {
-  if (isSiteRole()) return [['home', 'Overview'], ['calendar', 'Calendar'], ...ADMIN_PAGES];
+  if (isSiteRole()) return [['home', 'Overview'], ['calendar', 'Calendar'], ['guide', 'House guide'], ['maintenance', 'Maintenance'], ...ADMIN_PAGES];
   const friend = S.me.user.role === 'friend', fam = isFam();
   return [['home', 'Overview'], ['calendar', friend ? 'Available weeks' : 'Calendar'], fam && ['enquiries', 'Enquiries', S.me.enquiryCount],
-    ['bookings', friend ? 'My bookings' : 'Bookings'], isFamAdmin() && ['account', 'Account'], isFamAdmin() && ['expenditure', 'Expenditure'], ['people', friend ? 'My details' : 'Family & friends'], isSite() && ['admin', 'Site admin']].filter(Boolean);
+    ['bookings', friend ? 'My bookings' : 'Bookings'], isFamAdmin() && ['account', 'Account'], isFamAdmin() && ['expenditure', 'Expenditure'], ['guide', 'House guide'], ['maintenance', 'Maintenance'], ['people', friend ? 'My details' : 'Family & friends'], isSite() && ['admin', 'Site admin']].filter(Boolean);
 }
 function renderShell(tab) {
   const u = S.me.user, tabs = navTabs(), site = esc(S.me.settings.site_name);
@@ -195,7 +195,16 @@ function welcomeHeader(greet) {
       <p>${greet}, ${isFam() && me.house ? me.house : me.name}. It’s ${dfmt(todayStr(), { weekday: 'long', day: 'numeric', month: 'long' })}.</p></header>
     ${s.hero ? `<img class="hero-img" src="/media/hero?v=${esc(s.hero)}" alt="Nab Camas on Loch Carron">` : ''}`;
 }
-const STAY_TAG = { 'Booked': 'booked', 'Your stay': 'booked', 'Reserved': 'pending', 'Released': 'available', 'Available': 'available', 'Using it': 'yours' };
+const STAY_TAG = { 'Booked': 'booked', 'Your stay': 'booked', 'Reserved': 'pending', 'Released': 'available', 'Available': 'available', 'Using it': 'yours', 'In residence': 'booked' };
+// this week's family: Check in, or Not in residence (either can be changed during the week)
+const checkInButtons = x => !x || !x.can_check_in ? '' : `<div class="row" style="gap:8px;margin-top:12px">
+    ${x.residence === 'in' ? `<span class="tag booked">${icon('check')}Checked in</span>` : `<button class="btn sm green" data-residence="in" data-wk="${x.week_id}">${icon('log-in')}Check in</button>`}
+    ${x.residence === 'away' ? '<span class="tag">Not in residence</span>' : `<button class="btn sm" data-residence="away" data-wk="${x.week_id}">Not in residence</button>`}</div>
+    ${x.residence === 'in' && x.released ? '<div class="tiny muted" style="margin-top:6px">The week is still released for booking. Take it off release on the calendar if you’re staying.</div>' : ''}`;
+function bindCheckIn(root, reload) {
+  root.querySelectorAll('[data-residence]').forEach(b => b.onclick = guard(async () => { const st = b.dataset.residence;
+    await api(`/weeks/${b.dataset.wk}/residence`, { body: { state: st } }); toast(st === 'in' ? 'Checked in. Enjoy your stay' : 'Noted: not in residence this week'); reload(); }));
+}
 // a WhatsApp chat link from a phone number as typed; UK numbers starting 0 become +44
 function waLink(phone) {
   if (!phone) return null;
@@ -212,7 +221,7 @@ function residenceStrip(h, nextStay) {
   const r = h.residence || {};
   const show = (label, x, none) => `<div class="card"><span class="eyebrow">${label}</span>${x ? `<div class="who">${esc(x.mine ? `${x.household} (you)` : x.household || x.status)}</div>
       <div class="when">${dfmt(x.start)} – ${dfmt(x.end)} · week ${x.week_no}${x.detail ? ` · ${esc(x.detail)}` : ''}</div>${x.contact ? `<div class="tiny muted">Contact: ${esc(x.contact.name)}</div>` : ''}
-      <div class="res-foot"><span class="tag ${x.mine ? 'yours' : STAY_TAG[x.status] || ''}">${esc(x.status)}</span>${contactButtons(x.contact)}</div>` : `<div class="when">${none}</div>`}</div>`;
+      <div class="res-foot"><span class="tag ${x.mine && !x.residence ? 'yours' : STAY_TAG[x.status] || ''}">${esc(x.status)}</span>${contactButtons(x.contact)}</div>${checkInButtons(x)}` : `<div class="when">${none}</div>`}</div>`;
   const arriving = (r.next || []).find(Boolean);
   return `<section class="residence">${show('In residence this week', r.now, 'No week is set up for today.')}${show('Arriving next', arriving, 'No arrivals set up yet.')}
     ${nextStay !== undefined ? `<div class="card"><span class="eyebrow">Your next stay</span>${nextStay ? `<div class="who">${esc(nextStay.title)}</div><div class="when">${esc(nextStay.detail || '')}</div>` : '<div class="when">Nothing booked yet. Browse the calendar to plan a stay.</div>'}</div>` : ''}</section>`;
@@ -222,8 +231,8 @@ async function viewHome(main) {
   const greet = hr < 12 ? 'Good morning' : hr < 18 ? 'Good afternoon' : 'Good evening';
   if (h.admin_home) return adminHome(main, h, greet);
   const weekRow = (x, right) => `<button class="list-row" data-open-week="${x.week_id}" data-year="${x.year}"><span class="grow" style="min-width:0"><b>${esc(x.title)}</b><div class="tiny muted">${esc(x.detail || '')}</div></span>${right || ''}</button>`;
-  const links = friend ? [['#/calendar', 'Browse available weeks'], ['#/bookings', 'My bookings'], ['#/people', 'Update my details']]
-    : [['#/calendar', 'Browse the calendar'], ['#/weeks', isFamAdmin() ? 'Set your household’s weeks' : 'Your household’s weeks'], ['#/enquiries', 'Enquiries'], ['#/people', isFamAdmin() ? 'Add family or friends' : 'Add a trusted friend'], ...(isFamAdmin() ? [['#/account', 'Household account']] : [])];
+  const links = friend ? [['#/calendar', 'Browse available weeks'], ['#/bookings', 'My bookings'], ['#/guide', 'House guide'], ['#/maintenance', 'Report a maintenance issue'], ['#/people', 'Update my details']]
+    : [['#/calendar', 'Browse the calendar'], ['#/weeks', isFamAdmin() ? 'Set your household’s weeks' : 'Your household’s weeks'], ['#/enquiries', 'Enquiries'], ['#/guide', 'House guide'], ['#/maintenance', 'Report a maintenance issue'], ['#/people', isFamAdmin() ? 'Add family or friends' : 'Add a trusted friend'], ...(isFamAdmin() ? [['#/account', 'Household account']] : [])];
   const f = h.family, c = f && f.lets;
   const going = h.upcoming.find(x => ['using', 'booked', 'reserved'].includes(x.plan)) || null;
   const upTag = x => x.plan === 'using' || x.plan === 'booked' ? '<span class="tag booked">Going</span>' : x.plan === 'reserved' ? '<span class="tag pending">Awaiting payment</span>' : x.plan === 'let' ? '<span class="tag booked">Let</span>' : x.plan === 'released' ? '<span class="tag available">Released</span>' : x.plan === 'swap' ? '<span class="tag outline">Will swap</span>' : '<span class="tag">Undecided</span>';
@@ -244,6 +253,7 @@ async function viewHome(main) {
       ${panelCard('arrow-right', 'Quick links', `<div class="quick">${links.map(([href, l]) => `<a class="btn sm" href="${href}">${l}</a>`).join('')}</div>`)}
     </div>`;
   main.querySelectorAll('[data-open-week]').forEach(b => b.onclick = () => { S.year = Number(b.dataset.year); S.openWeek = Number(b.dataset.openWeek); location.hash = '#/calendar'; });
+  bindCheckIn(main, () => viewHome(main));
 }
 
 function adminHome(main, h, greet) {
@@ -741,28 +751,32 @@ function bindProfile(main) {
 }
 
 // ------------------------------------------------------------ proposed expenditure
-const FUNDING = { budget: 'added to the budget', levy: 'charged to households by shares', reserves: 'paid from the bank balance', reassign: 'moved from another budget line' };
+// expenditure proposals are one-off costs; the site admin allocates each to a year, then records the decision and how it's paid for
+const FUNDING = { budget: y => `added to the ${y} service charge`, reserves: y => `paid from the bank balance in ${y}`, levy: () => 'charged to households by shares', reassign: y => `moved from another ${y} budget line` };
 function proposalCard(p, admin) {
   const st = { proposed: '<span class="badge amber">Waiting for a decision</span>', accepted: '<span class="badge green">Accepted</span>', rejected: '<span class="badge">Not accepted</span>', withdrawn: '<span class="badge">Withdrawn</span>' }[p.status];
-  const decided = p.status === 'accepted' ? `Accepted at ${esc(p.meeting)}: ${FUNDING[p.funding] || 'added to the budget'}${p.funding === 'budget' || p.funding === 'reassign' ? ` for ${p.year}` : ''}${p.funding_detail ? ` (${esc(p.funding_detail)})` : ''}.`
+  const decided = p.status === 'accepted' ? `Accepted at ${esc(p.meeting)}: ${(FUNDING[p.funding] || FUNDING.budget)(p.year)}${p.funding_detail ? ` (${esc(p.funding_detail)})` : ''}.`
     : p.status === 'rejected' ? `Not accepted at ${esc(p.meeting)}.` : p.status === 'withdrawn' ? `Withdrawn on ${asked(p.decided_at)}.` : '';
+  const alloc = p.status !== 'proposed' ? '' : p.year ? ` · <b>allocated to ${p.year}</b>` : ' · not allocated to a year yet';
+  const btns = admin && p.status === 'proposed' ? `<button class="btn sm green" data-accept-out="${p.id}">Accept…</button><button class="btn sm" data-edit-out="${p.id}">Edit or allocate…</button><button class="btn sm" data-reject-out="${p.id}">Reject…</button>`
+    : [p.can_edit && `<button class="btn sm" data-edit-out="${p.id}">Edit…</button>`, p.can_withdraw && `<button class="btn sm danger" data-withdraw-out="${p.id}">Withdraw</button>`].filter(Boolean).join('');
   return `<div class="card flat" style="padding:16px"><div class="row between" style="align-items:flex-start;gap:12px"><div><b>${esc(p.title)}</b> <span class="num">· ${money(p.amount, 2)}</span>
-      <div class="tiny muted" style="margin-top:2px">For the ${p.year} budget · proposed by ${esc(p.by)}${p.family_id ? `, ${esc(p.family)} family,` : ''} on ${asked(p.created_at)}</div></div>${st}</div>
+      <div class="tiny muted" style="margin-top:2px">One-off cost${alloc} · proposed by ${esc(p.by)}${p.family_id ? `, ${esc(p.family)} family,` : ''} on ${asked(p.created_at)}</div></div>${st}</div>
     ${p.details ? `<div class="small" style="margin-top:8px;white-space:pre-line">${esc(p.details)}</div>` : ''}
     ${decided ? `<div class="small" style="margin-top:8px">${decided}${p.decision_note ? ` <span class="muted">${esc(p.decision_note)}</span>` : ''}</div>` : ''}
-    ${admin && p.status === 'proposed' ? `<div class="row" style="margin-top:10px;gap:8px"><button class="btn sm green" data-accept-out="${p.id}">Accept…</button><button class="btn sm" data-reject-out="${p.id}">Reject…</button></div>`
-      : p.can_withdraw ? `<div class="row" style="margin-top:10px"><button class="btn sm danger" data-withdraw-out="${p.id}">Withdraw</button></div>` : ''}</div>`;
+    ${btns ? `<div class="row" style="margin-top:10px;gap:8px">${btns}</div>` : ''}</div>`;
 }
+// what a proposal is: the same fields when proposing and editing (the site admin also allocates it to a year)
+const proposalFields = (p, years) => `<div class="field"><label>What is it for?</label><input name="title" required maxlength="200" value="${esc(p.title || '')}" placeholder="e.g. Replace the water supply pipe"></div>
+  <div class="field"><label>Estimated cost (£)</label><input name="amount" type="number" min="0" step="0.01" required value="${p.amount ?? ''}"></div>
+  ${years ? `<div class="field"><label>Allocated to</label><select name="year"><option value="">Not allocated to a year yet</option>${years.map(y => `<option value="${y}" ${y === p.year ? 'selected' : ''}>${y}</option>`).join('')}</select></div>` : ''}
+  <div class="field"><label>Details (optional)</label><textarea name="details" rows="4" placeholder="Why it’s needed, who quoted, how long the quote is valid…">${esc(p.details || '')}</textarea></div>`;
 async function viewExpenditure(main) {
   const d = await api('/expenditure?year=' + S.year), b = d.budget, open = d.proposals.filter(p => p.status === 'proposed'), done = d.proposals.filter(p => p.status !== 'proposed');
-  main.innerHTML = `<h1>Expenditure</h1><p class="muted" style="max-width:75ch">Propose expenditure for a coming year’s budget: a new fridge, say, or a quote for maintenance work that’s been discussed. The syndicate approves or rejects proposals at the AGM or a board meeting. Approved expenditure is added to the budget, charged to households by shares, paid from the bank balance, or moved from another budget line.</p>
+  main.innerHTML = `<h1>Expenditure</h1><p class="muted" style="max-width:75ch">Propose a one-off cost: a new fridge, say, or a quote for maintenance work that’s been discussed. The site admin allocates each proposal to a year, and the syndicate accepts or rejects it at the AGM or a board meeting. Accepted costs are added to that year’s service charge or paid from the bank balance (or charged to households by shares, or moved from another budget line).</p>
     ${pageBar(yearPicker())}
     <div class="grid-2" style="align-items:start">
-    <section class="stack">${d.can_propose ? `<form class="card" id="opf"><h3>Propose expenditure</h3>
-        <div class="field"><label>What is it for?</label><input name="title" required maxlength="200" placeholder="e.g. New fridge-freezer"></div>
-        <div class="grid-2" style="gap:12px"><div class="field"><label>Estimated cost (£)</label><input name="amount" type="number" min="0" step="0.01" required></div>
-          <div class="field"><label>For the budget of</label><select name="year">${d.years.filter(y => y >= d.default_year).map(y => `<option value="${y}" ${y === d.default_year ? 'selected' : ''}>${y}</option>`).join('')}</select></div></div>
-        <div class="field"><label>Details (optional)</label><textarea name="details" rows="3" placeholder="Why it’s needed, who quoted, how long the quote is valid…"></textarea></div>
+    <section class="stack">${d.can_propose ? `<form class="card" id="opf"><h3>Propose a one-off cost</h3>${proposalFields({})}
         <button class="btn primary">Propose</button></form>` : ''}
       <h2 style="margin:8px 0 0">Waiting for a decision</h2>${open.map(p => proposalCard(p)).join('') || '<div class="card flat empty small">Nothing waiting</div>'}
       ${done.length ? `<h2 style="margin:8px 0 0">Decided</h2>${done.map(p => proposalCard(p)).join('')}` : ''}</section>
@@ -777,17 +791,28 @@ async function viewExpenditure(main) {
 }
 function bindProposals(root, reload) {
   root.querySelectorAll('[data-withdraw-out]').forEach(x => x.onclick = guard(async () => { if (!confirm('Withdraw this proposal?')) return; await api(`/expenditure/${x.dataset.withdrawOut}/withdraw`, { body: {} }); toast('Withdrawn'); reload(); }));
+  // edit what it is and the cost; the site admin also allocates it to a year. With no id, the site admin adds one.
+  const edit = id => async () => {
+    const d = await api('/expenditure'), p = id ? d.proposals.find(x => x.id == id) : {}, admin = isSite();
+    const m = openModal(`<form id="epf"><h2>${id ? `${admin ? 'Edit or allocate' : 'Edit'} “${esc(p.title)}”` : 'Add a one-off cost'}</h2>
+      ${id ? `<p class="small muted" style="margin-top:0">Proposed by ${esc(p.by)}${p.family_id ? `, ${esc(p.family)} family,` : ''} on ${asked(p.created_at)}.</p>` : '<p class="small muted" style="margin-top:0">It waits for a decision at the AGM or a board meeting, like the families’ proposals.</p>'}
+      ${proposalFields(p, admin ? d.alloc_years : null)}
+      <div class="row" style="justify-content:flex-end;gap:8px"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">${id ? 'Save' : 'Add'}</button></div></form>`);
+    $('#epf', m).onsubmit = guard(async e => { e.preventDefault(); await api(id ? `/expenditure/${id}` : '/expenditure', { method: id ? 'PUT' : 'POST', body: formData(e.target) }); closeOverlay(); toast(id ? 'Saved' : 'Added'); reload(); });
+  };
+  root.querySelectorAll('[data-edit-out]').forEach(x => x.onclick = guard(edit(x.dataset.editOut)));
+  const add = $('[data-add-out]', root); if (add) add.onclick = guard(edit(null));
   const decide = (id, accept) => async () => {
-    const d = await api('/expenditure'), p = d.proposals.find(x => x.id == id), years = [...new Set([p.year, ...d.years.filter(y => y >= d.default_year)])].sort();
+    const d = await api('/expenditure'), p = d.proposals.find(x => x.id == id), years = [...new Set([...(p.year ? [p.year] : []), ...d.alloc_years])].sort(), y0 = p.year || d.default_year;
     const m = openModal(`<form id="dcf"><h2>${accept ? 'Accept' : 'Reject'} “${esc(p.title)}”</h2>
-      <p class="small muted" style="margin-top:0">${money(p.amount, 2)} proposed by ${esc(p.by)}${p.family_id ? `, ${esc(p.family)} family,` : ''} for the ${p.year} budget.</p>
+      <p class="small muted" style="margin-top:0">One-off cost of ${money(p.amount, 2)} proposed by ${esc(p.by)}${p.family_id ? `, ${esc(p.family)} family` : ''}${p.year ? `, allocated to ${p.year}` : ''}.</p>
       <div class="field"><label>Decided at</label><input name="meeting" required placeholder="e.g. AGM, 12 June 2027"></div>
       ${accept ? `<div class="grid-2" style="gap:12px"><div class="field"><label>Agreed amount (£)</label><input name="amount" type="number" min="0" step="0.01" value="${p.amount}" required></div>
-        <div class="field"><label>Budget year</label><select name="year">${years.map(y => `<option value="${y}" ${y === p.year ? 'selected' : ''}>${y}</option>`).join('')}</select></div></div>
+        <div class="field"><label>Allocated to</label><select name="year">${years.map(y => `<option value="${y}" ${y === y0 ? 'selected' : ''}>${y}</option>`).join('')}</select></div></div>
       <div class="field"><label>How it’s paid for</label><select name="funding">
         <option value="budget">Add it to the service charge (the charge goes up)</option>
-        <option value="levy">Charge households now, split by shares</option>
         <option value="reserves">Pay it from the bank balance (nothing charged)</option>
+        <option value="levy">Charge households now, split by shares</option>
         <option value="reassign">Move it from another budget line (service charge unchanged)</option></select></div>
       <div class="field" id="fromf" style="display:none"><label>Take it from</label><select name="from_item_id"></select></div>
       <p class="tiny muted" id="fundhint" style="margin:-4px 0 12px"></p>` : ''}
@@ -796,7 +821,7 @@ function bindProposals(root, reload) {
     const form = $('#dcf', m);
     if (accept) {
       const sync = async () => { const v = form.funding.value, y = form.year.value; $('#fromf', m).style.display = v === 'reassign' ? '' : 'none';
-        $('#fundhint', m).textContent = { budget: `A new line in the ${y} budget. If the ${y} charges are already issued, you’ll be asked whether to re-issue them.`, levy: 'Each household’s share goes on its account now, as a one-off charge, and its admins are told.', reserves: 'A line in the year’s budget paid from the bank balance: nothing is charged. A year’s bank-balance lines can’t total more than the latest bank balance.', reassign: 'A new line in the budget, with the same amount taken off the line you choose.' }[v];
+        $('#fundhint', m).textContent = { budget: `A one-off line in the ${y} budget, on the service charge. If the ${y} charges are already issued, you’ll be asked whether to re-issue them.`, levy: 'Each household’s share goes on its account now, as a one-off charge, and its admins are told.', reserves: `A one-off line in the ${y} budget paid from the bank balance: nothing is charged. A year’s bank-balance lines can’t total more than the latest bank balance.`, reassign: `A one-off line in the ${y} budget, with the same amount taken off the line you choose.` }[v];
         if (v === 'reassign') { const items = (await api('/admin/budget?year=' + y)).items; form.from_item_id.innerHTML = items.map(i => `<option value="${i.id}">${esc(i.description)} · ${money(i.amount, 2)}</option>`).join('') || '<option value="">No budget lines for that year</option>'; } };
       form.funding.onchange = sync; form.year.onchange = sync; sync();
     }
@@ -807,6 +832,124 @@ function bindProposals(root, reload) {
   };
   root.querySelectorAll('[data-accept-out]').forEach(x => x.onclick = guard(decide(x.dataset.acceptOut, true)));
   root.querySelectorAll('[data-reject-out]').forEach(x => x.onclick = guard(decide(x.dataset.rejectOut, false)));
+}
+
+// ------------------------------------------------------------ maintenance
+// anyone who logs in reports a problem at the house; the site admin keeps each report up to date until it's fixed
+async function shrinkPhoto(file, max = 1600) {   // one photo per report, made smaller in the browser before it's sent
+  const img = await new Promise((ok, no) => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => no(new Error('That file isn’t a photo the browser can read')); i.src = URL.createObjectURL(file); });
+  const scale = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight)), c = document.createElement('canvas');
+  c.width = Math.round(img.naturalWidth * scale); c.height = Math.round(img.naturalHeight * scale); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  return c.toDataURL('image/jpeg', 0.82);
+}
+const URGENCY_HELP = { urgent: 'Urgent: safety, or the house can’t be used', soon: 'Needs fixing soon', whenever: 'When convenient' };
+const ISSUE_BADGE = { open: 'amber', in_hand: 'blue', fixed: 'green', closed: '' };
+const issueFields = (d, i = {}) => `<div class="field"><label>What’s the problem?</label><input name="title" required maxlength="200" value="${esc(i.title || '')}" placeholder="e.g. Hot water tank leaking"></div>
+  <div class="grid-2" style="gap:12px"><div class="field"><label>Where</label><select name="area" required>${i.area ? '' : '<option value="" selected disabled>Choose…</option>'}${d.areas.map(a => `<option ${a === i.area ? 'selected' : ''}>${esc(a)}</option>`).join('')}</select></div>
+    <div class="field"><label>How urgent</label><select name="urgency">${Object.keys(d.urgency).map(k => `<option value="${k}" ${k === (i.urgency || 'soon') ? 'selected' : ''}>${URGENCY_HELP[k]}</option>`).join('')}</select></div></div>
+  <div class="field"><label>Details (optional)</label><textarea name="details" rows="3" placeholder="What you noticed, when, and anything you did about it">${esc(i.details || '')}</textarea></div>
+  ${photoField(i.photo)}`;
+// one optional photo on a form (maintenance reports, house guides); formWithPhoto() sends it made smaller, or removes it
+const photoField = has => `<div class="field"><label>${has ? 'Replace the photo (optional)' : 'Photo (optional)'}</label><input type="file" name="photo" accept="image/*"></div>
+  ${has ? '<label class="row small" style="gap:8px;margin:-6px 0 12px"><input type="checkbox" name="remove_photo"> Remove the photo</label>' : ''}`;
+async function formWithPhoto(form) {
+  const v = formData(form), file = form.photo.files[0]; delete v.photo; delete v.remove_photo;
+  if (file) v.photo = await shrinkPhoto(file); else if (form.remove_photo && form.remove_photo.checked) v.photo = null;
+  return v;
+}
+function issueCard(i, d) {
+  const meta = [esc(i.area), i.urgency !== 'urgent' && d.urgency[i.urgency], `reported by ${esc(i.by)}${i.family ? `, ${esc(i.family)} family,` : i.by_friend ? ' (trusted friend)' : ''} on ${asked(i.created_at)}`].filter(Boolean).join(' · ');
+  const ps = i.proposal && { proposed: 'waiting for a decision', accepted: `accepted${i.proposal.year ? ` for ${i.proposal.year}` : ''}`, rejected: 'not accepted', withdrawn: 'withdrawn' }[i.proposal.status];
+  const btns = [i.can_update && `<button class="btn sm" data-iss-status="${i.id}">Update…</button>`, i.can_propose && `<button class="btn sm" data-iss-propose="${i.id}">Propose as expenditure…</button>`,
+    i.can_edit && `<button class="btn sm" data-iss-edit="${i.id}">Edit…</button>`, i.can_withdraw && `<button class="btn sm danger" data-iss-withdraw="${i.id}">Withdraw</button>`].filter(Boolean).join('');
+  return `<div class="card flat issue" style="padding:16px"><div class="row between" style="align-items:flex-start;gap:12px"><div style="min-width:0"><b>${esc(i.title)}</b><div class="tiny muted" style="margin-top:2px">${meta}</div></div>
+      <div class="row" style="gap:6px;justify-content:flex-end;flex-wrap:wrap">${i.urgency === 'urgent' ? '<span class="badge red">Urgent</span>' : ''}<span class="badge ${ISSUE_BADGE[i.status]}">${d.statuses[i.status]}</span></div></div>
+    ${i.details ? `<div class="small" style="margin-top:8px;white-space:pre-line">${esc(i.details)}</div>` : ''}
+    ${i.photo ? `<a href="${i.photo}" target="_blank" rel="noopener" class="issue-photo"><img src="${i.photo}" alt="Photo: ${esc(i.title)}" loading="lazy"></a>` : ''}
+    ${i.status !== 'open' || i.update_note ? `<div class="small" style="margin-top:8px"><b>${d.statuses[i.status]}</b>${i.updated_at ? ` <span class="muted">· ${asked(i.updated_at)}${i.updated_by ? `, ${esc(i.updated_by)}` : ''}</span>` : ''}${i.update_note ? `: ${esc(i.update_note)}` : ''}</div>` : ''}
+    ${i.proposal ? `<div class="small" style="margin-top:8px">${icon('receipt')} Proposed as expenditure: ${money(i.proposal.amount, 2)}, ${ps}</div>` : ''}
+    ${btns ? `<div class="row" style="margin-top:10px;gap:8px;flex-wrap:wrap">${btns}</div>` : ''}</div>`;
+}
+async function viewMaintenance(main) {
+  const d = await api('/maintenance'), live = i => i.status === 'open' || i.status === 'in_hand', open = d.issues.filter(live), done = d.issues.filter(i => !live(i));
+  main.innerHTML = `<h1>Maintenance</h1><p class="muted" style="max-width:75ch">Report anything at the house that needs fixing or looking at: a leak, a broken appliance, a damp patch, a light that’s out. The site admin is told straight away and keeps each report up to date until it’s fixed. ${d.all_reports ? 'Everyone in the syndicate can see the reports, so check the list before reporting something again.' : 'You can see the reports you’ve made.'}</p>
+    <div class="grid-2" style="align-items:start">
+      <form class="card" id="mif"><h3>${icon('wrench')} Report an issue</h3>${issueFields(d)}<button class="btn primary">Report</button></form>
+      <section class="stack"><h2 style="margin:0">Open issues</h2>${open.map(i => issueCard(i, d)).join('') || '<div class="card flat empty small">Nothing reported at the moment</div>'}
+        ${done.length ? `<h2 style="margin:8px 0 0">Fixed and closed</h2>${done.map(i => issueCard(i, d)).join('')}` : ''}</section></div>`;
+  const reload = () => viewMaintenance(main), find = id => d.issues.find(i => i.id == id);
+  $('#mif', main).onsubmit = guard(async e => { e.preventDefault(); const b = e.target.querySelector('button.primary'); b.disabled = true;
+    try { await api('/maintenance', { body: await formWithPhoto(e.target) }); } finally { b.disabled = false; } toast('Reported. The site admin has been told'); reload(); });
+  main.querySelectorAll('[data-iss-edit]').forEach(x => x.onclick = () => { const i = find(x.dataset.issEdit);
+    const m = openModal(`<form id="mie"><h2>Edit “${esc(i.title)}”</h2>${issueFields(d, i)}<div class="row" style="justify-content:flex-end;gap:8px"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Save</button></div></form>`);
+    $('#mie', m).onsubmit = guard(async e => { e.preventDefault(); await api('/maintenance/' + i.id, { method: 'PUT', body: await formWithPhoto(e.target) }); closeOverlay(); toast('Saved'); reload(); }); });
+  main.querySelectorAll('[data-iss-withdraw]').forEach(x => x.onclick = guard(async () => { if (!confirm('Withdraw this report?')) return; await api('/maintenance/' + x.dataset.issWithdraw, { method: 'DELETE' }); toast('Withdrawn'); reload(); }));
+  main.querySelectorAll('[data-iss-status]').forEach(x => x.onclick = () => { const i = find(x.dataset.issStatus);
+    const m = openModal(`<form id="mis"><h2>Update “${esc(i.title)}”</h2><p class="small muted" style="margin-top:0">Reported by ${esc(i.by)}${i.family ? `, ${esc(i.family)} family,` : ''} on ${asked(i.created_at)}. They’re sent the status and your note.</p>
+      <div class="field"><label>Status</label><select name="status">${Object.entries(d.statuses).map(([k, l]) => `<option value="${k}" ${k === i.status ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+      <div class="field"><label>Note (optional)</label><textarea name="note" rows="3" placeholder="e.g. Plumber booked for 3 December">${esc(i.update_note || '')}</textarea></div>
+      <div class="row between" style="gap:8px"><button type="button" class="btn sm danger" id="misDel">Delete report</button><span class="row" style="gap:8px"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Save</button></span></div></form>`);
+    $('#mis', m).onsubmit = guard(async e => { e.preventDefault(); await api(`/maintenance/${i.id}/status`, { body: formData(e.target) }); closeOverlay(); toast('Updated'); reload(); });
+    $('#misDel', m).onclick = guard(async () => { if (!confirm('Delete this report? Use it for duplicates or reports made by mistake.')) return; await api('/maintenance/' + i.id, { method: 'DELETE' }); closeOverlay(); toast('Deleted'); reload(); }); });
+  main.querySelectorAll('[data-iss-propose]').forEach(x => x.onclick = () => { const i = find(x.dataset.issPropose);
+    const m = openModal(`<form id="mip"><h2>Propose as expenditure</h2><p class="small muted" style="margin-top:0">A one-off cost on the Expenditure page, decided at the AGM or a board meeting. The report is linked to it.</p>
+      ${proposalFields({ title: i.title })}<div class="row" style="justify-content:flex-end;gap:8px"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Propose</button></div></form>`);
+    $('#mip', m).onsubmit = guard(async e => { e.preventDefault(); await api(`/maintenance/${i.id}/propose`, { body: formData(e.target) }); closeOverlay(); toast('Proposed as expenditure'); reload(); }); });
+}
+
+// ------------------------------------------------------------ house guide
+// everyone reads it and can report something wrong; the families add guides; family admins (and a guide's author) edit them
+const guideText = t => esc(t).replace(/https?:\/\/[^\s<]+[^\s<.,;:)!?]/g, u => `<a href="${u}" target="_blank" rel="noopener">${u}</a>`);
+function guideCard(g) {
+  const n = g.reports.length;
+  return `<details class="card flat guide" data-gid="${g.id}" ${S.openGuide == g.id ? 'open' : ''}><summary>${icon('chevron-right')}<b class="grow">${esc(g.title)}</b>${n ? `<span class="badge red">${n} reported</span>` : ''}</summary>
+    <div class="guide-body">${guideText(g.body)}</div>
+    ${g.photo ? `<a href="${g.photo}" target="_blank" rel="noopener" class="issue-photo"><img src="${g.photo}" alt="Photo: ${esc(g.title)}" loading="lazy"></a>` : ''}
+    <div class="tiny muted" style="margin-top:12px">Added by ${esc(g.created_by || 'someone')} on ${asked(g.created_at)}${g.updated_at ? ` · last edited by ${esc(g.updated_by)} on ${asked(g.updated_at)}` : ''}</div>
+    ${g.reports.map(r => `<div class="notice small row" style="margin-top:10px;gap:10px;align-items:flex-start">${icon('flag')}<span class="grow"><b>Reported by ${esc(r.by_name || 'someone')} on ${asked(r.created_at)}:</b> ${esc(r.note)}</span><button class="btn sm" data-sorted="${r.id}">Mark as sorted</button></div>`).join('')}
+    <div class="row" style="margin-top:12px;gap:8px;flex-wrap:wrap">${g.can_edit ? `<button class="btn sm" data-edit-guide="${g.id}">Edit…</button>` : ''}
+      ${g.reported ? '<span class="tiny muted">You’ve reported a problem with this guide. You’ll hear when it’s sorted.</span>' : `<button class="btn sm" data-report-guide="${g.id}">${icon('flag')}Report an inaccuracy…</button>`}</div></details>`;
+}
+async function viewGuide(main) {
+  const d = await api('/guide'), reported = d.guides.reduce((a, g) => a + g.reports.length, 0);
+  const groups = d.sections.map(s => [s, d.guides.filter(g => g.section === s)]).filter(([, gs]) => gs.length);
+  main.innerHTML = `<h1>House guide</h1><p class="muted" style="max-width:75ch">How things work at the house: arriving and leaving, heating and hot water, Wi-Fi, rubbish, what to do in an emergency. ${d.can_add ? 'Anyone in the families can add a guide, and family admins keep them up to date. ' : ''}If something’s wrong or out of date, report it on the guide.</p>
+    ${pageBar(`<label class="search-box">${icon('search')}<input type="search" id="gq" placeholder="Search the guide" aria-label="Search the guide"></label>`, d.can_add ? `<button class="btn" data-add-guide>${icon('plus')}Add a guide…</button>` : '')}
+    ${reported && d.guides.some(g => g.can_edit) ? `<div class="notice small" style="margin-bottom:16px">${icon('flag')} ${reported} inaccurac${reported > 1 ? 'ies' : 'y'} reported. Correct the guide, then mark the report as sorted.</div>` : ''}
+    ${groups.length ? groups.map(([s, gs]) => `<section class="stack guide-sec" style="margin-bottom:24px"><h2 style="margin:0">${esc(s)}</h2>${gs.map(guideCard).join('')}</section>`).join('')
+      : `<div class="card empty">No guides yet.${d.can_add ? ' Add the first: how to get in, the heating, the Wi-Fi, the bins.' : ''}</div>`}
+    <div class="card flat empty small" id="gnone" style="display:none">Nothing in the guide matches that.</div>`;
+  const reload = () => viewGuide(main), find = id => d.guides.find(g => g.id == id);
+  main.querySelectorAll('details.guide').forEach(x => x.ontoggle = () => { if (x.open) S.openGuide = x.dataset.gid; });
+  // search: show the guides that match, opened
+  $('#gq', main).oninput = e => { const t = e.target.value.trim().toLowerCase(); let any = false;
+    main.querySelectorAll('details.guide').forEach(x => { const hit = !t || x.textContent.toLowerCase().includes(t); x.style.display = hit ? '' : 'none'; if (t) x.open = hit; any = any || hit; });
+    main.querySelectorAll('.guide-sec').forEach(sec => sec.style.display = [...sec.querySelectorAll('details.guide')].some(x => x.style.display !== 'none') ? '' : 'none');
+    $('#gnone', main).style.display = any || !d.guides.length ? 'none' : ''; };
+  const editor = g => () => {
+    const m = openModal(`<form id="gf"><h2>${g ? `Edit “${esc(g.title)}”` : 'Add a guide'}</h2>
+      <div class="grid-2" style="gap:12px"><div class="field"><label>Section</label><select name="section">${d.sections.map(s => `<option ${g ? (s === g.section ? 'selected' : '') : ''}>${esc(s)}</option>`).join('')}</select></div>
+        <div class="field"><label>Title</label><input name="title" required maxlength="200" value="${esc(g ? g.title : '')}" placeholder="e.g. Turning the water on"></div></div>
+      <div class="field"><label>Guidance</label><textarea name="body" rows="12" required placeholder="Step by step, as you’d explain it to someone arriving for the first time.">${esc(g ? g.body : '')}</textarea></div>
+      ${photoField(g && g.photo)}
+      ${g && g.versions ? `<div class="field"><label>Earlier versions (${g.versions})</label><div class="row" style="gap:8px;flex-wrap:wrap"><select id="gver" style="flex:1;min-width:200px"><option>Loading…</option></select><button type="button" class="btn sm" id="gverLoad">Load into the form</button></div>
+        <p class="tiny muted" style="margin:4px 0 0">Puts that version’s text in the form above. Save to bring it back.</p></div>` : ''}
+      <div class="row between" style="gap:8px">${g ? '<button type="button" class="btn sm danger" id="gdel">Remove guide</button>' : '<span></span>'}<span class="row" style="gap:8px"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">${g ? 'Save' : 'Add'}</button></span></div></form>`, true);
+    const form = $('#gf', m);
+    form.onsubmit = guard(async e => { e.preventDefault(); const r = await api(g ? '/guide/' + g.id : '/guide', { method: g ? 'PUT' : 'POST', body: await formWithPhoto(form) }); S.openGuide = g ? g.id : r.id; closeOverlay(); toast(g ? 'Saved' : 'Added to the house guide'); reload(); });
+    if (g && g.versions) (async () => { const vs = await api(`/guide/${g.id}/versions`), sel = $('#gver', m); if (!sel) return;
+      sel.innerHTML = vs.map((v, k) => `<option value="${k}">${asked(v.edited_at || '')} · ${esc(v.edited_by_name || 'someone')} · ${esc(v.title)}</option>`).join('');
+      $('#gverLoad', m).onclick = () => { const v = vs[sel.value]; form.section.value = v.section; form.title.value = v.title; form.body.value = v.body; toast('Earlier version loaded. Save to bring it back'); }; })().catch(e => toast(e.message, true));
+    const del = $('#gdel', m); if (del) del.onclick = guard(async () => { if (!confirm(`Remove “${g.title}” from the house guide? Its earlier versions go too.`)) return; await api('/guide/' + g.id, { method: 'DELETE' }); closeOverlay(); toast('Removed'); reload(); });
+  };
+  const add = $('[data-add-guide]', main); if (add) add.onclick = editor(null);
+  main.querySelectorAll('[data-edit-guide]').forEach(x => x.onclick = editor(find(x.dataset.editGuide)));
+  main.querySelectorAll('[data-report-guide]').forEach(x => x.onclick = () => { const g = find(x.dataset.reportGuide);
+    const m = openModal(`<form id="grf"><h2>Report an inaccuracy</h2><p class="small muted" style="margin-top:0">In “${esc(g.title)}”. Family admins can correct it, and you’ll hear when it’s sorted.</p>
+      <div class="field"><label>What’s wrong or out of date?</label><textarea name="note" rows="4" required placeholder="e.g. The Wi-Fi password changed in October"></textarea></div>
+      <div class="row" style="justify-content:flex-end;gap:8px"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Report</button></div></form>`);
+    $('#grf', m).onsubmit = guard(async e => { e.preventDefault(); await api(`/guide/${g.id}/report`, { body: formData(e.target) }); S.openGuide = g.id; closeOverlay(); toast('Reported. Thank you'); reload(); }); });
+  main.querySelectorAll('[data-sorted]').forEach(x => x.onclick = guard(async () => { S.openGuide = x.closest('details').dataset.gid; await api(`/guide/reports/${x.dataset.sorted}/sorted`, { body: {} }); toast('Marked as sorted'); reload(); }));
 }
 
 // ------------------------------------------------------------ site admin
@@ -902,11 +1045,15 @@ const paidFrom = v => `<select name="funding"><option value="charge" ${v !== 'ba
 async function admExpenditure(el) {
   const year = S.year, [b, od] = await Promise.all([api('/admin/budget?year=' + year), api('/expenditure')]);
   const over = b.bank_total > 0.005 && (!b.bank || b.bank_total > b.bank.amount + 0.005);   // bank lines more than the balance (e.g. a lower balance recorded since)
-  const openP = od.proposals.filter(p => p.status === 'proposed'), doneP = od.proposals.filter(p => p.status !== 'proposed' && p.year === year);
+  // one-off proposals waiting (any year), what's allocated to this year but not decided, and those decided for this year
+  const openP = od.proposals.filter(p => p.status === 'proposed'), pencilled = openP.filter(p => p.year === year);
+  const doneP = od.proposals.filter(p => p.status !== 'proposed' && (p.year ? p.year === year : (p.decided_at || '').slice(0, 4) == year));
   const cats = [...new Set(b.items.map(i => i.category).filter(Boolean))];
   const cur = S.me.settings.currency;
   el.innerHTML = `${pageBar(yearPicker(), `<button class="btn" id="imp">Import from spreadsheet</button><button class="btn" id="copy">Copy from ${year - 1}…</button>`)}
-    ${openP.length ? `<section class="stack" style="margin-bottom:24px"><h2 style="margin:0">Expenditure proposals to decide</h2><p class="muted small" style="margin:0">Proposed by family admins. Record the decision from the AGM or a board meeting, and how it’s paid for.</p>${openP.map(p => proposalCard(p, true)).join('')}</section>` : ''}
+    <section class="stack" style="margin-bottom:24px"><div class="row between" style="gap:12px"><h2 style="margin:0">Expenditure proposals to decide</h2><button class="btn" data-add-out>${icon('plus')}Add a one-off cost…</button></div>
+      <p class="muted small" style="margin:0">One-off costs proposed by family admins, for any year. Edit them and allocate each to a year, then record the decision from the AGM or a board meeting: added to that year’s service charge or paid from the bank balance.</p>
+      ${openP.map(p => proposalCard(p, true)).join('') || '<div class="card flat empty small">Nothing waiting for a decision</div>'}</section>
     <div class="row" style="margin-bottom:14px"><div class="field" style="margin:0;min-width:260px"><label>Budget period for ${year}</label><input id="blabel" value="${esc(b.label)}" placeholder="e.g. July ${year - 1} – June ${year}"></div></div>
     <div class="stack">
     <section class="stack"><div class="table-wrap"><table style="table-layout:fixed;min-width:860px"><colgroup><col style="width:26%"><col style="width:120px"><col style="width:170px"><col style="width:120px"><col><col style="width:72px"></colgroup><thead><tr><th>Item</th><th class="r">Estimate (${cur})</th><th>Paid from</th><th>Type</th><th>Commentary</th><th></th></tr></thead><tbody>
@@ -914,7 +1061,8 @@ async function admExpenditure(el) {
       <tr id="newrow"><td><input name="description" placeholder="New item…"></td><td class="r"><input name="amount" type="number" step="0.01" placeholder="0" style="text-align:right"></td><td>${paidFrom('charge')}</td><td><input name="category" placeholder="Type" list="cats"></td><td><input name="notes" placeholder="Commentary"></td><td><button class="btn sm primary" id="addi">Add</button></td></tr>
       </tbody><tfoot><tr><td>Added to the service charge</td><td class="r num">${money(b.charge_total, 2)}</td><td colspan="4"></td></tr>
         <tr><td>Paid from the bank balance</td><td class="r num" ${over ? 'style="color:var(--st-alert-ink)"' : ''}>${money(b.bank_total, 2)}</td><td colspan="4" class="small ${over ? '' : 'muted'}" ${over ? 'style="color:var(--st-alert-ink)"' : ''}>${b.bank ? (over ? `More than the ${money(b.bank.amount, 2)} bank balance on ${dfmt(b.bank.as_of, { day: 'numeric', month: 'short', year: 'numeric' })}: move some lines to the service charge` : `Bank balance ${money(b.bank.amount, 2)} on ${dfmt(b.bank.as_of, { day: 'numeric', month: 'short', year: 'numeric' })}`) : 'No bank balance recorded yet (add it on Payments)'}</td></tr>
-        <tr><td>Total expenditure</td><td class="r num">${money(b.total, 2)}</td><td colspan="4"></td></tr></tfoot></table></div>
+        <tr><td>Total expenditure</td><td class="r num">${money(b.total, 2)}</td><td colspan="4"></td></tr>
+        ${pencilled.length ? `<tr class="muted"><td>Allocated to ${year}, not decided yet</td><td class="r num">${money(pencilled.reduce((a, p) => a + p.amount, 0), 2)}</td><td colspan="4" class="small">${pencilled.length} proposal${pencilled.length > 1 ? 's' : ''} (above), not in these totals until accepted</td></tr>` : ''}</tfoot></table></div>
       <datalist id="cats">${['Regular', 'Postpone', 'Provision', 'One-off', ...cats].filter((v, i, a) => a.indexOf(v) === i).map(c => `<option value="${esc(c)}">`).join('')}</datalist><p class="tiny muted">Changes save when you leave a field.</p></section>
     <section class="grid-2" style="align-items:start"><div class="card"><h3>Service charges ${esc(b.label || year)}</h3>
       <dl class="kv" style="grid-template-columns:1fr auto"><dt>Added to the service charge</dt><dd class="num r">${money(b.charge_total, 2)}</dd><dt>÷ ${b.units} weeks</dt><dd class="num">${money(b.rate_calc, 2)} / week</dd>
@@ -930,8 +1078,9 @@ async function admExpenditure(el) {
   const saveYear = guard(async body => { await api('/admin/budget-year/' + year, { method: 'PUT', body }); reload(); });
   $('#blabel', el).onchange = e => saveYear({ label: e.target.value });
   bindProposals(el, reload);
-  $('#copy', el).onclick = () => { const m = openModal(`<form id="cf"><h2>Start ${year} from ${year - 1}</h2><div class="field"><label>Inflation uplift %</label><input name="uplift_pct" type="number" step="0.1" value="3"></div><div class="row" style="justify-content:flex-end"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Copy</button></div></form>`);
-    $('#cf', m).onsubmit = guard(async e => { e.preventDefault(); await api('/admin/budget/copy', { body: { from: year - 1, to: year, ...formData(e.target) } }); closeOverlay(); reload(); }); };
+  $('#copy', el).onclick = () => { const m = openModal(`<form id="cf"><h2>Start ${year} from ${year - 1}</h2><p class="small muted" style="margin-top:0">One-off lines (type One-off) stay in ${year - 1}: they aren’t yearly costs.</p><div class="field"><label>Inflation uplift %</label><input name="uplift_pct" type="number" step="0.1" value="3"></div><div class="row" style="justify-content:flex-end"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Copy</button></div></form>`);
+    $('#cf', m).onsubmit = guard(async e => { e.preventDefault(); const r = await api('/admin/budget/copy', { body: { from: year - 1, to: year, ...formData(e.target) } }); closeOverlay();
+      toast(`Copied ${r.copied} line${r.copied === 1 ? '' : 's'}${r.skipped ? `; ${r.skipped} one-off line${r.skipped > 1 ? 's' : ''} left in ${year - 1}` : ''}`); reload(); }); };
   $('#imp', el).onclick = () => importDialog('budget', year, reload);
 }
 async function admWeeks(el) {
@@ -1050,13 +1199,13 @@ async function admSettings(el) {
   $('#heroRm', el) && ($('#heroRm', el).onclick = guard(async () => { if (!confirm('Remove the Overview photograph?')) return; await api('/admin/hero', { method: 'DELETE' }); toast('Photograph removed'); await refreshMe(); admSettings(el); }));
   // Start afresh: clear test activity, keeping every login (preview first, backup offered, then RESET to confirm)
   el.insertAdjacentHTML('beforeend', `<div class="card" id="resetCard" style="margin-top:var(--sp-6);border-color:var(--st-alert, #b4544a)"><h3>${icon('trash-2')} Start afresh</h3>
-    <p class="small muted" style="margin:0 0 var(--sp-4);max-width:75ch">Clears all test activity: bookings and lets, enquiries and questions, expenditure proposals, top-ups, bank balances, notices and account lines. Every login is kept, including the demo logins (@example.com). Each week’s plan goes back to Undecided. Who holds each week, the families, budgets and settings are kept. Service charges are reissued from the budgets: 2026 paid in full, 2027 unpaid. The 2027 allocation goes back to draft.</p>
+    <p class="small muted" style="margin:0 0 var(--sp-4);max-width:75ch">Clears all test activity: bookings and lets, enquiries and questions, expenditure proposals, maintenance reports, top-ups, bank balances, notices and account lines. Every login is kept, including the demo logins (@example.com). Each week’s plan goes back to Undecided. Who holds each week, the families, budgets and settings are kept. Service charges are reissued from the budgets: 2026 paid in full, 2027 unpaid. The 2027 allocation goes back to draft.</p>
     <button type="button" class="btn" id="resetCheck">Check what would be removed</button><div id="resetPlan"></div></div>`);
   $('#resetCheck', el).onclick = guard(async () => {
     const p = await api('/admin/reset'), box = $('#resetPlan', el), yr = x => x.budget ? `${money(x.charges, 2)} from the ${x.year} budget${x.label ? ` (${esc(x.label)})` : ''}` : `no ${x.year} budget yet, so no charges`;
     box.innerHTML = `<ul class="small" style="margin:var(--sp-4) 0;line-height:1.8">
       <li>All logins kept${p.demo_logins ? `, including ${p.demo_logins} demo login${p.demo_logins === 1 ? '' : 's'}` : ''}</li>
-      <li>${p.bookings} booking${p.bookings === 1 ? '' : 's'} and lets, ${p.enquiries} enquir${p.enquiries === 1 ? 'y' : 'ies'} and questions, ${p.proposals} expenditure proposal${p.proposals === 1 ? '' : 's'}, ${p.topups} top-up${p.topups === 1 ? '' : 's'}, ${p.bank_balances} bank balance${p.bank_balances === 1 ? '' : 's'}, ${p.notifications} notice${p.notifications === 1 ? '' : 's'}</li>
+      <li>${p.bookings} booking${p.bookings === 1 ? '' : 's'} and lets, ${p.enquiries} enquir${p.enquiries === 1 ? 'y' : 'ies'} and questions, ${p.proposals} expenditure proposal${p.proposals === 1 ? '' : 's'}, ${p.maintenance} maintenance report${p.maintenance === 1 ? '' : 's'}, ${p.topups} top-up${p.topups === 1 ? '' : 's'}, ${p.bank_balances} bank balance${p.bank_balances === 1 ? '' : 's'}, ${p.notifications} notice${p.notifications === 1 ? '' : 's'}</li>
       <li>${p.ledger_lines} account line${p.ledger_lines === 1 ? '' : 's'} cleared, so every family balance starts again from the service charges</li>
       <li>${p.weeks_reset} week${p.weeks_reset === 1 ? '' : 's'} set back to Undecided (who holds them is kept)</li>
       <li><b>2026:</b> ${yr(p.paid)}${p.paid.budget ? ', marked <b>paid in full</b>' : ''}</li>

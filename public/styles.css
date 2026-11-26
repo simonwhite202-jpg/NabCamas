@@ -347,3 +347,21 @@ ol.queue > li.done { opacity: .55; }
   .kv { grid-template-columns: 1fr; gap: 0; } .kv dd { margin-bottom: var(--sp-2); }
   .months { grid-template-columns: 1fr; }
 }
+
+/* a maintenance report's photo: a thumbnail that opens the full picture */
+.issue-photo { display: inline-block; margin-top: 10px; }
+.issue-photo img { display: block; max-width: min(100%, 320px); max-height: 200px; border-radius: var(--r-md); border: 1px solid var(--line); object-fit: cover; }
+
+/* house guide: each guide opens in place; search sits in the page bar */
+.guide { padding: 0; }
+.guide > summary { display: flex; align-items: center; gap: 10px; padding: 14px 16px; cursor: pointer; list-style: none; }
+.guide > summary::-webkit-details-marker { display: none; }
+.guide > summary svg { flex: none; transition: transform .15s; color: var(--ink-2); }
+.guide[open] > summary svg { transform: rotate(90deg); }
+.guide > :not(summary) { margin-left: 16px; margin-right: 16px; }
+.guide > :last-child { margin-bottom: 16px; }
+.guide-body { white-space: pre-line; max-width: 75ch; line-height: 1.55; }
+.guide-body a { overflow-wrap: anywhere; }
+.search-box { position: relative; display: flex; align-items: center; flex: 1; max-width: 360px; }
+.search-box svg { position: absolute; left: 10px; pointer-events: none; opacity: .6; }
+.search-box input { padding-left: 32px; width: 100%; }

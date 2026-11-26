@@ -68,6 +68,8 @@ Icons are thin-stroke **Lucide** icons, bundled in `public/icons.js` (ISC licenc
 
 ## Home page and navigation
 
+**Check in.** During your family's own week (or a week another family gave you), the *In residence this week* card on the Overview has **Check in** and **Not in residence**. Either can be changed during the week. Everyone else in the families, and the site admin, then sees *In residence* or *Not in residence* on that card, with when and by whom (trusted friends don't). Checking in on an undecided week marks it *Using it*; if the week is still released for booking, the card says so. There's nothing to check into for a week let to guests, or outside the week itself.
+
 **Contact buttons.** On the Overview, *In residence this week* and *Arriving next* show who to contact, with **Email** and **WhatsApp** buttons (WhatsApp appears when the person has a phone number; UK numbers starting 0 are dialled as +44). The contact is the holding family's admin; for a week let to guests, the holding family and the site admin see the guest's details instead. Your own family's weeks show no buttons, and trusted friends never see contact details.
 
 **View as (site admin, for testing).** The site admin can pick any household login from the **View as** list under "Logged in as" to see the portal exactly as that person does: their menu, Overview, permissions and buttons. A banner shows who you're viewing as, with **Back to site admin**. Anything done while viewing as someone really happens, as them, and the Activity log records it as "site admin acting as …". It can be switched off under **Settings**.
@@ -78,10 +80,10 @@ Everyone lands on the **Overview** (Home), headed *Welcome to Camas*, with who's
 
 | Who | Navigation | Needs your attention shows |
 |---|---|---|
-| Trusted friend | Home, Available weeks, My bookings, My details | Bookings to pay for |
-| Family member | Home, Calendar, Enquiries, Bookings, Family & friends | Bookings to pay for, and first refusals to take or pass |
-| Family admin | The same, plus Account | Also: enquiries to answer (release, using it or not sure yet), friends' booking enquiries, undecided weeks in the next 16 weeks, the balance to pay, and people who haven't set up their login |
-| Site admin | A separate login with no family: Home, Calendar, Payments, Expenditure, Weeks, Lets, Families, Users, Settings, Activity | Syndicate jobs: payments to confirm, families owing money, families with no admin, service charges not issued, let-income pots not shared out, next year's weeks not set up, demo logins still active, email not switched on, and storage problems. Home also shows balances, credits, the pot and recent activity. |
+| Trusted friend | Home, Available weeks, My bookings, House guide, Maintenance, My details | Bookings to pay for |
+| Family member | Home, Calendar, Enquiries, Bookings, House guide, Maintenance, Family & friends | Bookings to pay for, and first refusals to take or pass |
+| Family admin | The same, plus Account and Expenditure | Also: inaccuracies reported in the house guide, enquiries to answer (release, using it or not sure yet), friends' booking enquiries, undecided weeks in the next 16 weeks, the balance to pay, and people who haven't set up their login |
+| Site admin | A separate login with no family: Home, Calendar, House guide, Maintenance, Payments, Expenditure, Weeks, Lets, Families, Users, Settings, Activity | Syndicate jobs: maintenance issues open (urgent ones in red), house guide inaccuracies, expenditure proposals to decide, payments to confirm, families owing money, families with no admin, service charges not issued, let-income pots not shared out, next year's weeks not set up, demo logins still active, email not switched on, and storage problems. Home also shows balances, credits, the pot and recent activity. |
 
 The panels are:
 - **Coming up:** the family's next weeks, or a friend's bookings.
@@ -110,7 +112,14 @@ Opening a page you don't have access to takes you back to Home.
 | Add family members, change roles | — | — | ✓ | ✓ |
 | See own family account | — | ✓ | ✓ | All families |
 | Budget, rates, allocation, confirm payments | — | — | — | ✓ |
-| Propose expenditure | — | — | ✓ | ✓ |
+| Propose expenditure (a one-off cost) | — | — | ✓ | ✓ |
+| Allocate a proposal to a year, accept or reject it | — | — | — | ✓ |
+| Report a maintenance issue | ✓ (sees only their own) | ✓ | ✓ | ✓ |
+| Update a maintenance issue (In hand, Fixed, Closed) | — | — | — | ✓ |
+| Read the house guide, report an inaccuracy | ✓ | ✓ | ✓ | ✓ |
+| Add a guide | — | ✓ | ✓ | ✓ |
+| Edit a guide, mark reports as sorted | — | Their own guides | ✓ | ✓ |
+| Check in / Not in residence | — | During their family's week | During their family's week | — |
 
 ## Gaps in the brief and how they're handled
 
@@ -209,13 +218,30 @@ Opening a page you don't have access to takes you back to Home.
 - **If the balance drops:** if a lower balance is recorded later, the Expenditure page warns in red until lines are moved back to the service charge.
 - **Totals:** the table shows what's added to the service charge, what's paid from the bank balance (next to the latest balance and its date), and the total expenditure. The Payments card shows what goes on the service charge, plus what comes from the bank balance.
 - The site admin's **Budget** page is now called **Expenditure**. It holds each year's budget lines. The service charge card has moved to **Payments**.
-- **Proposing expenditure:** every family admin has an **Expenditure** page. There they can propose something for a coming year's budget, such as a new fridge or a quote for maintenance work: what it's for, the estimated cost, which year's budget, and details. They can withdraw it while it's waiting. The page also shows the agreed expenditure for each year, read-only.
-- **Deciding:** the site admin sees the proposals waiting on the Expenditure page and on Overview. After the AGM or a board meeting, they **Accept** or **Reject** each one, recording where it was decided, the agreed amount and a note. An accepted proposal is paid for in one of four ways:
-  - **Added to the year's budget:** a new line, so the service charge goes up. If that year's charges are already issued, the portal offers to re-issue them.
+- **Proposals are one-off costs.** Every family admin has an **Expenditure** page. There they propose a one-off cost, such as a new fridge or a quote for works (the drainage repair, a new water supply pipe, damp repairs): what it's for, the estimated cost and details. There's no year to choose. While it's waiting they can **Edit** or **Withdraw** it. The page also shows the agreed expenditure for each year, read-only.
+- **Editing and allocating (site admin).** Proposals waiting for a decision are listed at the top of the site admin's **Expenditure** page, whatever year is showing. **Edit or allocate…** changes what it is, the cost and the details, and allocates it to a year (this year or a coming one), or leaves it unallocated. The proposing family is told what changed. A year's table shows what's allocated to it but not decided yet, outside its totals. **Add a one-off cost…** lets the site admin enter one directly, for example from a works update.
+- **Deciding.** After the AGM or a board meeting, the site admin **Accepts** or **Rejects** each proposal, recording where it was decided, the agreed amount and a note. Accepting commits it to a year: the one it's allocated to, or one chosen then (it suggests the first year whose charges aren't issued). It is paid for in one of four ways:
+  - **Added to the service charge:** a One-off line in that year's budget, so the charge goes up. If that year's charges are already issued, the portal offers to re-issue them.
+  - **Paid from the bank balance:** a One-off line in that year's budget paid from the bank balance, within its limit. Nothing is charged.
   - **Charged to households now:** split by shares as a one-off charge on each account; re-issuing the service charges leaves it alone. Each household's admins are told their share.
-  - **Paid from the bank balance:** a line in that year's budget paid from the bank balance, within its limit. Nothing is charged.
-  - **Moved from another budget line:** a new line, with the same amount taken off the line chosen, so the service charge is unchanged.
+  - **Moved from another budget line:** a One-off line, with the same amount taken off the line chosen, so the service charge is unchanged.
 - The proposing family's admins are told the outcome.
+- **Copying a year leaves one-off lines behind.** *Copy from {last year}* skips lines whose type is *One-off*, since they aren't yearly costs, and says how many it left.
+
+**Maintenance**
+- **Reporting.** Anyone who logs in (family members, family admins, trusted friends, the site admin) can report a problem at the house from **Maintenance**: what it is, where (kitchen, heating and hot water, water and drainage, roof and walls, safety…), how urgent (urgent: safety or the house can't be used; needs fixing soon; when convenient), details and one photo. The photo is made smaller in the browser before it's sent. The site admin is told straight away; urgent reports start with "URGENT".
+- **Who sees what.** Families and the site admin see every report, so nothing gets reported twice. Trusted friends see only their own. Photos are only shown to people who can see the report.
+- **Keeping it up to date (site admin).** **Update…** sets the status (Reported, In hand, Fixed, Closed) with a note; the person who reported it is sent both. The site admin can also delete a report made by mistake. Open reports are listed with urgent ones first; fixed and closed ones stay on the page for a year.
+- **The reporter** can edit a report, or withdraw it, until the site admin has picked it up.
+- **From a report to expenditure.** A family admin or the site admin can **Propose as expenditure…**: a one-off cost on the Expenditure page, with the report's details added and linked, so the report shows how the proposal is getting on.
+- The site admin's Overview shows how many reports are open, and how many are urgent.
+
+**House guide**
+- **What it's for:** how things work at the house, grouped into sections (arriving and leaving, heating and hot water, water and drainage, electrics and Wi-Fi, kitchen, rubbish, safety and emergencies, outside, local area). Each guide opens in place; web addresses become links; a guide can have one photo. **Search** shows just the guides that match.
+- **Adding.** Anyone in the families (members and admins) and the site admin can **Add a guide**. Trusted friends can read the guide but not add to it.
+- **Editing.** Family admins and the site admin can edit any guide; members can edit the guides they wrote. The text before each edit is kept: **Earlier versions** in the edit dialog loads one back into the form, to save again. A guide can be removed by the same people.
+- **Reporting an inaccuracy.** Anyone who can read a guide, trusted friends included, can **Report an inaccuracy**. The site admin and the guide's author are told, and every family admin's Overview lists it until it's sorted. On the guide, editors see the report with **Mark as sorted**; the person who reported it is thanked when it is.
+- **Start afresh** leaves the house guide alone: it's content, not test activity.
 
 **Families and shares (site admin)**
 - Shares are set **per year**: pick the year at the top of **Families**, edit each family's shares for that year (one share = one week), then press **Save**. The shares must total **52**: a running total shows how far off you are. Save becomes clickable as soon as you change something, and if the total isn't 52 it says so and saves nothing. That year's service charges are charged per share, so changing 2026 never changes 2027. **Fill in from the {year} allocation** copies the week allocation into the boxes (nothing is saved until you press Save). Names and colours are saved with the same button. **Add family** starts a new family on 0 shares.
@@ -235,7 +261,7 @@ Opening a page you don't have access to takes you back to Home.
 - **Payments to confirm** and **Top-ups expected** work as before.
 
 **Start afresh (Settings, site admin)**
-- **Check what would be removed** lists, from the live data, everything that will go: bookings and lets, enquiries and questions, expenditure proposals, top-ups, bank balances, notices and account lines, plus the weeks whose plans reset to Undecided. **Every login is kept**, the demo logins (@example.com) included.
+- **Check what would be removed** lists, from the live data, everything that will go: bookings and lets, enquiries and questions, expenditure proposals, maintenance reports, top-ups, bank balances, notices and account lines, plus the weeks whose plans (and check-ins) reset to Undecided. The house guide is kept. **Every login is kept**, the demo logins (@example.com) included.
 - **Download a backup first** saves a copy of the whole database.
 - **Remove it all** (type RESET) does it. Logins, families, who holds each week, budgets and settings are kept. Service charges are reissued from the budgets: **2026 marked paid in full**, **2027 left unpaid** (if there's no 2027 budget yet, add it and press *Issue charges*). The 2027 allocation goes back to draft. To get rid of a demo login later, open it under **Users** and press **Remove**.
 
@@ -255,6 +281,7 @@ Opening a page you don't have access to takes you back to Home.
   - **Green:** money arriving or accepting (Paid, Paid in full, Accept).
   - **Plain:** everything else.
   - **Red outline:** removing, cancelling or withdrawing.
+- **Shared pages:** House guide and Maintenance are the same pages for every role; what you can do on them depends on your role.
 - **Admin page titles** match the menu: Payments, Expenditure, Weeks, Lets, Families, Users, Settings, Activity. Old links to `#/admin/budget` and `#/admin/credits` still work.
 
 ## Clean-up (November 2026)
