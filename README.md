@@ -293,13 +293,13 @@ Opening a page you don't have access to takes you back to Home.
 
 **Questionnaire 2: "Trading weeks: how should it work?"**
 - A second questionnaire (`/#/survey/trading`), on the home page under the first, to clarify **how each family would like weeks to be traded**. It also starts with which generation you are, but every generation gets the same 23 questions:
-  - **What a share should mean:** particular weeks, a budget of credits, or a mix; keeping "our" weeks or flexibility; which of the four ways (A to D, as in "Nab Camas: four ways to share and trade our weeks").
+  - **What a share should mean:** particular weeks, a budget of credits, or a mix; keeping "our" weeks or flexibility; which of the four ways (A to D, as in "Nab Camas: four ways to share and trade our weeks"). That paper isn't public, so each way has a line under it saying what it means, and the question explains week credits.
   - **Changing next year's weeks:** through the site admin, direct swaps, or a trading window; rotating peak weeks; school holidays for families with children.
   - **Releasing and selling weeks:** who gets first chance, for how long, what members pay, who sets the price, who receives the money, the letting cost, letting undecided weeks to friends, part weeks, refunds.
   - **Fairness and value:** peak weeks earning more, credits that follow prices, weeks nobody wanted, unused credits.
   - **Your family's plans:** what the family expects to do (all that apply), how many weeks it might release, and **100 points** shared between what matters most (keeping our weeks, changing weeks, earning, fairness, simplicity, families before friends).
 - **Results:** on the Questionnaire page, switch between the two questionnaires. Under each question, **Each family's answers** sets the families side by side (how many of each family's people chose each answer, or its average points), so you can see how each family would like trading to work.
-- Each questionnaire has its own responses, spreadsheet, questions, title, introduction and open/closed switch; a login can answer each once. A share-out question can be in pounds or points.
+- Each questionnaire has its own responses, spreadsheet, questions, title, introduction and open/closed switch; a login can answer each once. A share-out question can be in pounds or points. Any answer can have a description (a line shown under it on the form, not in the results), set in the question editor under the answer's wording.
 
 **Meetings: agendas, questions, polls and minutes**
 - The **Meetings** page (under *Have your say*) is for the syndicate's AGMs and board meetings ("ADM" in the brief). Everyone in the families and the site admin can see it; trusted friends can't.

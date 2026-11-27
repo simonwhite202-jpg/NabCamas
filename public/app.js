@@ -1121,7 +1121,7 @@ function surveyQuestionHtml(qn, n, prev, gen) {
     ${qn.options.map((o, k) => `<tr><td>${esc(o.label)}${o.input === 'text' ? `<input name="${name}_other" placeholder="Please specify" value="${esc(a.other || '')}" style="margin-top:6px">` : ''}</td><td class="r"><input name="${name}_${k}" type="number" min="0" step="${qn.unit === 'points' ? 1 : 100}" inputmode="numeric" value="${a.amounts && a.amounts[k] ? a.amounts[k] : ''}" style="max-width:130px;text-align:right"></td></tr>`).join('')}</tbody>
     <tfoot><tr><td>Total</td><td class="r num" data-sum></td></tr></tfoot></table></div></fieldset>`;
   const multi = qn.kind === 'multi', chosen = k => multi ? (a.choices || []).includes(k) : a.choice === k;
-  return `<fieldset class="sq" data-q="${qn.id}" data-kind="${qn.kind}" ${qn.max ? `data-max="${qn.max}"` : ''}>${head}<div class="sopts">${qn.options.map((o, k) => `<label class="sopt"><input type="${multi ? 'checkbox' : 'radio'}" name="${name}" value="${k}" ${chosen(k) ? 'checked' : ''}><span><b>${letter(k)}.</b> ${esc(optText(o, gen))}</span>
+  return `<fieldset class="sq" data-q="${qn.id}" data-kind="${qn.kind}" ${qn.max ? `data-max="${qn.max}"` : ''}>${head}<div class="sopts">${qn.options.map((o, k) => `<label class="sopt"><input type="${multi ? 'checkbox' : 'radio'}" name="${name}" value="${k}" ${chosen(k) ? 'checked' : ''}><span><b>${letter(k)}.</b> ${esc(optText(o, gen))}${o.hint ? `<small class="ohint">${esc(o.hint)}</small>` : ''}</span>
       ${o.input === 'amount' ? `<input class="sinput" name="${name}_in${k}" type="number" min="0" step="0.5" placeholder="£ thousand" value="${chosen(k) && a.input != null ? a.input : ''}">` : ''}</label>`).join('')}</div></fieldset>`;
 }
 async function renderSurvey() {
@@ -1303,7 +1303,7 @@ async function admQuestions(main, head, bindTop, reload, slug) {
   main.querySelectorAll('[data-qmove]').forEach(x => x.onclick = guard(async () => { await api(`/admin/survey/questions/${x.dataset.qmove}/move`, { body: { dir: x.dataset.dir } }); reload(); }));
   const edit = x => () => {
     const opt0 = x ? x.options : [{ label: '' }, { label: '' }];
-    const row = (o = {}) => `<tr><td><input data-o="label" value="${esc(o.label || '')}" placeholder="In the results"></td>${GENS.map(g => `<td><input data-o="${g}" value="${esc((o.labels || {})[g] || '')}" placeholder="Same"></td>`).join('')}
+    const row = (o = {}) => `<tr><td><input data-o="label" value="${esc(o.label || '')}" placeholder="In the results"><input data-o="hint" class="ohint-in" value="${esc(o.hint || '')}" placeholder="Description (optional)"></td>${GENS.map(g => `<td><input data-o="${g}" value="${esc((o.labels || {})[g] || '')}" placeholder="Same"></td>`).join('')}
       <td><select data-o="input"><option value="">–</option><option value="amount" ${o.input === 'amount' ? 'selected' : ''}>Amount box</option><option value="text" ${o.input === 'text' ? 'selected' : ''}>Words box</option></select></td><td><button type="button" class="iconbtn" data-orm title="Remove">${icon('trash-2')}</button></td></tr>`;
     const m = openModal(`<form id="qef"><h2>${x ? 'Edit the question' : 'Add a question'}</h2>${x && x.answers ? `<p class="small muted" style="margin-top:0">${x.answers} answer${x.answers === 1 ? '' : 's'} so far.</p>` : ''}
       <div class="grid-2" style="gap:12px"><div class="field"><label>Section</label><input name="section" list="qsecs" value="${esc(x ? x.section || '' : '')}"><datalist id="qsecs">${sections.map(v => `<option value="${esc(v)}">`).join('')}</datalist></div>
@@ -1312,7 +1312,7 @@ async function admQuestions(main, head, bindTop, reload, slug) {
       <p class="small muted" style="margin:0 0 8px">Word it for each generation it’s asked of, so it relates to them; leave a generation blank to not ask it.</p>
       ${GENS.map(g => `<div class="field"><label>${genDot(g)}${GEN_NAME[g]}</label><textarea name="t_${g}" rows="2" placeholder="Not asked of the ${GEN_NAME[g].toLowerCase()}">${esc(x && x.texts[g] || '')}</textarea></div>`).join('')}
       <div class="field"><label>Help (optional)</label><input name="help" value="${esc(x ? x.help || '' : '')}"></div>
-      <div class="field" id="qopts"><label>Options</label><p class="tiny muted" style="margin:0 0 6px">The first column is how each answer is shown in the results; give a generation its own wording where it helps. Keep them in the same order once answers have come in.</p>
+      <div class="field" id="qopts"><label>Options</label><p class="tiny muted" style="margin:0 0 6px">The first column is how each answer is shown in the results, with an optional line under it on the form saying what it means; give a generation its own wording where it helps. Keep them in the same order once answers have come in.</p>
         <div class="table-wrap"><table class="qotable"><thead><tr><th>In the results</th>${GENS.map(g => `<th>${genDot(g)}${{ founder: 'Founders', second: 'Second', third: 'Third' }[g]}</th>`).join('')}<th>Box</th><th></th></tr></thead><tbody>${opt0.map(row).join('')}</tbody></table></div>
         <button type="button" class="btn sm" id="qoadd" style="margin-top:6px">${icon('plus')}Add an option</button></div>
       <div class="grid-2" style="gap:12px"><div class="field" id="qmax"><label>Choose up to</label><input name="max" type="number" min="1" value="${x && x.max || 3}"></div><div class="field" id="qtot"><label>Sum to share out</label><div class="row" style="gap:8px"><input name="total" type="number" min="1" value="${x && x.total || 20000}" style="flex:1"><select name="unit" style="width:auto"><option value="">£</option><option value="points" ${x && x.unit === 'points' ? 'selected' : ''}>points</option></select></div></div></div>
@@ -1324,7 +1324,7 @@ async function admQuestions(main, head, bindTop, reload, slug) {
     f.kind.onchange = sync; sync();
     f.onsubmit = guard(async e => { e.preventDefault(); const v = formData(f);
       const out = { survey: slug, unit: v.unit, section: v.section, kind: v.kind, text: v.text, help: v.help, max: v.max, total: v.total, texts: Object.fromEntries(GENS.map(g => [g, v['t_' + g]])),
-        options: [...body.querySelectorAll('tr')].map(tr => { const get = k => tr.querySelector(`[data-o="${k}"]`).value; return { label: get('label'), labels: Object.fromEntries(GENS.map(g => [g, get(g)])), input: get('input') }; }) };
+        options: [...body.querySelectorAll('tr')].map(tr => { const get = k => tr.querySelector(`[data-o="${k}"]`).value; return { label: get('label'), hint: get('hint'), labels: Object.fromEntries(GENS.map(g => [g, get(g)])), input: get('input') }; }) };
       if (x) out.active = f.active.checked;
       await api(x ? `/admin/survey/questions/${x.id}` : '/admin/survey/questions', { method: x ? 'PUT' : 'POST', body: out }); closeOverlay(); toast('Saved'); reload(); });
     const del = $('#qdel', m); if (del) del.onclick = guard(async () => { if (!confirm('Delete this question? If anyone has answered it, it’s switched off instead so the answers stay.')) return;

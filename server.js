@@ -1877,14 +1877,21 @@ if (!q1("SELECT 1 FROM settings WHERE key='survey_v2'")) tx(() => {
 // The second questionnaire: how each family would like weeks to be traded. The same wording for every generation (the first
 // question is still which generation you are, so views can be compared); the results also show each family's answers.
 const all3 = t => ({ founder: t, second: t, third: t });
+// the four ways in "Nab Camas: four ways to share and trade our weeks", each with a line saying what it means (that paper isn't public)
+const FOUR_WAYS = [
+  { label: 'Allocated weeks, traded for money (as now)', hint: 'Each family keeps its weeks from year to year and changes them through the site admin. A released week goes first to families who enquired, then to all members, then to trusted friends; the let income goes to the family.' },
+  { label: 'Request weeks with credits; the rest go into a pool', hint: 'Each autumn, families spend their week credits on the weeks they want. Weeks nobody requests go into a pool that families with credits left, members and trusted friends can book during the year.' },
+  { label: 'Anchor weeks, plus credits for the rest', hint: 'Each family keeps some traditional “anchor” weeks (up to about half its credits) that roll forward every year, and requests the rest with credits each autumn. Weeks nobody wants go into a pool.' },
+  { label: 'Allocate every week fairly by value, trade, then use or release', hint: 'Every week is shared out by value in a rotating draft. Families trade with each other before the year is signed off; during the year, a released week goes to members first, then to trusted friends.' },
+  { label: 'Unsure' }];
+const FOUR_WAYS_HELP = 'B, C and D use week credits: each share gets 100 a year to spend on weeks, and busier weeks cost more. Credits are a right to use the house and never turn into cash.';
 const TRADING_SEED = [
   ['What a share should mean', 'single', 'What a share should entitle a family to', all3('What should a share entitle your family to?'),
     same('Particular weeks each year (as now)', 'A yearly budget of value (credits) to spend on any weeks', 'A mix: some fixed weeks, and credits for the rest', 'Unsure')],
   ['What a share should mean', 'single', 'Keeping “our” weeks, or flexibility', all3('How much does your family value keeping “its” weeks, compared with being able to change them?'),
     same('Keeping our usual weeks matters most', 'Both matter about equally', 'Flexibility matters most', 'Unsure')],
   ['What a share should mean', 'single', 'The way of sharing and trading weeks', all3('Which way of sharing and trading weeks would your family prefer?'),
-    same('A: allocated weeks, traded for money (how the portal works now)', 'B: request weeks with credits each autumn; weeks nobody requests go into a pool', 'C: keep some “anchor” weeks, and request the rest with credits', 'D: allocate every week fairly by value, trade before sign-off, then use or release', 'Unsure'),
-    { help: 'The four are set out in “Nab Camas: four ways to share and trade our weeks”.' }],
+    FOUR_WAYS, { help: FOUR_WAYS_HELP }],
   ['Changing next year’s weeks', 'single', 'How families change next year’s weeks', all3('Before next year’s allocation is signed off, how should families change weeks with each other?'),
     same('Ask the site admin, who decides (as now)', 'Swap directly with another family; the site admin records it', 'A trading window, where families swap and pay or receive the difference in value', 'Keep the allocation as it rolls forward, with no changes', 'Unsure')],
   ['Changing next year’s weeks', 'single', 'Rotating peak weeks', all3('Should peak weeks rotate between families over the years?'),
@@ -1930,6 +1937,10 @@ if (!q1("SELECT 1 FROM surveys WHERE slug='trading'")) tx(() => {
   run('INSERT INTO surveys (slug,title,intro,open,sort) VALUES (?,?,?,1,2)', 'trading', 'Trading weeks: how should it work?',
     'The syndicate is deciding how weeks should change hands: before next year’s allocation is signed off, when a family releases a week, and what everyone pays and receives. Tell us how your family would like it to work. It doesn’t commit anyone to anything, and you can talk it over with your family first. If several of you answer, the results show each family’s views together.');
   seedQuestions('trading', TRADING_SEED); });
+// the four ways were first loaded as "A: …", "B: …" (shown as "A. A: …") with no description: update them unless the site admin has changed them
+{ const r = q1("SELECT id, options, help FROM survey_questions WHERE survey='trading' AND text='The way of sharing and trading weeks'");
+  if (r && /^A: allocated weeks/.test((JSON.parse(r.options || '[]')[0] || {}).label || '')) run('UPDATE survey_questions SET options=?, help=? WHERE id=?', JSON.stringify(FOUR_WAYS),
+    r.help === 'The four are set out in “Nab Camas: four ways to share and trade our weeks”.' ? FOUR_WAYS_HELP : r.help, r.id); }
 // a question: its wording for each generation it's asked of (older questions have one wording for all), and its options
 const surveyQ = r => { const versions = r.versions.split(',').filter(v => GENERATIONS[v]), t = JSON.parse(r.texts || 'null') || {};
   return { id: r.id, sort: r.sort, section: r.section, versions, kind: r.kind, text: r.text, texts: Object.fromEntries(versions.map(g => [g, t[g] || r.text])), help: r.help,
@@ -2041,7 +2052,8 @@ function saveQuestion(body, id) {
   if (!Object.keys(texts).length) fail(400, 'Word it for at least one generation');
   const options = kind === 'text' ? [] : (body.options || []).map(o => { const label = String(o.label || '').trim().slice(0, 200); if (!label) return null;
     const labels = Object.fromEntries(Object.keys(texts).map(g => [g, String((o.labels || {})[g] || '').trim().slice(0, 200)]).filter(([, t]) => t && t !== label));
-    return { label, ...(Object.keys(labels).length ? { labels } : {}), ...(o.input === 'amount' || o.input === 'text' ? { input: o.input } : {}) }; }).filter(Boolean).slice(0, 20);
+    const hint = String(o.hint || '').trim().slice(0, 400);
+    return { label, ...(Object.keys(labels).length ? { labels } : {}), ...(hint ? { hint } : {}), ...(o.input === 'amount' || o.input === 'text' ? { input: o.input } : {}) }; }).filter(Boolean).slice(0, 20);
   if (kind !== 'text' && options.length < 2) fail(400, 'Give at least two options');
   const v = [String(body.section || '').trim().slice(0, 120) || null, Object.keys(texts).join(','), kind, text, JSON.stringify(texts), String(body.help || '').trim().slice(0, 500) || null, kind === 'text' ? null : JSON.stringify(options),
     kind === 'multi' ? Math.max(1, Number(body.max) || options.length) : null, kind === 'allocation' ? Math.max(1, Number(body.total) || 20000) : null, body.active === false || body.active === 'false' ? 0 : 1];
