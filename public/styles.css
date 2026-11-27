@@ -471,9 +471,6 @@ ol.queue > li.done { opacity: .55; }
 .hero .lead { color: rgba(255,255,255,.92); font-size: var(--fs-lg); max-width: 62ch; margin: 0 0 22px; line-height: 1.55; }
 .hero .btn:not(.primary) { background: rgba(255,255,255,.95); }
 .landing-main { max-width: 960px; margin: 0 auto; padding: var(--sp-7) 16px; display: grid; gap: var(--sp-7); }
-.gen-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 12px; }
-.gen-card { display: flex; flex-direction: column; gap: 8px; min-height: 150px; text-decoration: none; color: inherit; border-top: 4px solid var(--gc); }
-.gen-card:hover { box-shadow: 0 2px 10px rgba(0,0,0,.08); background: var(--surface); }
 .manifesto-preview { border-left: 4px solid var(--woodland); padding: var(--sp-6); }
 .owners { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: var(--sp-5) 0; border-top: 1px solid var(--line); }
 .lf-compact { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -481,7 +478,13 @@ ol.queue > li.done { opacity: .55; }
 .future { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: var(--sp-6); border-left: 4px solid var(--woodland); }
 @media (max-width: 640px) { .lf-compact input, .lf-compact .btn { width: 100%; } }
 .landing .survey-head { padding-left: max(16px, calc((100vw - 960px) / 2 + 16px)); padding-right: max(16px, calc((100vw - 960px) / 2 + 16px)); }
-.trading-cta { border-left: 4px solid var(--gen-second); padding: var(--sp-6); }
+.q-cta { border-left: 4px solid var(--gen-second); padding: var(--sp-6); }
+.q-cta[data-survey="future"] { border-left-color: var(--woodland); }
+.gen-links { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.gen-link { display: inline-block; font-size: var(--fs-sm); color: inherit; text-decoration: none; padding: 4px 0; }
+@media (max-width: 600px) { .gen-links { flex-direction: column; align-items: flex-start; gap: 2px; } }
+.gen-link b { font-weight: 600; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--line); }
+.gen-link:hover b { text-decoration-color: currentColor; }
 .famtable th, .famtable td { white-space: nowrap; }
 
 /* meetings: the next meeting's agenda, polls, and past minutes */

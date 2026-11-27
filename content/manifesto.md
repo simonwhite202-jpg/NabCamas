@@ -203,7 +203,7 @@ The portal can run 2027 under these rules once the 2027 allocation is signed off
   - maintenance reports, the house guide, and checking in during your week;
   - share offers between families, with first refusal in proportion to holdings, and the share register;
   - this paper as the portal's Manifesto page, open to every family's comments and suggested wording;
-  - a questionnaire on NAB's future, with its own questions for founders, the second generation and the third, and a summary of the answers by family and generation, and a second questionnaire on how each family would like weeks to be traded;
+  - a questionnaire on NAB's future, with its own questions for the founder, second and next generations, and a summary of the answers by family and generation, and a second questionnaire on how each family would like weeks to be traded;
   - meeting agendas that anyone in the families can add a question to, polls of the family admins (one vote per family) whose results go on the next agenda, and the minutes of past meetings.
 - **Still to build:** part weeks.
 - **Needed before families rely on it:**

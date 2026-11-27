@@ -1782,8 +1782,8 @@ route('GET', '/api/manifesto/versions', ({ user }) => { needAdmin(user); return 
 // syndicate's two questionnaires ("Looking ahead to the next generation" for founders and shareholders, "Your house, your future"
 // for the next generation). A question can be in more than one set, so the answers can be compared across generations. The families
 // see the results on the Questionnaire page; the site admin edits the questions and sees each response.
-const GENERATIONS = { founder: 'Founder member', second: 'Second generation', third: 'Third generation' };
-const GEN_HELP = { founder: 'One of the original NAB families’ shareholders or directors', second: 'A son or daughter of a founder member. Many already hold shares', third: 'A grandchild of a founder member' };
+const GENERATIONS = { founder: 'Founder generation', second: 'Second generation', third: 'Next generations' };   // the keys stay as they were stored
+const GEN_HELP = { founder: 'Born before 1956 – original shareholders', second: 'Born between 1956 and 1996 – often successor shareholders', third: 'Born after 1996 – future shareholders' };
 // Each question is one underlying question, worded for each generation it's asked of: founders are asked about the younger
 // generations; the second generation as owners (many already hold shares alongside the founders) or owners to be; the third about
 // their own future use. Its options line up across
