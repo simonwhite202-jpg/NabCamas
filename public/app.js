@@ -49,7 +49,7 @@ async function route() {
   const allowed = new Set(navTabs().map(t => t[0].split('/')[0]));
   if (!allowed.has(tab)) { if (location.hash !== '#/home') location.hash = '#/home'; else renderShell('home'); return; }
   renderShell(tab); const main = $('main');
-  const views = { home: viewHome, calendar: viewCalendar, enquiries: viewEnquiries, bookings: viewBookings, account: viewAccount, 'service-charge': viewServiceCharge, upgrades: viewUpgrades, maintenance: viewMaintenance, guide: viewGuide, people: viewPeople, admin: viewAdmin };
+  const views = { home: viewHome, calendar: viewCalendar, enquiries: viewEnquiries, bookings: viewBookings, account: viewAccount, 'service-charge': viewServiceCharge, upgrades: viewUpgrades, shares: viewShares, manifesto: viewManifesto, maintenance: viewMaintenance, guide: viewGuide, people: viewPeople, admin: viewAdmin };
   try { await (views[tab] || viewHome)(main); } catch (e) { main.innerHTML = `<div class="card empty">${esc(e.message)}</div>`; }
 }
 
@@ -99,12 +99,12 @@ function whoAmI() {
   return { name: esc(u.name), role: esc(role), house: esc(house), nameIsRole };
 }
 const NAV_ICON = { home: 'house', calendar: 'calendar-days', weeks: 'calendar-range', enquiries: 'messages-square', bookings: 'bed-double', account: 'wallet', people: 'users', admin: 'settings',
-  'admin/overview': 'banknote', 'admin/service-charge': 'receipt', 'service-charge': 'receipt', upgrades: 'lightbulb', maintenance: 'wrench', guide: 'book-open', 'admin/weeks': 'calendar-range', 'admin/lets': 'coins', 'admin/families': 'users-round', 'admin/users': 'user-cog', 'admin/settings': 'settings', 'admin/audit': 'history' };
+  'admin/overview': 'banknote', 'admin/service-charge': 'receipt', 'service-charge': 'receipt', upgrades: 'lightbulb', shares: 'chart-pie', manifesto: 'scroll-text', maintenance: 'wrench', guide: 'book-open', 'admin/weeks': 'calendar-range', 'admin/lets': 'coins', 'admin/families': 'users-round', 'admin/users': 'user-cog', 'admin/settings': 'settings', 'admin/audit': 'history' };
 function navTabs() {
-  if (isSiteRole()) return [['home', 'Overview'], ['calendar', 'Calendar'], ['upgrades', 'Upgrades'], ['maintenance', 'Maintenance'], ['guide', 'House guide'], ...ADMIN_PAGES];
+  if (isSiteRole()) return [['home', 'Overview'], ['calendar', 'Calendar'], ['upgrades', 'Upgrades'], ['maintenance', 'Maintenance'], ['guide', 'House guide'], ['shares', 'Shares'], ['manifesto', 'Manifesto'], ...ADMIN_PAGES];
   const friend = S.me.user.role === 'friend', fam = isFam();
   return [['home', 'Overview'], ['calendar', friend ? 'Available weeks' : 'Calendar'], fam && ['enquiries', 'Enquiries', S.me.enquiryCount],
-    ['bookings', friend ? 'My bookings' : 'Bookings'], isFamAdmin() && ['account', 'Account'], fam && ['service-charge', 'Service charge'], fam && ['upgrades', 'Upgrades'], ['maintenance', 'Maintenance'], ['guide', 'House guide'], ['people', friend ? 'My details' : 'Family & friends'], isSite() && ['admin', 'Site admin']].filter(Boolean);
+    ['bookings', friend ? 'My bookings' : 'Bookings'], isFamAdmin() && ['account', 'Account'], fam && ['service-charge', 'Service charge'], fam && ['upgrades', 'Upgrades'], ['maintenance', 'Maintenance'], ['guide', 'House guide'], fam && ['shares', 'Shares'], fam && ['manifesto', 'Manifesto'], ['people', friend ? 'My details' : 'Family & friends'], isSite() && ['admin', 'Site admin']].filter(Boolean);
 }
 function renderShell(tab) {
   const u = S.me.user, tabs = navTabs(), site = esc(S.me.settings.site_name);
@@ -776,17 +776,18 @@ const costFields = (c, o = {}) => `<div class="field"><label>${o.upgrade ? 'What
   <div class="grid-2" style="gap:12px"><div class="field"><label>${o.upgrade ? 'Rough cost (£, if you know it)' : 'Cost (£)'}</label><input name="amount" type="number" min="0" step="0.01" value="${c.amount ?? ''}" ${o.need ? 'required' : ''}></div>
     <div class="field"><label>${o.upgrade ? 'Price from (optional)' : 'Quote from (optional)'}</label><input name="quote_from" maxlength="200" value="${esc(c.quote_from || '')}" placeholder="${o.upgrade ? 'e.g. John Lewis' : 'e.g. Highland Plumbing'}"></div></div>
   <div class="field"><label>Details (optional)</label><textarea name="details" rows="3" placeholder="${o.upgrade ? 'Why, where it would go, a link to one you like…' : 'What it covers, how long the quote is valid…'}">${esc(c.details || '')}</textarea></div>`;
+// a change to a year whose charges are issued: offer to re-issue them. If a rounded charge per week is set on Payments, the
+// re-issue uses the rate the budget now works out at (it can be rounded again on Payments).
+async function offerReissue(rs) { for (const { year: y, fixed, calc } of rs || []) {
+  const refix = fixed != null && Math.abs(fixed - calc) > 0.005;
+  if (!confirm(refix ? `The ${y} service charges are already issued, at ${money(fixed, 2)} a week. With this change the ${y} budget works out at ${money(calc, 2)} a week. Re-issue the ${y} charges at ${money(calc, 2)} a week? (You can round it on Payments and issue again.)`
+    : `The ${y} service charges are already issued, and the ${y} budget has changed. Re-issue them now so households are charged the new amount?`)) continue;
+  if (refix) await api('/admin/budget-year/' + y, { method: 'PUT', body: { rate_per_week: '' } });
+  await api('/admin/budget/generate', { body: { year: y } }); toast(`${y} service charges re-issued`); }
+}
 // the actions on cost cards (and on a one-off line in the Service charge table): adopt, bump or cancel, edit, history
 function bindCosts(root, d, reload, more = []) {
   const find = id => d.costs.find(c => c.id == id) || more.find(c => c.id == id);
-  // a change to a year whose charges are issued: offer to re-issue them. If a rounded charge per week is set on Payments, the
-  // re-issue uses the rate the budget now works out at (it can be rounded again on Payments).
-  const reissue = async rs => { for (const { year: y, fixed, calc } of rs || []) {
-    const refix = fixed != null && Math.abs(fixed - calc) > 0.005;
-    if (!confirm(refix ? `The ${y} service charges are already issued, at ${money(fixed, 2)} a week. With this change the ${y} budget works out at ${money(calc, 2)} a week. Re-issue the ${y} charges at ${money(calc, 2)} a week? (You can round it on Payments and issue again.)`
-      : `The ${y} service charges are already issued, and the ${y} budget has changed. Re-issue them now so households are charged the new amount?`)) continue;
-    if (refix) await api('/admin/budget-year/' + y, { method: 'PUT', body: { rate_per_week: '' } });
-    await api('/admin/budget/generate', { body: { year: y } }); toast(`${y} service charges re-issued`); } };
   const yearOpts = sel => d.years.map(y => `<option value="${y}" ${y === sel ? 'selected' : ''}>${y}${d.issued.includes(y) ? ' (charges issued)' : ''}</option>`).join('');
   root.querySelectorAll('[data-adopt]').forEach(x => x.onclick = () => { const c = find(x.dataset.adopt), bank = d.bank;
     const m = openModal(`<form id="adf"><h2>Adopt “${esc(c.title)}”</h2><p class="small muted" style="margin-top:0">${costOrigin(c)} · ${costAmount(c)}</p>
@@ -801,7 +802,7 @@ function bindCosts(root, d, reload, more = []) {
       $('#adhint', m).textContent = how === 'bank' ? `A line in the ${y} budget paid from the bank balance: nothing is charged. A year’s bank-balance lines can’t add up to more than the latest bank balance${bank ? ` (${money(bank.amount, 2)} on ${dfmt(bank.as_of, { day: 'numeric', month: 'short', year: 'numeric' })})` : ' (none is recorded yet: add it on Payments)'}.`
         : `A line in the ${y} budget, so the service charge goes up. The AGM agrees the budget before the charges are issued.${d.issued.includes(y) ? ` The ${y} charges are already issued, so you’ll be asked whether to re-issue them.` : ''}`; };
     f.how.onchange = () => sync(true); f.year.onchange = () => sync(false); sync(true);
-    f.onsubmit = guard(async e => { e.preventDefault(); const r = await api(`/admin/costs/${c.id}/adopt`, { body: formData(f) }); closeOverlay(); toast('Adopted'); await reissue(r.reissue); reload(); });
+    f.onsubmit = guard(async e => { e.preventDefault(); const r = await api(`/admin/costs/${c.id}/adopt`, { body: formData(f) }); closeOverlay(); toast('Adopted'); await offerReissue(r.reissue); reload(); });
   });
   // an adopted cost: back to the waiting list, to another year, or cancelled; a waiting one: cancelled
   const change = (c, adopted) => {
@@ -811,7 +812,7 @@ function bindCosts(root, d, reload, more = []) {
       <div class="row" style="justify-content:flex-end;gap:8px"><button type="button" class="btn" data-close>Keep it</button><button class="btn ${adopted ? 'primary' : 'danger'}">${adopted ? 'Save' : 'Cancel it'}</button></div></form>`);
     $('#bcf', m).onsubmit = guard(async e => { e.preventDefault(); const v = formData(e.target);
       const r = v.action === 'cancel' ? await api(`/admin/costs/${c.id}/cancel`, { body: { note: v.note } }) : await api(`/admin/costs/${c.id}/bump`, { body: { to: v.action === 'waiting' ? null : v.action, note: v.note } });
-      closeOverlay(); toast(v.action === 'cancel' ? 'Cancelled' : v.action === 'waiting' ? 'Bumped back to the waiting list' : `Moved to ${v.action}`); await reissue(r.reissue); reload(); });
+      closeOverlay(); toast(v.action === 'cancel' ? 'Cancelled' : v.action === 'waiting' ? 'Bumped back to the waiting list' : `Moved to ${v.action}`); await offerReissue(r.reissue); reload(); });
   };
   root.querySelectorAll('[data-bump]').forEach(x => x.onclick = () => change(find(x.dataset.bump), true));
   root.querySelectorAll('[data-cost-cancel]').forEach(x => x.onclick = () => change(find(x.dataset.costCancel), false));
@@ -821,7 +822,7 @@ function bindCosts(root, d, reload, more = []) {
     const m = openModal(`<form id="cef"><h2>Edit “${esc(c.title)}”</h2>${costFields(c, { upgrade: c.kind === 'upgrade', need: c.status === 'adopted' })}
       ${c.status === 'adopted' ? `<p class="tiny muted" style="margin-top:-4px">Its line in the ${c.year} budget changes too.</p>` : ''}
       <div class="row" style="justify-content:flex-end;gap:8px"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Save</button></div></form>`);
-    $('#cef', m).onsubmit = guard(async e => { e.preventDefault(); const r = await api('/costs/' + c.id, { method: 'PUT', body: formData(e.target) }); closeOverlay(); toast('Saved'); await reissue(r.reissue); reload(); }); });
+    $('#cef', m).onsubmit = guard(async e => { e.preventDefault(); const r = await api('/costs/' + c.id, { method: 'PUT', body: formData(e.target) }); closeOverlay(); toast('Saved'); await offerReissue(r.reissue); reload(); }); });
   root.querySelectorAll('[data-cost-history]').forEach(x => x.onclick = e => { e.preventDefault(); const c = find(x.dataset.costHistory);
     openModal(`<h2>History of “${esc(c.title)}”</h2><div class="stack">${c.history.map(h => `<div class="small"><b>${asked(h.at)}</b>${h.by ? ` · ${esc(h.by)}` : ''}<div>${esc(h.text)}</div></div>`).join('')}</div>
       <div class="row" style="justify-content:flex-end;margin-top:16px"><button class="btn" data-close>Close</button></div>`); });
@@ -869,6 +870,163 @@ async function viewUpgrades(main) {
   const reload = () => viewUpgrades(main);
   const f = $('#upf', main); if (f) f.onsubmit = guard(async e => { e.preventDefault(); await api('/costs', { body: formData(f) }); toast(isSite() ? 'Added: waiting to be adopted' : 'Suggested. The site admin has been told'); reload(); });
   bindCosts(main, d, reload);
+}
+
+// ------------------------------------------------------------ shares
+// A family admin offers some of the family's shares to the other syndicate families; they register interest until the closing
+// date; the site admin records the sale once it's complete, and weeks and the service charge follow the shares from that year.
+const shareText = n => `${n} share${n === 1 ? '' : 's'}`;
+function offerCard(o, admin) {
+  const status = o.status === 'open' ? (o.taking ? `<span class="badge green">Open until ${dfmt(o.closes_on)}</span>` : `<span class="badge amber">Closed for interest on ${dfmt(o.closes_on)}</span>`)
+    : { sold: '<span class="badge blue">Sold</span>', closed: '<span class="badge">Closed</span>', withdrawn: '<span class="badge">Withdrawn</span>' }[o.status];
+  const mine = o.my_interest, btns = [o.can_interest && `<button class="btn sm" data-interest="${o.id}">${mine ? 'Change our interest…' : 'Register interest…'}</button>`,
+    mine && o.can_interest && `<button class="btn sm danger" data-interest-withdraw="${mine.id}">Withdraw our interest</button>`,
+    o.can_record && `<button class="btn sm green" data-record="${o.id}">Record the sale…</button>`, o.can_close && `<button class="btn sm" data-offer-close="${o.id}">Close without a sale…</button>`,
+    o.can_withdraw && !admin && `<button class="btn sm danger" data-offer-withdraw="${o.id}">Withdraw the offer</button>`].filter(Boolean).join('');
+  return `<div class="card flat offer" data-offer="${o.id}" style="padding:16px"><div class="row between" style="align-items:flex-start;gap:12px"><div style="min-width:0"><b>The ${esc(o.family)} family: ${shareText(o.shares)} for sale</b>${o.price != null ? ` <span class="num">· ${money(o.price, 2)} a share</span>` : ''}
+      <div class="tiny muted" style="margin-top:2px">Takes effect from ${o.from_year} · offered by ${esc(o.by)} on ${asked(o.created_at)}</div></div>${status}</div>
+    ${o.note ? `<div class="small" style="margin-top:8px;white-space:pre-line">${esc(o.note)}</div>` : ''}
+    ${o.interests.length ? `<div class="small stack" style="margin-top:10px;gap:2px"><b>Interest</b>${o.interests.map(i => `<div>${esc(i.family)}: ${i.status === 'accepted' ? `bought ${i.allotted}` : i.status === 'declined' ? `asked for ${i.shares}, none this time` : `would like ${i.shares}`}${i.note ? ` <span class="muted">· “${esc(i.note)}”</span>` : ''}</div>`).join('')}</div>`
+      : o.status === 'open' ? '<div class="tiny muted" style="margin-top:10px">No interest registered yet.</div>' : ''}
+    ${o.oversubscribed && o.status === 'open' ? `<div class="tiny muted" style="margin-top:6px">${o.wanted} shares wanted and ${o.shares} offered: they’ll be shared out in proportion to holdings.</div>` : ''}
+    ${o.outcome && o.status !== 'open' ? `<div class="small" style="margin-top:8px">${o.status === 'sold' ? 'Sold: ' : ''}${esc(o.outcome)}.</div>` : ''}
+    ${btns ? `<div class="row" style="margin-top:10px;gap:8px;flex-wrap:wrap">${btns}</div>` : ''}</div>`;
+}
+async function viewShares(main) {
+  const d = await api('/shares?year=' + S.year), admin = isSite(), cur = S.me.settings.currency;
+  const open = d.offers.filter(o => o.status === 'open'), past = d.offers.filter(o => o.status !== 'open');
+  const myOpen = isFam() && open.find(o => o.family_id === S.me.user.family_id);
+  main.innerHTML = `<h1>Shares</h1><p class="muted" style="max-width:75ch">Each share is one week a year and a share of the service charge. A family admin can offer some of the family’s shares to the other syndicate families, who register interest before the closing date; if more are wanted than offered, they’re shared out in proportion to holdings. The sale itself is completed outside the portal, under the syndicate’s articles and any shareholders’ agreement. The site admin then records it here, and the weeks and the service charge follow the shares from the year it takes effect.</p>
+    ${pageBar(yearPicker(), admin ? `<button class="btn" data-transfer>${icon('plus')}Record a transfer…</button>` : '')}
+    <div class="grid-2" style="align-items:start">
+      <section class="stack">
+        <div class="card"><h3>${icon('chart-pie')} Share register ${S.year}</h3>
+          <div class="table-wrap"><table><thead><tr><th>Family</th><th class="r">Shares</th><th class="r">Of the house</th></tr></thead><tbody>
+          ${d.register.map(f => `<tr ${f.mine ? 'style="font-weight:600"' : ''}><td><span class="dot" style="background:${esc(f.color || '#999')}"></span>${esc(f.name)}${f.mine ? ' (you)' : ''}</td><td class="r num">${f.shares}</td><td class="r num">${f.pct.toFixed(1)}%</td></tr>`).join('')}</tbody>
+          <tfoot><tr><td>Total</td><td class="r num">${d.total}</td><td class="r num">100%</td></tr></tfoot></table></div>
+          ${d.price ? `<p class="small muted" style="margin:10px 0 0">Agreed price per share: <b>${money(d.price, 2)}</b> (about ${money(d.price * 52, 0)} for the house). A family can ask a different price.</p>` : ''}</div>
+        ${d.can_offer ? `<form class="card" id="sof"><h3>Offer shares for sale</h3><p class="small muted" style="margin-top:0">To the other syndicate families. Your family holds ${shareText(d.my_shares)} from next year.</p>
+          <div class="grid-2" style="gap:12px"><div class="field"><label>Shares to sell</label><input name="shares" type="number" min="1" max="${d.my_shares}" step="1" value="1" required></div>
+            <div class="field"><label>Asking price per share (${cur})</label><input name="price" type="number" min="0" step="0.01" value="${d.price ?? ''}"></div>
+            <div class="field"><label>Takes effect from</label><select name="from_year">${d.years.map(y => `<option value="${y}" ${y === d.years[1] ? 'selected' : ''}>${y}</option>`).join('')}</select></div>
+            <div class="field"><label>Interest closes on</label><input name="closes_on" type="date" value="${addDays(new Date().toISOString().slice(0, 10), d.offer_days)}" required></div></div>
+          <div class="field"><label>Note (optional)</label><textarea name="note" rows="2" placeholder="e.g. We’re coming less now the children have grown up"></textarea></div>
+          <button class="btn primary">Offer for sale</button></form>`
+          : myOpen ? '<div class="card flat small muted">Your family’s offer is open: it’s listed under Shares for sale.</div>' : ''}
+      </section>
+      <section class="stack"><h2 style="margin:0">Shares for sale</h2>${open.map(o => offerCard(o, admin)).join('') || '<div class="card flat empty small">No shares on offer at the moment</div>'}
+        ${past.length ? `<h2 style="margin:8px 0 0">Earlier offers</h2>${past.map(o => offerCard(o, admin)).join('')}` : ''}
+        ${d.transfers.length ? `<h2 style="margin:8px 0 0">Transfers recorded</h2><div class="table-wrap"><table><thead><tr><th>From</th><th></th><th class="r">Shares</th><th class="r">Price each</th><th>Recorded</th></tr></thead><tbody>
+          ${d.transfers.map(t => `<tr><td>${t.from_year}</td><td>${esc(t.from)} → ${esc(t.to)}${t.note ? `<div class="tiny muted">${esc(t.note)}</div>` : ''}</td><td class="r num">${t.shares}</td><td class="r num">${t.price != null ? money(t.price, 2) : '—'}</td><td class="small muted">${asked(t.created_at)}</td></tr>`).join('')}</tbody></table></div>` : ''}</section></div>`;
+  const reload = () => viewShares(main), find = id => d.offers.find(o => o.id == id);
+  bindYears(main, reload);
+  const f = $('#sof', main); if (f) f.onsubmit = guard(async e => { e.preventDefault(); if (!confirm('Offer these shares to the other syndicate families? Their family admins will be told.')) return; await api('/shares/offers', { body: formData(f) }); toast('Offered. The other families have been told'); reload(); });
+  main.querySelectorAll('[data-offer-withdraw]').forEach(x => x.onclick = guard(async () => { if (!confirm('Withdraw the offer?')) return; await api(`/shares/offers/${x.dataset.offerWithdraw}/withdraw`, { body: {} }); toast('Withdrawn'); reload(); }));
+  main.querySelectorAll('[data-interest-withdraw]').forEach(x => x.onclick = guard(async () => { if (!confirm('Withdraw your family’s interest?')) return; await api(`/shares/interests/${x.dataset.interestWithdraw}/withdraw`, { body: {} }); toast('Withdrawn'); reload(); }));
+  main.querySelectorAll('[data-interest]').forEach(x => x.onclick = () => { const o = find(x.dataset.interest), mine = o.my_interest;
+    const m = openModal(`<form id="sif"><h2>Shares from the ${esc(o.family)} family</h2><p class="small muted" style="margin-top:0">${shareText(o.shares)} for sale${o.price != null ? ` at ${money(o.price, 2)} a share` : ''}, from ${o.from_year}. Registering interest isn’t a commitment: the sale is agreed and completed outside the portal.</p>
+      <div class="field"><label>How many would your family like?</label><input name="shares" type="number" min="1" max="${o.shares}" step="1" value="${mine ? mine.shares : 1}" required></div>
+      <div class="field"><label>Note (optional)</label><input name="note" maxlength="300" value="${esc(mine ? mine.note || '' : '')}" placeholder="e.g. One would be perfect for us"></div>
+      <div class="row" style="justify-content:flex-end;gap:8px"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">${mine ? 'Save' : 'Register interest'}</button></div></form>`);
+    $('#sif', m).onsubmit = guard(async e => { e.preventDefault(); await api(`/shares/offers/${o.id}/interest`, { body: formData(e.target) }); closeOverlay(); toast('Interest registered. The family and the site admin have been told'); reload(); }); });
+  // the site admin: record the sale (shares for each family, prefilled in proportion to holdings), or close it
+  main.querySelectorAll('[data-record]').forEach(x => x.onclick = () => { const o = find(x.dataset.record), live = o.interests.filter(i => i.status === 'open');
+    const others = d.families.filter(f => f.id !== o.family_id && !live.some(i => i.family_id === f.id));
+    const m = openModal(`<form id="srf"><h2>Record the sale</h2><p class="small muted" style="margin-top:0">${shareText(o.shares)} from the ${esc(o.family)} family. Record it once the sale is complete under the syndicate’s articles. ${o.oversubscribed ? 'More were wanted than offered: the numbers below share them out in proportion to holdings.' : ''}</p>
+      <div class="table-wrap"><table><thead><tr><th>Family</th><th class="r">Asked for</th><th class="r">Shares</th></tr></thead><tbody>
+        ${live.map(i => `<tr><td>${esc(i.family)} <span class="tiny muted">(holds ${i.holding})</span></td><td class="r num">${i.shares}</td><td class="r"><input name="allot_${i.family_id}" type="number" min="0" max="${o.shares}" step="1" value="${o.suggestion[i.family_id] || 0}" style="max-width:80px;text-align:right"></td></tr>`).join('')}
+        ${others.length ? `<tr><td><select name="other_family"><option value="">Another family…</option>${others.map(f => `<option value="${f.id}">${esc(f.name)}</option>`).join('')}</select></td><td></td><td class="r"><input name="other_shares" type="number" min="0" max="${o.shares}" step="1" value="0" style="max-width:80px;text-align:right"></td></tr>` : ''}</tbody></table></div>
+      <div class="grid-2" style="gap:12px;margin-top:12px"><div class="field"><label>Price per share (${cur})</label><input name="price" type="number" min="0" step="0.01" value="${o.price ?? ''}"></div>
+        <div class="field"><label>Takes effect from</label><select name="from_year">${d.years.map(y => `<option value="${y}" ${y === o.from_year ? 'selected' : ''}>${y}</option>`).join('')}</select></div></div>
+      <div class="field"><label>Note (optional)</label><input name="note" maxlength="300" placeholder="e.g. Completed 1 March 2027"></div>
+      <p class="tiny muted">From that year, the shares (and with them the weeks and the service charge) move to the buyers. Reallocate weeks on the Weeks page for any year that’s already allocated.</p>
+      <div class="row" style="justify-content:flex-end;gap:8px"><button type="button" class="btn" data-close>Cancel</button><button class="btn green">Record the sale</button></div></form>`, true);
+    $('#srf', m).onsubmit = guard(async e => { e.preventDefault(); const v = formData(e.target), allot = {};
+      for (const [k, n] of Object.entries(v)) if (k.startsWith('allot_') && Number(n) > 0) allot[k.slice(6)] = Number(n);
+      if (v.other_family && Number(v.other_shares) > 0) allot[v.other_family] = (allot[v.other_family] || 0) + Number(v.other_shares);
+      const r = await api(`/admin/shares/offers/${o.id}/record`, { body: { allot, price: v.price, from_year: v.from_year, note: v.note } }); closeOverlay(); toast('Sale recorded'); await offerReissue(r.reissue); reload(); }); });
+  main.querySelectorAll('[data-offer-close]').forEach(x => x.onclick = () => { const o = find(x.dataset.offerClose);
+    const m = openModal(`<form id="scf"><h2>Close without a sale</h2><p class="small muted" style="margin-top:0">The ${esc(o.family)} family’s offer of ${shareText(o.shares)}. The family and anyone who registered interest are told.</p>
+      <div class="field"><label>Reason (optional)</label><input name="note" maxlength="300" placeholder="e.g. No interest; the family is keeping them"></div>
+      <div class="row" style="justify-content:flex-end;gap:8px"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Close the offer</button></div></form>`);
+    $('#scf', m).onsubmit = guard(async e => { e.preventDefault(); await api(`/admin/shares/offers/${o.id}/close`, { body: formData(e.target) }); closeOverlay(); toast('Closed'); reload(); }); });
+  const tr = $('[data-transfer]', main); if (tr) tr.onclick = () => {
+    const fam = sel => `<select name="${sel}" required><option value="">Choose…</option>${d.families.map(f => `<option value="${f.id}">${esc(f.name)}</option>`).join('')}</select>`;
+    const m = openModal(`<form id="stf"><h2>Record a transfer</h2><p class="small muted" style="margin-top:0">Shares moving without an offer here: a holding split between the next generation’s households (add the new household on Families first), a gift, or a sale agreed another way.</p>
+      <div class="grid-2" style="gap:12px"><div class="field"><label>From</label>${fam('from_family_id')}</div><div class="field"><label>To</label>${fam('to_family_id')}</div>
+        <div class="field"><label>Shares</label><input name="shares" type="number" min="1" step="1" required></div><div class="field"><label>Price per share (${cur}, optional)</label><input name="price" type="number" min="0" step="0.01"></div>
+        <div class="field"><label>Takes effect from</label><select name="from_year">${d.years.map(y => `<option value="${y}" ${y === d.years[1] ? 'selected' : ''}>${y}</option>`).join('')}</select></div></div>
+      <div class="field"><label>Note (optional)</label><input name="note" maxlength="300" placeholder="e.g. Split between the two households"></div>
+      <div class="row" style="justify-content:flex-end;gap:8px"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Record</button></div></form>`, true);
+    $('#stf', m).onsubmit = guard(async e => { e.preventDefault(); const r = await api('/admin/shares/transfers', { body: formData(e.target) }); closeOverlay(); toast('Transfer recorded'); await offerReissue(r.reissue); reload(); }); };
+}
+
+// ------------------------------------------------------------ the manifesto
+// The Nab Camas 2.0 proposal, block by block. Families comment on any part or suggest new wording; the site admin accepts or
+// declines suggestions, resolves comments and edits the text.
+const mdInline = s => esc(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/(^|[^*\w])\*([^*\s][^*]*?)\*(?=[^*\w]|$)/g, '$1<i>$2</i>')
+  .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+const mdTable = t => { const rows = t.split('\n').map(r => r.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim())).filter(r => !r.every(c => /^:?-{2,}:?$/.test(c)));
+  return `<div class="table-wrap"><table><thead><tr>${rows[0].map(c => `<th>${mdInline(c)}</th>`).join('')}</tr></thead><tbody>${rows.slice(1).map(r => `<tr>${r.map(c => `<td>${mdInline(c)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`; };
+const mdBlockHtml = b => b.type === 'table' ? mdTable(b.text) : /^h\d$/.test(b.type) ? `<${b.type}>${mdInline(b.text)}</${b.type}>` : `<p>${mdInline(b.text)}</p>`;
+const M_STATUS = { accepted: '<span class="badge green">Accepted</span>', declined: '<span class="badge">Not taken up</span>', resolved: '<span class="badge">Resolved</span>' };
+function mThread(c, admin) {
+  const open = c.status === 'open';
+  const btns = [`<button class="btn sm" data-mreply="${c.id}">Reply</button>`, admin && open && c.kind === 'suggestion' && `<button class="btn sm green" data-maccept="${c.id}">Accept</button>`,
+    admin && open && c.kind === 'suggestion' && `<button class="btn sm" data-mdecline="${c.id}">Decline</button>`, admin && open && c.kind === 'comment' && `<button class="btn sm" data-mresolve="${c.id}">Mark as resolved</button>`,
+    admin && !open && `<button class="btn sm" data-mreopen="${c.id}">Reopen</button>`, c.can_delete && `<button class="btn sm danger" data-mdel="${c.id}">Delete</button>`].filter(Boolean).join('');
+  return `<div class="mthread ${c.kind} ${c.status}" data-thread="${c.id}"><div class="row between" style="gap:8px;align-items:flex-start"><span class="small"><b>${esc(c.by)}</b>${c.family ? `, ${esc(c.family)}` : ''} <span class="muted">· ${asked(c.created_at)}</span></span>
+      <span class="row" style="gap:6px">${c.kind === 'suggestion' ? '<span class="badge blue">Suggestion</span>' : ''}${M_STATUS[c.status] || ''}</span></div>
+    ${c.text ? `<div class="small" style="margin-top:4px;white-space:pre-line">${esc(c.text)}</div>` : ''}
+    ${c.kind === 'suggestion' ? `<div class="msuggest small"><span class="tiny muted">Suggested wording</span><div>${mdInline(c.suggestion)}</div></div>` : ''}
+    ${c.replies.map(r => `<div class="mreply small"><b>${esc(r.by)}</b>${r.family ? `, ${esc(r.family)}` : ''} <span class="muted">· ${asked(r.created_at)}</span><div style="white-space:pre-line">${esc(r.text)}</div></div>`).join('')}
+    ${!open && c.resolved_by ? `<div class="tiny muted" style="margin-top:6px">${M_STATUS[c.status].replace(/<[^>]+>/g, '')} by ${esc(c.resolved_by)} on ${asked(c.resolved_at)}</div>` : ''}
+    <div class="row" style="gap:6px;margin-top:8px;flex-wrap:wrap">${btns}</div></div>`;
+}
+// a block's threads: open ones shown, the rest folded away
+const mThreads = (cs, admin) => { if (!cs.length) return ''; const open = cs.filter(c => c.status === 'open'), done = cs.filter(c => c.status !== 'open');
+  return `<div class="mthreads">${open.map(c => mThread(c, admin)).join('')}${done.length ? `<details class="small"><summary class="muted" style="cursor:pointer">${done.length} dealt with</summary><div class="mthreads" style="margin:8px 0 0">${done.map(c => mThread(c, admin)).join('')}</div></details>` : ''}</div>`; };
+async function viewManifesto(main) {
+  const d = await api('/manifesto'), admin = d.can_manage;
+  const body = d.blocks.map(b => { const n = b.comments.filter(c => c.status === 'open').length, li = b.type === 'ul' || b.type === 'ol';
+    return `<div class="mblock ${li ? `li l${b.level}` : b.type}" data-b="${b.i}" ${b.type === 'ol' ? `data-num="${b.num}."` : ''}>${mdBlockHtml(b)}
+      <button class="iconbtn mcom ${n ? 'has' : ''}" data-comment="${b.i}" title="Comment${b.type === 'table' ? '' : ' or suggest wording'}" aria-label="Comment on this part">${icon('message-square-plus')}${n ? `<span class="mcount">${n}</span>` : ''}</button></div>${mThreads(b.comments, admin)}`; }).join('');
+  main.innerHTML = `<h1>Manifesto</h1><p class="muted" style="max-width:75ch">Nab Camas 2.0: the proposal for how the syndicate could run from here. Read it, then comment on any part, or suggest different wording, with the speech bubble beside each paragraph. The site admin gathers comments and suggestions, and updates the text.</p>
+    ${pageBar(`<span class="small muted">${d.open} open comment${d.open === 1 ? '' : 's'} and suggestions · text updated ${asked(d.updated_at || '')}${d.updated_by ? ` by ${esc(d.updated_by)}` : ''}</span>`,
+      `<button class="btn" data-comment="-1">${icon('message-square-plus')}Comment on the whole manifesto…</button>${admin ? '<button class="btn" id="medit">Edit the text…</button>' : ''}`)}
+    <article class="manifesto card">${body}</article>
+    ${d.general.length ? `<section class="stack" style="margin-top:24px;max-width:860px"><h2 style="margin:0">On the whole manifesto</h2>${mThreads(d.general, admin)}</section>` : ''}
+    ${d.orphans.length ? `<section class="stack" style="margin-top:24px;max-width:860px"><h2 style="margin:0">On wording that has since changed</h2><p class="small muted" style="margin:0">These were on text that has been edited since.</p>
+      ${d.orphans.map(c => `<div class="small muted" style="margin-top:6px">On: “${mdInline(c.block_text.slice(0, 200))}${c.block_text.length > 200 ? '…' : ''}”</div>${mThreads([c], admin)}`).join('')}</section>` : ''}`;
+  const reload = () => { const y = scrollY; viewManifesto(main).then(() => scrollTo(0, y)); };
+  const all = [...d.blocks.flatMap(b => b.comments), ...d.general, ...d.orphans], find = id => all.find(c => c.id == id);
+  main.querySelectorAll('[data-comment]').forEach(x => x.onclick = () => { const i = Number(x.dataset.comment), b = d.blocks[i], canSuggest = b && b.type !== 'table';
+    const m = openModal(`<form id="mcf"><h2>${b ? 'Comment on this part' : 'Comment on the whole manifesto'}</h2>
+      ${b ? `<blockquote class="small mquote">${b.type === 'table' ? 'A table' : mdInline(b.text.length > 300 ? b.text.slice(0, 300) + '…' : b.text)}</blockquote>` : ''}
+      ${canSuggest ? `<div class="field"><label>What would you like to do?</label><select name="kind"><option value="comment">Comment or ask a question</option><option value="suggestion">Suggest different wording</option></select></div>` : '<input type="hidden" name="kind" value="comment">'}
+      <div class="field" id="msug" style="display:none"><label>Suggested wording</label><textarea name="suggestion" rows="5">${b ? esc(b.text) : ''}</textarea><p class="tiny muted" style="margin:4px 0 0">Change the words above. Text between **double stars** shows in bold.</p></div>
+      <div class="field"><label id="mtl">Your comment</label><textarea name="text" rows="4" placeholder="What do you think?"></textarea></div>
+      <div class="row" style="justify-content:flex-end;gap:8px"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Post</button></div></form>`, true);
+    const f = $('#mcf', m), sync = () => { const s = f.kind.value === 'suggestion'; $('#msug', m).style.display = s ? '' : 'none'; $('#mtl', m).textContent = s ? 'Why (optional)' : 'Your comment'; };
+    if (f.kind.tagName === 'SELECT') { f.kind.onchange = sync; sync(); }
+    f.onsubmit = guard(async e => { e.preventDefault(); await api('/manifesto/comments', { body: { ...formData(f), block: i } }); closeOverlay(); toast('Posted. The site admin has been told'); reload(); }); });
+  main.querySelectorAll('[data-mreply]').forEach(x => x.onclick = () => { const t = x.closest('.mthread'); if ($('.mreplyf', t)) return;
+    t.insertAdjacentHTML('beforeend', `<form class="mreplyf row" style="gap:8px;margin-top:8px"><input name="text" placeholder="Write a reply…" style="flex:1;min-width:180px" required><button class="btn sm primary">Reply</button></form>`);
+    const f = $('.mreplyf', t); f.text.focus(); f.onsubmit = guard(async e => { e.preventDefault(); await api('/manifesto/comments', { body: { parent_id: x.dataset.mreply, text: f.text.value } }); toast('Replied'); reload(); }); });
+  const act = (sel, action, msg, ask) => main.querySelectorAll(`[${sel}]`).forEach(x => x.onclick = guard(async () => { const id = x.getAttribute(sel), c = find(id);
+    let note = ''; if (ask) { note = prompt(ask, ''); if (note === null) return; }
+    await api(`/manifesto/comments/${id}/resolve`, { body: { action, note } }); toast(msg); reload(); }));
+  act('data-maccept', 'accept', 'Accepted: the wording has been changed'); act('data-mdecline', 'decline', 'Declined', 'A note for whoever suggested it (optional):');
+  act('data-mresolve', 'resolve', 'Marked as resolved'); act('data-mreopen', 'reopen', 'Reopened');
+  main.querySelectorAll('[data-mdel]').forEach(x => x.onclick = guard(async () => { if (!confirm('Delete this, with any replies?')) return; await api('/manifesto/comments/' + x.dataset.mdel, { method: 'DELETE' }); toast('Deleted'); reload(); }));
+  const ed = $('#medit', main); if (ed) ed.onclick = guard(async () => { const full = await api('/manifesto/versions'), cur = d.blocks;
+    const m = openModal(`<form id="mef"><h2>Edit the manifesto</h2><p class="small muted" style="margin-top:0">Markdown: # and ## for headings, - for points, **bold**, *italic*, | for tables. Comments stay with the paragraphs whose wording doesn’t change; the rest are kept under “On wording that has since changed”. The text before each edit is kept.</p>
+      <div class="field"><textarea name="body" rows="22" style="font-family:ui-monospace,monospace;font-size:13px"></textarea></div>
+      ${full.length ? `<div class="field"><label>Earlier versions (${full.length})</label><div class="row" style="gap:8px;flex-wrap:wrap"><select id="mver" style="flex:1;min-width:200px">${full.map((v, k) => `<option value="${k}">${asked(v.edited_at || '')} · ${esc(v.edited_by || 'loaded')}</option>`).join('')}</select><button type="button" class="btn sm" id="mverLoad">Load into the form</button></div></div>` : ''}
+      <div class="row" style="justify-content:flex-end;gap:8px"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Save</button></div></form>`, true);
+    const f = $('#mef', m); f.body.value = (await api('/manifesto/text')).body;
+    const lv = $('#mverLoad', m); if (lv) lv.onclick = () => { f.body.value = full[$('#mver', m).value].body; toast('Earlier version loaded. Save to bring it back'); };
+    f.onsubmit = guard(async e => { e.preventDefault(); await api('/manifesto', { method: 'PUT', body: { body: f.body.value } }); closeOverlay(); toast('Saved'); reload(); }); });
 }
 
 // ------------------------------------------------------------ maintenance
@@ -1217,6 +1375,7 @@ async function admSettings(el) {
       <label class="check" style="margin-top:8px"><input type="checkbox" name="view_as_enabled" ${s.view_as_enabled !== '0' ? 'checked' : ''}><span><b>Site admin can “View as” other logins</b>For testing: see the portal exactly as a family admin, member or trusted friend sees it, from the dropdown in the menu. Anything done while viewing as someone really happens, and the Activity log notes it.</span></label></div>
     <div class="card"><h3>Syndicate bank account</h3><p class="small muted" style="margin-top:0">Shown to people when they book a week.</p>
       ${f('bank_account_name', 'Account name')}${f('bank_name', 'Bank')}<div class="grid-2" style="gap:12px">${f('bank_sort_code', 'Sort code')}${f('bank_account_no', 'Account number')}</div>${f('bank_iban', 'IBAN (optional)')}
+      <h3 style="margin-top:8px">Shares</h3><div class="grid-2" style="gap:12px">${f('share_price', 'Agreed price per share (£)', 'number', 'min=0 step=0.01')}${f('share_offer_days', 'Days an offer stays open for interest', 'number', 'min=1')}</div>
       <h3 style="margin-top:8px">General</h3><div class="grid-2" style="gap:12px">${f('site_name', 'Site name')}${f('currency', 'Currency symbol')}${f('place_line', 'Place line (under the name)')}</div>
       <h3 style="margin-top:8px">Changeover days</h3><p class="small muted" style="margin-top:0">Used when a new year’s weeks are created. Week 1 starts on the first winter changeover day on or after 26 December, so some years have 53 weeks.</p>
       <div class="grid-2" style="gap:12px">${daySel('winter_changeover_day', 'Winter changeover')}${daySel('summer_changeover_day', 'Summer changeover')}
@@ -1232,13 +1391,13 @@ async function admSettings(el) {
   $('#heroRm', el) && ($('#heroRm', el).onclick = guard(async () => { if (!confirm('Remove the Overview photograph?')) return; await api('/admin/hero', { method: 'DELETE' }); toast('Photograph removed'); await refreshMe(); admSettings(el); }));
   // Start afresh: clear test activity, keeping every login (preview first, backup offered, then RESET to confirm)
   el.insertAdjacentHTML('beforeend', `<div class="card" id="resetCard" style="margin-top:var(--sp-6);border-color:var(--st-alert, #b4544a)"><h3>${icon('trash-2')} Start afresh</h3>
-    <p class="small muted" style="margin:0 0 var(--sp-4);max-width:75ch">Clears all test activity: bookings and lets, enquiries and questions, upgrade suggestions and quotes, maintenance reports, top-ups, bank balances, notices and account lines. Every login is kept, including the demo logins (@example.com). Each week’s plan goes back to Undecided. Who holds each week, the families, budgets and settings are kept. Service charges are reissued from the budgets: 2026 paid in full, 2027 unpaid. The 2027 allocation goes back to draft.</p>
+    <p class="small muted" style="margin:0 0 var(--sp-4);max-width:75ch">Clears all test activity: bookings and lets, enquiries and questions, upgrade suggestions and quotes, share offers, maintenance reports, top-ups, bank balances, notices and account lines. Every login is kept, including the demo logins (@example.com). Each week’s plan goes back to Undecided. Who holds each week, the families, budgets and settings are kept. Service charges are reissued from the budgets: 2026 paid in full, 2027 unpaid. The 2027 allocation goes back to draft.</p>
     <button type="button" class="btn" id="resetCheck">Check what would be removed</button><div id="resetPlan"></div></div>`);
   $('#resetCheck', el).onclick = guard(async () => {
     const p = await api('/admin/reset'), box = $('#resetPlan', el), yr = x => x.budget ? `${money(x.charges, 2)} from the ${x.year} budget${x.label ? ` (${esc(x.label)})` : ''}` : `no ${x.year} budget yet, so no charges`;
     box.innerHTML = `<ul class="small" style="margin:var(--sp-4) 0;line-height:1.8">
       <li>All logins kept${p.demo_logins ? `, including ${p.demo_logins} demo login${p.demo_logins === 1 ? '' : 's'}` : ''}</li>
-      <li>${p.bookings} booking${p.bookings === 1 ? '' : 's'} and lets, ${p.enquiries} enquir${p.enquiries === 1 ? 'y' : 'ies'} and questions, ${p.costs} one-off cost${p.costs === 1 ? '' : 's'} (upgrades and quotes), ${p.maintenance} maintenance report${p.maintenance === 1 ? '' : 's'}, ${p.topups} top-up${p.topups === 1 ? '' : 's'}, ${p.bank_balances} bank balance${p.bank_balances === 1 ? '' : 's'}, ${p.notifications} notice${p.notifications === 1 ? '' : 's'}</li>
+      <li>${p.bookings} booking${p.bookings === 1 ? '' : 's'} and lets, ${p.enquiries} enquir${p.enquiries === 1 ? 'y' : 'ies'} and questions, ${p.costs} one-off cost${p.costs === 1 ? '' : 's'} (upgrades and quotes), ${p.share_offers} share offer${p.share_offers === 1 ? '' : 's'}, ${p.maintenance} maintenance report${p.maintenance === 1 ? '' : 's'}, ${p.topups} top-up${p.topups === 1 ? '' : 's'}, ${p.bank_balances} bank balance${p.bank_balances === 1 ? '' : 's'}, ${p.notifications} notice${p.notifications === 1 ? '' : 's'}</li>
       <li>${p.ledger_lines} account line${p.ledger_lines === 1 ? '' : 's'} cleared, so every family balance starts again from the service charges</li>
       <li>${p.weeks_reset} week${p.weeks_reset === 1 ? '' : 's'} set back to Undecided (who holds them is kept)</li>
       <li><b>2026:</b> ${yr(p.paid)}${p.paid.budget ? ', marked <b>paid in full</b>' : ''}</li>

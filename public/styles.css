@@ -365,3 +365,28 @@ ol.queue > li.done { opacity: .55; }
 .search-box { position: relative; display: flex; align-items: center; flex: 1; max-width: 360px; }
 .search-box svg { position: absolute; left: 10px; pointer-events: none; opacity: .6; }
 .search-box input { padding-left: 32px; width: 100%; }
+
+/* a family's colour beside its name (share register) */
+.dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; vertical-align: middle; }
+
+/* the manifesto: each block has a comment button; threads sit under the block they're on */
+.manifesto { max-width: 860px; padding: var(--sp-6) var(--sp-5); }
+.mblock { position: relative; padding: 4px 44px 4px 8px; border-radius: var(--r-sm); }
+.mblock:hover { background: var(--surface-2); }
+.mblock p { margin: 0; line-height: 1.6; }
+.mblock h1 { margin: 0 0 4px; font-size: 1.7rem; } .mblock h2 { margin: 18px 0 2px; } .mblock h3 { margin: 12px 0 2px; }
+.mblock.li { padding-left: 30px; } .mblock.li::before { content: '•'; position: absolute; left: 14px; top: 4px; line-height: 1.6; color: var(--ink-2); }
+.mblock.li.l2 { padding-left: 52px; } .mblock.li.l2::before { left: 36px; }
+.mblock.li[data-num]::before { content: attr(data-num); }
+.mblock .table-wrap { margin: 8px 0; }
+.mblock .mcom { position: absolute; right: 4px; top: 4px; opacity: .3; display: inline-flex; align-items: center; gap: 2px; }
+.mblock:hover .mcom, .mblock .mcom.has, .mblock .mcom:focus-visible { opacity: 1; }
+.mcount { font-size: 11px; font-weight: 600; }
+.mthreads { display: grid; gap: 8px; margin: 6px 44px 10px 8px; }
+.mthread { border: 1px solid var(--line); border-left: 3px solid var(--st-booked); border-radius: var(--r-md); padding: 10px 12px; background: var(--surface); }
+.mthread.suggestion { border-left-color: var(--st-available); }
+.mthread.accepted, .mthread.declined, .mthread.resolved { opacity: .8; }
+.msuggest { margin-top: 6px; padding: 8px 10px; background: var(--st-available-soft); border-radius: var(--r-sm); }
+.mreply { margin-top: 8px; padding-left: 10px; border-left: 2px solid var(--line); }
+.mquote { margin: 0 0 12px; padding: 8px 12px; border-left: 3px solid var(--line); color: var(--ink-2); }
+@media (max-width: 640px) { .manifesto { padding: var(--sp-4) var(--sp-2); } .mthreads { margin-right: 8px; } }

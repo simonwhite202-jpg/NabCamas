@@ -73,6 +73,26 @@ CREATE TABLE IF NOT EXISTS costs (id INTEGER PRIMARY KEY, kind TEXT NOT NULL DEF
   family_id INTEGER, user_id INTEGER NOT NULL, issue_id INTEGER, title TEXT NOT NULL, amount REAL, quote_from TEXT, details TEXT,
   status TEXT NOT NULL DEFAULT 'waiting' CHECK (status IN ('waiting','adopted','cancelled','withdrawn')),
   year INTEGER, funding TEXT, budget_item_id INTEGER, history TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT);
+-- shares a family offers to the other syndicate families: how many, the asking price per share, the year the transfer would take
+-- effect from (weeks and the service charge follow the shares from then), and the closing date for registering interest.
+CREATE TABLE IF NOT EXISTS share_offers (id INTEGER PRIMARY KEY, family_id INTEGER NOT NULL, user_id INTEGER NOT NULL, shares INTEGER NOT NULL, price REAL,
+  from_year INTEGER NOT NULL, closes_on TEXT NOT NULL, note TEXT, status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','sold','closed','withdrawn')),
+  outcome TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT);
+-- a family's interest in an offer: how many shares it would like. allotted = how many it got when the sale was recorded.
+CREATE TABLE IF NOT EXISTS share_interests (id INTEGER PRIMARY KEY, offer_id INTEGER NOT NULL, family_id INTEGER NOT NULL, user_id INTEGER NOT NULL, shares INTEGER NOT NULL,
+  note TEXT, status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','accepted','declined','withdrawn')), allotted INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+-- the share register's changes: shares moved from one family to another from a year, at a price per share (none for a gift or a
+-- split between households), recorded by the site admin once the sale or transfer is complete outside the portal
+CREATE TABLE IF NOT EXISTS share_transfers (id INTEGER PRIMARY KEY, from_family_id INTEGER NOT NULL, to_family_id INTEGER NOT NULL, shares INTEGER NOT NULL, price REAL,
+  from_year INTEGER NOT NULL, offer_id INTEGER, note TEXT, created_by INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+-- a document the families read and comment on (the manifesto): its text as Markdown, the text before each edit, and comments.
+-- A comment is on one block of the text (block_text = that block's wording when it was made, so it follows the block if others
+-- move) or on the whole document (block_index -1). kind: comment | suggestion (with new wording) | reply (parent_id).
+CREATE TABLE IF NOT EXISTS documents (slug TEXT PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL, updated_by INTEGER, updated_at TEXT);
+CREATE TABLE IF NOT EXISTS document_versions (id INTEGER PRIMARY KEY, slug TEXT NOT NULL, body TEXT NOT NULL, edited_by INTEGER, edited_at TEXT);
+CREATE TABLE IF NOT EXISTS document_comments (id INTEGER PRIMARY KEY, slug TEXT NOT NULL, parent_id INTEGER, block_text TEXT, block_index INTEGER,
+  kind TEXT NOT NULL DEFAULT 'comment' CHECK (kind IN ('comment','suggestion','reply')), text TEXT, suggestion TEXT, user_id INTEGER NOT NULL, family_id INTEGER,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','accepted','declined','resolved')), resolved_by INTEGER, resolved_at TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 -- a problem at the house, reported by anyone who logs in and kept up to date by the site admin. urgency: urgent (safety, or the
 -- house can't be used) | soon | whenever. status: open (reported) | in_hand | fixed | closed. photo = one picture, resized in the
 -- browser. A quote for the work is a cost (costs.issue_id).
@@ -181,6 +201,8 @@ const DEFAULT_SETTINGS = {
   // releasing and booking: days a "Members first" release is for members only, hours of first refusal for enquirers,
   // days a bank-transfer booking is held, reminders about undecided weeks (weeks before)
   members_first_days: '7', enquiry_hours: '48', hold_days: '3', reminder_weeks: '16,8', allow_member_account_charge: '1',
+  // shares: the agreed price per share (a 52nd of the house's value), and how many days an offer stays open for interest
+  share_price: '8650', share_offer_days: '28',
   // creating a new year's weeks
   winter_changeover_day: '5', summer_changeover_day: '6', summer_changeover_from: '12', summer_changeover_to: '43', summer_months: '6,7,8', shoulder_months: '4,5,9,10',
   bank_name: 'Syndicate bank account', bank_account_name: 'Nab Camas Syndicate', bank_sort_code: '00-00-00', bank_account_no: '00000000', bank_iban: '',
@@ -575,6 +597,8 @@ route('GET', '/api/home', ({ user }) => {
         detail: `${undecided.slice(0, 5).map(w => `week ${w.week_no} (${fmtDate(w.start_date)})`).join(', ')}${undecided.length > 5 ? '…' : ''}. If you release a week and it lets, the payment, less the ${s.currency}${s.letting_cost} letting cost, is credited to your account.`, link: '#/calendar', cta: 'See your weeks' });
       const bal = round2(q1('SELECT COALESCE(SUM(amount),0) n FROM ledger WHERE family_id=?', fid).n);
       if (bal > 0.005) attention.push({ tone: 'action', title: `Balance to pay: ${money(bal)}`, detail: `Pay ${s.bank_account_name} using reference ${famName(fid).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10)}-SC.`, link: '#/account', cta: 'View account' });
+      for (const o of q("SELECT * FROM share_offers WHERE status='open' AND family_id<>? AND closes_on>=? AND id NOT IN (SELECT offer_id FROM share_interests WHERE family_id=? AND status='open')", fid, t, fid))
+        attention.push({ tone: 'info', title: `The ${famName(o.family_id)} family is offering ${o.shares} share${o.shares > 1 ? 's' : ''} for sale`, detail: `${o.price != null ? `${s.currency}${Number(o.price).toLocaleString('en-GB')} a share, ` : ''}from ${o.from_year}. Register interest by ${fmtDate(o.closes_on)} if your family would like some.`, link: '#/shares', cta: 'Shares' });
       const gr = q1("SELECT COUNT(DISTINCT guide_id) g, COUNT(*) n FROM guide_reports WHERE status='open'");
       if (gr.n) attention.push({ tone: 'info', title: `${gr.n} inaccurac${gr.n > 1 ? 'ies' : 'y'} reported in the house guide`, detail: `In ${gr.g} guide${gr.g > 1 ? 's' : ''}. Any family admin can correct the guide, then mark the report as sorted.`, link: '#/guide', cta: 'House guide' });
       const invited = q("SELECT name FROM users WHERE family_id=? AND active=1 AND email IS NOT NULL AND password_hash IS NULL", fid).map(r => r.name);
@@ -617,8 +641,13 @@ route('GET', '/api/home', ({ user }) => {
     for (const { year } of q('SELECT DISTINCT year FROM budget_items ORDER BY year')) { const b = budgetSummary(year); if (b.total && !b.generated) syndicate.push({ tone: 'action', title: `${b.label || year} service charges not issued yet`, detail: `Budget ${money(b.total)} at ${money(b.rate)} a share.`, link: '#/admin/overview', cta: 'Payments' }); }
     const issues = q("SELECT urgency FROM maintenance_issues WHERE status IN ('open','in_hand')"), urgent = issues.filter(i => i.urgency === 'urgent').length;
     if (issues.length) syndicate.push({ tone: urgent ? 'urgent' : 'action', title: `${issues.length} maintenance issue${issues.length > 1 ? 's' : ''} open${urgent ? `, ${urgent} urgent` : ''}`, detail: 'Reported by families and friends. Mark each one In hand, then Fixed, with a note for whoever reported it.', link: '#/maintenance', cta: 'Maintenance' });
+    const mc = q1("SELECT COUNT(*) n FROM document_comments WHERE parent_id IS NULL AND status='open'").n;
+    if (mc) syndicate.push({ tone: 'info', title: `${mc} comment${mc > 1 ? 's and suggestions' : ' or suggestion'} open on the Manifesto`, detail: 'Reply, accept or decline suggestions, and mark comments as resolved.', link: '#/manifesto', cta: 'Manifesto' });
     const grs = q1("SELECT COUNT(*) n FROM guide_reports WHERE status='open'").n;
     if (grs) syndicate.push({ tone: 'info', title: `${grs} inaccurac${grs > 1 ? 'ies' : 'y'} reported in the house guide`, detail: 'Correct the guide (or ask a family admin to), then mark each report as sorted.', link: '#/guide', cta: 'House guide' });
+    const offers = q("SELECT * FROM share_offers WHERE status='open'"), due = offers.filter(o => o.closes_on < today());
+    if (due.length) syndicate.push({ tone: 'action', title: `${due.length} share offer${due.length > 1 ? 's have' : ' has'} closed for interest`, detail: due.map(o => `${famName(o.family_id)}: ${o.shares} share${o.shares > 1 ? 's' : ''}`).join(' · ') + '. Record the sale once it’s complete, or close the offer.', link: '#/shares', cta: 'Shares' });
+    else if (offers.length) syndicate.push({ tone: 'info', title: `${offers.length} share offer${offers.length > 1 ? 's' : ''} open`, detail: offers.map(o => `${famName(o.family_id)}: ${o.shares} share${o.shares > 1 ? 's' : ''}, until ${fmtDate(o.closes_on)}`).join(' · '), link: '#/shares', cta: 'Shares' });
     const waiting = q("SELECT amount FROM costs WHERE status='waiting'"), known = waiting.filter(c => c.amount != null);
     if (waiting.length) syndicate.push({ tone: 'action', title: `${waiting.length} cost${waiting.length > 1 ? 's' : ''} waiting to be adopted${known.length ? ` (${money(known.reduce((a, c) => a + c.amount, 0))})` : ''}`, detail: 'Upgrades the families suggested and maintenance quotes. Adopt them now from the bank balance, put them forward for a year’s service charge, or leave them waiting.', link: '#/admin/service-charge', cta: 'Service charge' });
     const ny = new Date().getFullYear() + 1; if (!q1('SELECT 1 FROM weeks WHERE year=?', ny)) syndicate.push({ tone: 'action', title: `No weeks set up for ${ny} yet`, detail: 'Create the year and import its allocation.', link: '#/admin/weeks', cta: 'Weeks & allocation' });
@@ -963,7 +992,7 @@ function resetPlan(user) {
   const n = t => q1(`SELECT COUNT(*) n FROM ${t}`).n;
   const charge = y => { const b = budgetSummary(y); return { year: y, label: b.label, budget: b.total, charges: b.total ? b.raised : 0 }; };
   return {
-    demo_logins: n("users WHERE lower(email) LIKE '%@example.com'"), costs: n('costs'), maintenance: n('maintenance_issues'),
+    demo_logins: n("users WHERE lower(email) LIKE '%@example.com'"), costs: n('costs'), share_offers: n('share_offers'), maintenance: n('maintenance_issues'),
     bookings: n('bookings'), enquiries: n('enquiries') + n('friend_enquiries') + n('week_questions'), topups: n('topups'), bank_balances: n('bank_balances'), notifications: n('notifications'),
     ledger_lines: n('ledger'),
     weeks_reset: q1("SELECT COUNT(*) n FROM weeks WHERE family_id IS NOT NULL AND (status<>'own_use' OR offer_friends=1 OR in_use=1 OR price_override IS NOT NULL OR note IS NOT NULL OR released_at IS NOT NULL)").n,
@@ -975,7 +1004,7 @@ route('POST', '/api/admin/reset', ({ user, body }) => {
   needAdmin(user); if (body.confirm !== 'RESET') fail(400, 'Type RESET to confirm');
   const plan = resetPlan(user), cur = settings().currency;
   tx(() => {
-    for (const t of ['bookings', 'enquiries', 'friend_enquiries', 'topups', 'bank_balances', 'notifications', 'ledger', 'costs', 'maintenance_issues', 'week_questions', 'audit']) run(`DELETE FROM ${t}`);
+    for (const t of ['bookings', 'enquiries', 'friend_enquiries', 'topups', 'bank_balances', 'notifications', 'ledger', 'costs', 'share_offers', 'share_interests', 'maintenance_issues', 'week_questions', 'audit']) run(`DELETE FROM ${t}`);
     run("UPDATE weeks SET status=CASE WHEN family_id IS NULL THEN 'syndicate' ELSE 'own_use' END, offer_friends=0, in_use=0, released_at=NULL, enquiry_until=NULL, price_override=NULL, note=NULL, sale_to='all', residence=NULL, residence_by=NULL, residence_at=NULL");
     for (const [year, paid] of [[RESET_PAID_YEAR, true], [RESET_UNPAID_YEAR, false]]) {
       const b = budgetSummary(year); if (!b.total) continue;
@@ -1480,6 +1509,236 @@ route('GET', '/api/service-charge', ({ user, query }) => {
   return { year: b.year, label: b.label, total: b.total, charge_total: b.charge_total, bank_total: b.bank_total, units: b.units, rate: b.rate, generated: b.generated,
     items: b.items.map(i => ({ id: i.id, description: i.description, amount: i.amount, category: i.category, notes: i.notes, funding: i.funding, cost: lineCost(i.id, user) })) };
 });
+
+// ---------------------------------------------------------------- shares: offers, interest and the register
+// A family admin offers some of the family's shares to the other syndicate families, from a year, at an asking price (the agreed
+// price per share by default). Other family admins register interest until the closing date. If more shares are wanted than
+// offered, they're shared out in proportion to holdings. The sale itself is completed outside the portal (under the syndicate's
+// articles and any shareholders' agreement); the site admin then records it, and the shares (and with them the weeks and the
+// service charge) move from the year it takes effect. The site admin can also record a transfer directly, e.g. a holding split
+// between the next generation's households.
+const shareYears = () => [thisYear(), thisYear() + 1, thisYear() + 2, thisYear() + 3];
+const addDaysIso = (d, n) => { const x = new Date(d + 'T00:00:00Z'); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
+const wholeShares = (v, max, what = 'shares') => { const n = Number(v); if (!Number.isInteger(n) || n < 1) fail(400, `Enter a whole number of ${what}`); if (max != null && n > max) fail(400, `That’s more than the ${max} available`); return n; };
+const lastShareYear = y => Math.max(y, (q1('SELECT MAX(year) y FROM family_shares') || {}).y || y, (q1('SELECT MAX(year) y FROM weeks') || {}).y || y);
+// the fewest shares a family holds from a year onwards (what it could sell from then)
+const sharesFrom = (fid, year) => { let m = Infinity; for (let y = year; y <= lastShareYear(year); y++) m = Math.min(m, sharesFor(fid, y)); return m === Infinity ? 0 : m; };
+// move shares between families from a year: earlier years are fixed as they were, that year and later ones change
+function transferShares(from, to, n, year) {
+  const last = lastShareYear(year), ys = []; for (let y = year; y <= last; y++) ys.push(y);
+  const fixed = []; for (let y = thisYear(); y < year; y++) for (const f of [from, to]) fixed.push([f, y, sharesFor(f, y)]);
+  const before = ys.map(y => [sharesFor(from, y), sharesFor(to, y)]);
+  if (before.some(([a]) => a < n)) fail(400, `${famName(from)} doesn’t hold ${n} share${n > 1 ? 's' : ''} in every year from ${year}`);
+  for (const [f, y, u] of fixed) run('INSERT OR IGNORE INTO family_shares (family_id,year,units) VALUES (?,?,?)', f, y, u);
+  ys.forEach((y, i) => { setShares(from, y, before[i][0] - n); setShares(to, y, before[i][1] + n); });
+}
+// shared out in proportion to holdings when more are wanted than offered: one share at a time to the family with the most
+// shares per share it would get (the d'Hondt method), up to what each asked for; earlier interest first on a tie
+function proRata(n, rows) {
+  const a = rows.map(r => ({ ...r, n: 0 }));
+  for (let k = 0; k < n; k++) { const c = a.filter(r => r.n < r.shares); if (!c.length) break;
+    c.sort((x, y) => y.holding / (y.n + 1) - x.holding / (x.n + 1) || x.created_at.localeCompare(y.created_at)); c[0].n++; }
+  return Object.fromEntries(a.map(r => [r.family_id, r.n]));
+}
+function offerView(o, user) {
+  const admin = !!user.is_site_admin, mineFam = isFamily(user) && user.family_id === o.family_id, famAdmin = isFamily(user) && user.role === 'family_admin';
+  const open = o.status === 'open', taking = open && o.closes_on >= today();
+  const ints = q("SELECT * FROM share_interests WHERE offer_id=? AND status<>'withdrawn' ORDER BY created_at, id", o.id)
+    .map(i => ({ id: i.id, family_id: i.family_id, family: famName(i.family_id), shares: i.shares, note: i.note, status: i.status, allotted: i.allotted, created_at: i.created_at, by: nameOf(i.user_id), holding: sharesFor(i.family_id, thisYear()) }));
+  const live = ints.filter(i => i.status === 'open'), wanted = live.reduce((t, i) => t + i.shares, 0), mine = isFamily(user) ? live.find(i => i.family_id === user.family_id) : null;
+  return { id: o.id, family_id: o.family_id, family: famName(o.family_id), by: nameOf(o.user_id), shares: o.shares, price: o.price, from_year: o.from_year, closes_on: o.closes_on,
+    note: o.note, status: o.status, outcome: o.outcome, created_at: o.created_at, taking, interests: ints, wanted, oversubscribed: wanted > o.shares,
+    suggestion: admin && open ? proRata(o.shares, live) : null, my_interest: mine || null,
+    can_withdraw: open && ((mineFam && famAdmin) || admin), can_interest: taking && famAdmin && !mineFam, can_record: admin && open, can_close: admin && open };
+}
+const getOffer = id => q1('SELECT * FROM share_offers WHERE id=?', id) || fail(404, 'That offer has been removed');
+const otherAdmins = fid => q("SELECT u.id FROM users u JOIN families f ON f.id=u.family_id WHERE u.role='family_admin' AND u.active=1 AND f.active=1 AND u.family_id<>?", fid).map(r => r.id);
+const sharesText = n => `${n} share${n === 1 ? '' : 's'}`;
+route('GET', '/api/shares', ({ user, query }) => {
+  need(user, user && (isFamily(user) || user.is_site_admin), 'Shares are for the syndicate families');
+  const year = Number(query.year) || thisYear();
+  const fams = q('SELECT id, name, color FROM families WHERE active=1 ORDER BY name').map(f => ({ ...f, shares: sharesFor(f.id, year) })), total = fams.reduce((a, f) => a + f.shares, 0) || 1;
+  const offers = q(`SELECT * FROM share_offers WHERE status='open' OR COALESCE(updated_at, created_at) >= date('now','-12 months') ORDER BY status<>'open', created_at DESC, id DESC`).map(o => offerView(o, user));
+  const transfers = q('SELECT * FROM share_transfers ORDER BY created_at DESC, id DESC LIMIT 50').map(t => ({ ...t, from: famName(t.from_family_id), to: famName(t.to_family_id), by: nameOf(t.created_by) }));
+  const mineNow = isFamily(user) ? sharesFrom(user.family_id, thisYear() + 1) : 0, s = settings();
+  return { year, register: fams.map(f => ({ ...f, pct: f.shares / total * 100, mine: isFamily(user) && f.id === user.family_id })), total: fams.reduce((a, f) => a + f.shares, 0),
+    price: Number(s.share_price) || null, offer_days: Number(s.share_offer_days) || 28, years: shareYears(), offers, transfers,
+    can_offer: isFamily(user) && user.role === 'family_admin' && mineNow > 0 && !q1("SELECT 1 FROM share_offers WHERE family_id=? AND status='open'", user.family_id),
+    my_shares: isFamily(user) ? mineNow : null, can_record: !!user.is_site_admin, families: user.is_site_admin ? q('SELECT id, name FROM families WHERE active=1 ORDER BY name') : [] };
+});
+route('POST', '/api/shares/offers', ({ user, body }) => {
+  need(user, user && isFamily(user) && user.role === 'family_admin', 'Only a family admin can offer the family’s shares');
+  if (q1("SELECT 1 FROM share_offers WHERE family_id=? AND status='open'", user.family_id)) fail(400, 'Your family already has shares on offer');
+  const year = Number(body.from_year); if (!shareYears().includes(year)) fail(400, 'Choose the year the sale would take effect from');
+  const n = wholeShares(body.shares, sharesFrom(user.family_id, year)), price = body.price === '' || body.price == null ? Number(settings().share_price) || null : round2(Number(body.price));
+  if (price != null && (isNaN(price) || price < 0)) fail(400, 'Enter the asking price per share');
+  const closes = /^\d{4}-\d{2}-\d{2}$/.test(String(body.closes_on || '')) ? body.closes_on : addDaysIso(today(), Number(settings().share_offer_days) || 28);
+  if (closes < today()) fail(400, 'The closing date has to be today or later');
+  const note = String(body.note || '').trim().slice(0, 1000) || null, fam = famName(user.family_id);
+  const id = Number(run('INSERT INTO share_offers (family_id,user_id,shares,price,from_year,closes_on,note) VALUES (?,?,?,?,?,?,?)', user.family_id, user.id, n, price, year, closes, note).lastInsertRowid);
+  notify([...otherAdmins(user.family_id), ...siteAdmins()], `The ${fam} family is offering ${sharesText(n)} for sale${price != null ? ` at ${moneyText(price)} a share` : ''}, from ${year}. Register interest on the Shares page by ${fmtDate(closes)}.`, '#/shares');
+  audit(user.id, 'shares.offer', { id, shares: n, price, from_year: year }); return { id };
+});
+route('POST', '/api/shares/offers/:id/withdraw', ({ user, params }) => {
+  const o = getOffer(params.id); need(user, user && offerView(o, user).can_withdraw, 'Only the family offering them can withdraw the offer');
+  run("UPDATE share_offers SET status='withdrawn', updated_at=datetime('now') WHERE id=?", o.id);
+  const ints = q("SELECT DISTINCT family_id FROM share_interests WHERE offer_id=? AND status='open'", o.id).map(r => r.family_id);
+  notify(ints.flatMap(f => familyAdmins(f)), `The ${famName(o.family_id)} family has withdrawn its offer of ${sharesText(o.shares)}.`, '#/shares');
+  audit(user.id, 'shares.offer_withdraw', { id: o.id }); return { ok: true };
+});
+// another family's admin: how many shares the family would like (asking again changes it)
+route('POST', '/api/shares/offers/:id/interest', ({ user, params, body }) => {
+  const o = getOffer(params.id); need(user, user && offerView(o, user).can_interest, o.closes_on < today() ? 'This offer has closed for interest' : 'Only another family’s admin can register interest');
+  const n = wholeShares(body.shares, o.shares), note = String(body.note || '').trim().slice(0, 1000) || null;
+  const was = q1("SELECT * FROM share_interests WHERE offer_id=? AND family_id=? AND status='open'", o.id, user.family_id);
+  if (was) run('UPDATE share_interests SET shares=?, note=?, user_id=? WHERE id=?', n, note, user.id, was.id);
+  else run('INSERT INTO share_interests (offer_id,family_id,user_id,shares,note) VALUES (?,?,?,?,?)', o.id, user.family_id, user.id, n, note);
+  notify([...familyAdmins(o.family_id), ...siteAdmins()], `The ${famName(user.family_id)} family would like ${sharesText(n)} of the ${famName(o.family_id)} family’s shares on offer.${note ? ` “${note}”` : ''}`, '#/shares');
+  audit(user.id, 'shares.interest', { offer: o.id, shares: n }); return { ok: true };
+});
+route('POST', '/api/shares/interests/:id/withdraw', ({ user, params }) => {
+  const i = q1("SELECT * FROM share_interests WHERE id=? AND status='open'", params.id) || fail(404, 'That interest has already been dealt with');
+  need(user, user && isFamily(user) && user.role === 'family_admin' && user.family_id === i.family_id, 'Only the family that registered it can withdraw it');
+  run("UPDATE share_interests SET status='withdrawn' WHERE id=?", i.id); audit(user.id, 'shares.interest_withdraw', { id: i.id }); return { ok: true };
+});
+// the site admin records the sale once it's complete: who gets how many, at what price, from which year
+route('POST', '/api/admin/shares/offers/:id/record', ({ user, params, body }) => {
+  needAdmin(user); const o = getOffer(params.id); if (o.status !== 'open') fail(400, 'This offer is no longer open');
+  const year = Number(body.from_year) || o.from_year; if (!shareYears().includes(year)) fail(400, 'Choose the year the sale takes effect from');
+  const allot = Object.entries(body.allot || {}).map(([f, n]) => [Number(f), Number(n) || 0]).filter(([f, n]) => n > 0);
+  if (!allot.length) fail(400, 'Say which families get the shares');
+  const total = allot.reduce((t, [, n]) => t + n, 0); if (allot.some(([, n]) => !Number.isInteger(n))) fail(400, 'Shares are whole numbers'); if (total > o.shares) fail(400, `That’s ${total} shares; ${sharesText(o.shares)} were offered`);
+  if (allot.some(([f]) => f === o.family_id || !q1('SELECT 1 FROM families WHERE id=? AND active=1', f))) fail(400, 'Choose another syndicate family for each buyer');
+  const price = body.price === '' || body.price == null ? o.price : round2(Number(body.price)), note = String(body.note || '').trim().slice(0, 500) || null;
+  const outcome = `${allot.map(([f, n]) => `${n} to ${famName(f)}`).join(', ')}${price != null ? ` at ${moneyText(price)} a share` : ''}, from ${year}`;
+  tx(() => {
+    for (const [f, n] of allot) { transferShares(o.family_id, f, n, year); run('INSERT INTO share_transfers (from_family_id,to_family_id,shares,price,from_year,offer_id,note,created_by) VALUES (?,?,?,?,?,?,?,?)', o.family_id, f, n, price, year, o.id, note, user.id); }
+    for (const i of q("SELECT * FROM share_interests WHERE offer_id=? AND status='open'", o.id)) { const got = (allot.find(([f]) => f === i.family_id) || [])[1] || 0;
+      run('UPDATE share_interests SET status=?, allotted=? WHERE id=?', got ? 'accepted' : 'declined', got || null, i.id); }
+    run("UPDATE share_offers SET status='sold', outcome=?, updated_at=datetime('now') WHERE id=?", outcome, o.id);
+  });
+  const who = [o.family_id, ...allot.map(([f]) => f), ...q("SELECT family_id f FROM share_interests WHERE offer_id=? AND status='declined'", o.id).map(r => r.f)];
+  notify([...new Set(who)].flatMap(f => familyAdmins(f)), `The sale of the ${famName(o.family_id)} family’s shares has been recorded: ${outcome}. Weeks and the service charge follow the shares from ${year}.`, '#/shares');
+  audit(user.id, 'shares.record', { offer: o.id, allot, price, year });
+  return { ok: true, reissue: reissueYears(...shareYears().filter(y => y >= year)) };
+});
+route('POST', '/api/admin/shares/offers/:id/close', ({ user, params, body }) => {
+  needAdmin(user); const o = getOffer(params.id); if (o.status !== 'open') fail(400, 'This offer is no longer open');
+  const note = String(body.note || '').trim().slice(0, 300) || null;
+  run("UPDATE share_offers SET status='closed', outcome=?, updated_at=datetime('now') WHERE id=?", note || 'Closed without a sale', o.id);
+  run("UPDATE share_interests SET status='declined' WHERE offer_id=? AND status='open'", o.id);
+  const who = [o.family_id, ...q('SELECT DISTINCT family_id f FROM share_interests WHERE offer_id=?', o.id).map(r => r.f)];
+  notify([...new Set(who)].flatMap(f => familyAdmins(f)), `The ${famName(o.family_id)} family’s offer of ${sharesText(o.shares)} has been closed without a sale.${note ? ` ${note}` : ''}`, '#/shares');
+  audit(user.id, 'shares.close', { offer: o.id }); return { ok: true };
+});
+// a transfer with no offer: a holding split between households, a gift, or a sale agreed another way
+route('POST', '/api/admin/shares/transfers', ({ user, body }) => {
+  needAdmin(user); const from = Number(body.from_family_id), to = Number(body.to_family_id), year = Number(body.from_year);
+  if (!from || !to || from === to || !q1('SELECT 1 FROM families WHERE id=?', from) || !q1('SELECT 1 FROM families WHERE id=? AND active=1', to)) fail(400, 'Choose two different families');
+  if (!shareYears().includes(year)) fail(400, 'Choose the year it takes effect from');
+  const n = wholeShares(body.shares), price = body.price === '' || body.price == null ? null : round2(Number(body.price)), note = String(body.note || '').trim().slice(0, 500) || null;
+  tx(() => { transferShares(from, to, n, year); run('INSERT INTO share_transfers (from_family_id,to_family_id,shares,price,from_year,note,created_by) VALUES (?,?,?,?,?,?,?)', from, to, n, price, year, note, user.id); });
+  notify([...familyAdmins(from), ...familyAdmins(to)], `${sharesText(n)} recorded as moving from the ${famName(from)} family to the ${famName(to)} family, from ${year}. Weeks and the service charge follow the shares.`, '#/shares');
+  audit(user.id, 'shares.transfer', { from, to, shares: n, price, year }); return { ok: true, reissue: reissueYears(...shareYears().filter(y => y >= year)) };
+});
+
+// ---------------------------------------------------------------- the manifesto
+// "Nab Camas 2.0": the proposal for how the syndicate runs, as a page the families read, comment on and suggest wording for. Its text
+// is Markdown, first loaded from content/manifesto.md; the site admin edits it (the text before each edit is kept), accepts or
+// declines suggestions and resolves comments. Family members and admins comment, suggest and reply.
+const MANIFESTO_FILE = path.join(__dirname, 'content', 'manifesto.md');
+if (!q1("SELECT 1 FROM documents WHERE slug='manifesto'") && fs.existsSync(MANIFESTO_FILE))
+  run("INSERT INTO documents (slug,title,body,updated_at) VALUES ('manifesto','Nab Camas 2.0 Manifesto',?,datetime('now'))", fs.readFileSync(MANIFESTO_FILE, 'utf8'));
+// the text as blocks: headings, paragraphs, list items (each its own block) and tables, with the lines each came from
+function mdBlocks(md) {
+  const L = md.replace(/\r/g, '').split('\n'), out = [], item = /^(\s*)([-*]|\d+\.)\s+(\[[ xX]\]\s+)?(.*)$/, special = l => /^#{1,3}\s/.test(l) || /^\s*\|/.test(l) || /^\s*([-*]|\d+\.)\s+/.test(l);
+  for (let i = 0; i < L.length;) {
+    const l = L[i]; let m;
+    if (!l.trim()) { i++; continue; }
+    if ((m = /^(#{1,3})\s+(.*)$/.exec(l))) { out.push({ type: 'h' + m[1].length, text: m[2].trim(), start: i, end: i + 1, prefix: m[1] + ' ' }); i++; continue; }
+    if (/^\s*\|/.test(l)) { const s = i; while (i < L.length && /^\s*\|/.test(L[i])) i++; out.push({ type: 'table', text: L.slice(s, i).join('\n'), start: s, end: i, prefix: '' }); continue; }
+    if ((m = item.exec(l))) { const s = i; let text = m[4]; i++; while (i < L.length && L[i].trim() && !special(L[i])) text += ' ' + L[i++].trim();
+      out.push({ type: /\d/.test(m[2]) ? 'ol' : 'ul', level: m[1].length >= 2 ? 2 : 1, num: /\d/.test(m[2]) ? parseInt(m[2]) : null, text, start: s, end: i, prefix: `${m[1]}${m[2]} ` }); continue; }
+    const s = i; let text = l.trim(); i++; while (i < L.length && L[i].trim() && !special(L[i])) text += ' ' + L[i++].trim();
+    out.push({ type: 'p', text, start: s, end: i, prefix: '' });
+  }
+  return out.map((b, k) => ({ ...b, i: k }));
+}
+const getDoc = () => q1("SELECT * FROM documents WHERE slug='manifesto'") || fail(404, 'The manifesto hasn’t been loaded yet');
+const canComment = u => !!u && (isFamily(u) || !!u.is_site_admin);
+// a block by its wording, nearest to where it was if the same wording appears twice
+const findBlock = (blocks, text, near) => blocks.filter(b => b.text === text).sort((x, y) => Math.abs(x.i - near) - Math.abs(y.i - near))[0] || null;
+function saveDoc(user, body) {
+  const d = getDoc(); if (body === d.body) return;
+  run('INSERT INTO document_versions (slug,body,edited_by,edited_at) VALUES (?,?,?,?)', 'manifesto', d.body, d.updated_by, d.updated_at);
+  run("UPDATE documents SET body=?, updated_by=?, updated_at=datetime('now') WHERE slug='manifesto'", body, user.id);
+}
+route('GET', '/api/manifesto', ({ user }) => {
+  need(user, canComment(user), 'The manifesto is for the syndicate families');
+  const d = getDoc(), blocks = mdBlocks(d.body), admin = !!user.is_site_admin;
+  const rows = q("SELECT * FROM document_comments WHERE slug='manifesto' ORDER BY created_at, id");
+  const view = c => ({ id: c.id, kind: c.kind, text: c.text, suggestion: c.suggestion, status: c.status, block_text: c.block_text, by: nameOf(c.user_id), family: c.family_id ? famName(c.family_id) : null,
+    created_at: c.created_at, resolved_by: nameOf(c.resolved_by), resolved_at: c.resolved_at, can_delete: admin || (c.user_id === user.id && c.status === 'open'), replies: [] });
+  const top = rows.filter(c => !c.parent_id).map(view), byId = Object.fromEntries(top.map(c => [c.id, c]));
+  for (const r of rows.filter(c => c.parent_id)) if (byId[r.parent_id]) byId[r.parent_id].replies.push(view(r));
+  const on = blocks.map(() => []), general = [], orphans = [];
+  for (const c of top) { const raw = rows.find(r => r.id === c.id);
+    if (raw.block_index === -1 || raw.block_text == null) { general.push(c); continue; }
+    const b = findBlock(blocks, raw.block_text, raw.block_index); (b ? on[b.i] : orphans).push(c); }
+  return { title: d.title, updated_at: d.updated_at, updated_by: nameOf(d.updated_by), blocks: blocks.map(b => ({ i: b.i, type: b.type, level: b.level, num: b.num, text: b.text, comments: on[b.i] })),
+    general, orphans, open: top.filter(c => c.status === 'open').length, can_comment: canComment(user), can_manage: admin };
+});
+route('POST', '/api/manifesto/comments', ({ user, body }) => {
+  need(user, canComment(user), 'Only the syndicate families can comment on the manifesto');
+  const text = String(body.text || '').trim().slice(0, 3000) || null, who = `${user.name}${isFamily(user) ? ` (${famName(user.family_id)})` : ''}`;
+  if (body.parent_id) {   // a reply: everyone in the thread, and the site admin, is told
+    const p = q1("SELECT * FROM document_comments WHERE id=? AND parent_id IS NULL AND slug='manifesto'", body.parent_id) || fail(404, 'That comment has been removed'); if (!text) fail(400, 'Write your reply');
+    const id = Number(run("INSERT INTO document_comments (slug,parent_id,kind,text,user_id,family_id) VALUES ('manifesto',?,'reply',?,?,?)", p.id, text, user.id, isFamily(user) ? user.family_id : null).lastInsertRowid);
+    const people = [p.user_id, ...q('SELECT user_id FROM document_comments WHERE parent_id=?', p.id).map(r => r.user_id), ...siteAdmins()];
+    notify([...new Set(people)].filter(i => i !== user.id), `${who} replied on the Manifesto: “${text.slice(0, 160)}${text.length > 160 ? '…' : ''}”`, '#/manifesto');
+    audit(user.id, 'manifesto.reply', { id, parent: p.id }); return { id };
+  }
+  const blocks = mdBlocks(getDoc().body), at = Number(body.block), b = at === -1 ? null : blocks[at] || fail(400, 'That part of the manifesto has changed: reload the page');
+  const kind = body.kind === 'suggestion' ? 'suggestion' : 'comment', suggestion = kind === 'suggestion' ? String(body.suggestion || '').trim().slice(0, 5000) : null;
+  if (kind === 'suggestion') { if (!b || b.type === 'table') fail(400, 'Suggest wording for a heading, paragraph or point'); if (!suggestion || suggestion === b.text) fail(400, 'Change the wording to suggest something different'); }
+  else if (!text) fail(400, 'Write your comment');
+  const id = Number(run("INSERT INTO document_comments (slug,block_text,block_index,kind,text,suggestion,user_id,family_id) VALUES ('manifesto',?,?,?,?,?,?,?)",
+    b ? b.text : null, b ? b.i : -1, kind, text, suggestion, user.id, isFamily(user) ? user.family_id : null).lastInsertRowid);
+  notify(siteAdmins().filter(i => i !== user.id), `${who} ${kind === 'suggestion' ? 'suggested new wording for' : 'commented on'} the Manifesto${b ? `: “${b.text.replace(/\*\*/g, '').slice(0, 80)}…”` : ''}.`, '#/manifesto');
+  audit(user.id, 'manifesto.' + kind, { id, block: b ? b.i : -1 }); return { id };
+});
+route('DELETE', '/api/manifesto/comments/:id', ({ user, params }) => {
+  const c = q1("SELECT * FROM document_comments WHERE id=? AND slug='manifesto'", params.id) || fail(404, 'That comment has already gone');
+  need(user, user && (user.is_site_admin || (c.user_id === user.id && c.status === 'open')), 'Only whoever wrote it can delete it, while it’s open');
+  run('DELETE FROM document_comments WHERE id=? OR parent_id=?', c.id, c.id); audit(user.id, 'manifesto.delete', { id: c.id }); return { ok: true };
+});
+// the site admin: accept a suggestion (its wording goes into the text), decline it, resolve a comment, or reopen
+route('POST', '/api/manifesto/comments/:id/resolve', ({ user, params, body }) => {
+  needAdmin(user); const c = q1("SELECT * FROM document_comments WHERE id=? AND parent_id IS NULL AND slug='manifesto'", params.id) || fail(404, 'That comment has been removed');
+  const action = String(body.action || ''), who = nameOf(c.user_id);
+  if (action === 'reopen') { run('UPDATE document_comments SET status=?, resolved_by=NULL, resolved_at=NULL WHERE id=?', 'open', c.id); return { ok: true }; }
+  if (c.status !== 'open') fail(400, 'This has already been dealt with');
+  if (action === 'accept') {
+    if (c.kind !== 'suggestion') fail(400, 'Only a suggestion can be accepted');
+    const d = getDoc(), blocks = mdBlocks(d.body), b = findBlock(blocks, c.block_text, c.block_index);
+    if (!b) fail(400, 'That wording has changed since the suggestion was made. Edit the text instead, then resolve it');
+    const lines = d.body.replace(/\r/g, '').split('\n'); lines.splice(b.start, b.end - b.start, b.prefix + c.suggestion.replace(/\s*\n\s*/g, ' '));
+    tx(() => { saveDoc(user, lines.join('\n')); run("UPDATE document_comments SET status='accepted', block_text=?, resolved_by=?, resolved_at=datetime('now') WHERE id=?", c.suggestion.replace(/\s*\n\s*/g, ' '), user.id, c.id); });
+  } else if (action === 'decline' || action === 'resolve') {
+    if (action === 'decline' && c.kind !== 'suggestion') fail(400, 'Mark a comment as resolved instead');
+    run("UPDATE document_comments SET status=?, resolved_by=?, resolved_at=datetime('now') WHERE id=?", action === 'decline' ? 'declined' : 'resolved', user.id, c.id);
+  } else fail(400, 'Choose what to do with it');
+  const note = String(body.note || '').trim().slice(0, 1000);
+  if (note) run("INSERT INTO document_comments (slug,parent_id,kind,text,user_id) VALUES ('manifesto',?,'reply',?,?)", c.id, note, user.id);
+  if (c.user_id !== user.id) notify([c.user_id], { accept: 'Your suggestion on the Manifesto was accepted, and the wording has been changed.', decline: 'Your suggestion on the Manifesto wasn’t taken up this time.', resolve: 'Your comment on the Manifesto has been marked as resolved.' }[action] + (note ? ` ${note}` : ''), '#/manifesto');
+  audit(user.id, 'manifesto.' + action, { id: c.id, by: who }); return { ok: true };
+});
+route('PUT', '/api/manifesto', ({ user, body }) => {
+  needAdmin(user); const text = String(body.body || '').replace(/\r/g, ''); if (text.trim().length < 20) fail(400, 'The text looks empty');
+  saveDoc(user, text); audit(user.id, 'manifesto.edit', { length: text.length }); return { ok: true };
+});
+route('GET', '/api/manifesto/text', ({ user }) => { needAdmin(user); const d = getDoc(); return { body: d.body }; });
+route('GET', '/api/manifesto/versions', ({ user }) => { needAdmin(user); return q("SELECT v.id, v.body, v.edited_at, u.name edited_by FROM document_versions v LEFT JOIN users u ON u.id=v.edited_by WHERE v.slug='manifesto' ORDER BY v.id DESC LIMIT 30"); });
 
 // ---------------------------------------------------------------- maintenance
 // Anyone who logs in can report a problem at the house. Families see every report (so nothing is reported twice); trusted friends
