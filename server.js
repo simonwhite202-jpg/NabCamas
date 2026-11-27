@@ -102,6 +102,16 @@ CREATE TABLE IF NOT EXISTS survey_questions (id INTEGER PRIMARY KEY, survey TEXT
   kind TEXT NOT NULL CHECK (kind IN ('single','multi','allocation','text')), text TEXT NOT NULL, texts TEXT, help TEXT, options TEXT, max_choices INTEGER, total REAL, unit TEXT, active INTEGER NOT NULL DEFAULT 1);
 CREATE TABLE IF NOT EXISTS survey_responses (id INTEGER PRIMARY KEY, survey TEXT NOT NULL DEFAULT 'future', generation TEXT NOT NULL CHECK (generation IN ('founder','second','third')), family_id INTEGER, family_other TEXT,
   name TEXT NOT NULL, email TEXT, user_id INTEGER, answers TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT);
+-- meetings (AGMs, board meetings): when and where, and once held, the minutes (Markdown). An agenda item is added by the site
+-- admin, asked as a question by anyone in the families, or a closed poll's result; meeting_id empty = for the next meeting.
+-- A poll asks the family admins: one vote per family (any of its admins can cast or change it).
+CREATE TABLE IF NOT EXISTS meetings (id INTEGER PRIMARY KEY, kind TEXT NOT NULL DEFAULT 'agm' CHECK (kind IN ('agm','board','other')), title TEXT NOT NULL, date TEXT NOT NULL, place TEXT,
+  minutes TEXT, minutes_by INTEGER, minutes_at TEXT, created_by INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS agenda_items (id INTEGER PRIMARY KEY, meeting_id INTEGER, kind TEXT NOT NULL DEFAULT 'item' CHECK (kind IN ('item','question','poll')), title TEXT NOT NULL, details TEXT,
+  user_id INTEGER, family_id INTEGER, poll_id INTEGER, sort INTEGER NOT NULL DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS polls (id INTEGER PRIMARY KEY, question TEXT NOT NULL, details TEXT, options TEXT NOT NULL, closes_on TEXT, meeting_id INTEGER,
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','closed')), created_by INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP, closed_at TEXT);
+CREATE TABLE IF NOT EXISTS poll_votes (poll_id INTEGER NOT NULL, family_id INTEGER NOT NULL, user_id INTEGER NOT NULL, choice INTEGER NOT NULL, comment TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (poll_id, family_id));
 -- a problem at the house, reported by anyone who logs in and kept up to date by the site admin. urgency: urgent (safety, or the
 -- house can't be used) | soon | whenever. status: open (reported) | in_hand | fixed | closed. photo = one picture, resized in the
 -- browser. A quote for the work is a cost (costs.issue_id).
@@ -608,6 +618,8 @@ route('GET', '/api/home', ({ user }) => {
       if (bal > 0.005) attention.push({ tone: 'action', title: `Balance to pay: ${money(bal)}`, detail: `Pay ${s.bank_account_name} using reference ${famName(fid).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10)}-SC.`, link: '#/account', cta: 'View account' });
       for (const o of q("SELECT * FROM share_offers WHERE status='open' AND family_id<>? AND closes_on>=? AND id NOT IN (SELECT offer_id FROM share_interests WHERE family_id=? AND status='open')", fid, t, fid))
         attention.push({ tone: 'info', title: `The ${famName(o.family_id)} family is offering ${o.shares} share${o.shares > 1 ? 's' : ''} for sale`, detail: `${o.price != null ? `${s.currency}${Number(o.price).toLocaleString('en-GB')} a share, ` : ''}from ${o.from_year}. Register interest by ${fmtDate(o.closes_on)} if your family would like some.`, link: '#/shares', cta: 'Shares' });
+      for (const p of q("SELECT * FROM polls WHERE status='open' AND id NOT IN (SELECT poll_id FROM poll_votes WHERE family_id=?)", fid))
+        attention.push({ tone: 'action', title: `Vote for your family: ${p.question}`, detail: `A poll of the family admins${p.closes_on ? `, closing ${fmtDate(p.closes_on)}` : ''}. Its result goes on the next meeting’s agenda.`, link: '#/meetings', cta: 'Vote' });
       const gr = q1("SELECT COUNT(DISTINCT guide_id) g, COUNT(*) n FROM guide_reports WHERE status='open'");
       if (gr.n) attention.push({ tone: 'info', title: `${gr.n} inaccurac${gr.n > 1 ? 'ies' : 'y'} reported in the house guide`, detail: `In ${gr.g} guide${gr.g > 1 ? 's' : ''}. Any family admin can correct the guide, then mark the report as sorted.`, link: '#/guide', cta: 'House guide' });
       const invited = q("SELECT name FROM users WHERE family_id=? AND active=1 AND email IS NOT NULL AND password_hash IS NULL", fid).map(r => r.name);
@@ -654,6 +666,9 @@ route('GET', '/api/home', ({ user }) => {
     if (mc) syndicate.push({ tone: 'info', title: `${mc} comment${mc > 1 ? 's and suggestions' : ' or suggestion'} open on the Manifesto`, detail: 'Reply, accept or decline suggestions, and mark comments as resolved.', link: '#/manifesto', cta: 'Manifesto' });
     const grs = q1("SELECT COUNT(*) n FROM guide_reports WHERE status='open'").n;
     if (grs) syndicate.push({ tone: 'info', title: `${grs} inaccurac${grs > 1 ? 'ies' : 'y'} reported in the house guide`, detail: 'Correct the guide (or ask a family admin to), then mark each report as sorted.', link: '#/guide', cta: 'House guide' });
+    for (const p of q("SELECT * FROM polls WHERE status='open' AND closes_on IS NOT NULL AND closes_on < ?", today()))
+      syndicate.push({ tone: 'action', title: `The poll “${p.question}” has closed for voting`, detail: 'Close it to put its result on the next meeting’s agenda.', link: '#/meetings', cta: 'Meetings' });
+    if (!nextMeeting()) { const w = q1('SELECT COUNT(*) n FROM agenda_items WHERE meeting_id IS NULL').n; if (w) syndicate.push({ tone: 'action', title: `${w} question${w > 1 ? 's' : ''} waiting for the next meeting`, detail: 'Set up the next meeting to put them on its agenda.', link: '#/meetings', cta: 'Meetings' }); }
     const offers = q("SELECT * FROM share_offers WHERE status='open'"), due = offers.filter(o => o.closes_on < today());
     if (due.length) syndicate.push({ tone: 'action', title: `${due.length} share offer${due.length > 1 ? 's have' : ' has'} closed for interest`, detail: due.map(o => `${famName(o.family_id)}: ${o.shares} share${o.shares > 1 ? 's' : ''}`).join(' · ') + '. Record the sale once it’s complete, or close the offer.', link: '#/shares', cta: 'Shares' });
     else if (offers.length) syndicate.push({ tone: 'info', title: `${offers.length} share offer${offers.length > 1 ? 's' : ''} open`, detail: offers.map(o => `${famName(o.family_id)}: ${o.shares} share${o.shares > 1 ? 's' : ''}, until ${fmtDate(o.closes_on)}`).join(' · '), link: '#/shares', cta: 'Shares' });
@@ -702,6 +717,7 @@ route('GET', '/api/home', ({ user }) => {
       system: { database: DB_FILE, volume: VOLUME || null, on_railway: ON_RAILWAY, data_since: since, email: !!(process.env.RESEND_API_KEY && process.env.EMAIL_FROM) } };
   }
   return { residence, attention, upcoming: [...trips, ...upcoming].sort((a, b) => a.start.localeCompare(b.start)).slice(0, 6), available, enquiries: myEnquiries, family, syndicate, notifications: notes,
+    next_meeting: isFamily(user) ? (m => m ? { title: m.title, date: m.date, items: q1('SELECT COUNT(*) n FROM agenda_items WHERE meeting_id=?', m.id).n } : null)(nextMeeting()) : null,
     system: user.is_site_admin ? { database: DB_FILE, volume: VOLUME || null, on_railway: ON_RAILWAY, data_since: since, email: !!(process.env.RESEND_API_KEY && process.env.EMAIL_FROM) } : null };
 });
 route('GET', '/api/weeks', ({ user, query }) => {
@@ -2053,6 +2069,139 @@ route('DELETE', '/api/admin/survey/questions/:id', ({ user, params }) => {
   needAdmin(user); const used = q('SELECT answers FROM survey_responses').some(r => params.id in JSON.parse(r.answers));
   if (used) run('UPDATE survey_questions SET active=0 WHERE id=?', params.id); else run('DELETE FROM survey_questions WHERE id=?', params.id);
   audit(user.id, 'survey.question_delete', { id: params.id, kept: used }); return { ok: true, switched_off: used };
+});
+
+// ---------------------------------------------------------------- meetings: agendas, questions, polls and minutes
+// The syndicate's AGMs and board meetings. Anyone in the families can see the next meeting's agenda and the minutes of past ones,
+// and ask a question for the next meeting (it goes on its agenda). The site admin sets up meetings, adds and orders agenda items,
+// records minutes, and polls the family admins (one vote per family); a closed poll's result goes onto a meeting's agenda.
+const MEETING_KIND = { agm: 'AGM', board: 'Board meeting', other: 'Meeting' };
+const isHeld = m => !!m.minutes || m.date < today();
+const nextMeeting = () => q1('SELECT * FROM meetings WHERE date >= ? AND minutes IS NULL ORDER BY date, id LIMIT 1', today());
+const canMeet = u => !!u && (isFamily(u) || !!u.is_site_admin);
+const getMeeting = id => q1('SELECT * FROM meetings WHERE id=?', id) || fail(404, 'That meeting has been removed');
+// a poll's result: each option's families and their shares this year
+function pollResult(p) {
+  const opts = JSON.parse(p.options), votes = q('SELECT * FROM poll_votes WHERE poll_id=?', p.id), fams = q('SELECT id, name FROM families WHERE active=1 ORDER BY name');
+  return { options: opts.map((label, k) => { const v = votes.filter(x => x.choice === k);
+      return { label, families: v.map(x => famName(x.family_id)).sort(), shares: v.reduce((t, x) => t + sharesFor(x.family_id, thisYear()), 0) }; }),
+    voted: votes.length, families: fams.length, total_shares: fams.reduce((t, f) => t + sharesFor(f.id, thisYear()), 0),
+    comments: votes.filter(x => x.comment).map(x => ({ family: famName(x.family_id), text: x.comment })),
+    waiting: fams.filter(f => !votes.some(x => x.family_id === f.id)).map(f => f.name) };
+}
+const resultText = p => { const r = pollResult(p);
+  return [`${r.voted} of ${r.families} families voted.`, ...r.options.map((o, k) => `${String.fromCharCode(65 + k)}. ${o.label}: ${o.families.length} famil${o.families.length === 1 ? 'y' : 'ies'}, ${o.shares} share${o.shares === 1 ? '' : 's'}${o.families.length ? ` (${o.families.join(', ')})` : ''}`),
+    ...r.comments.map(c => `${c.family}: “${c.text}”`)].join('\n'); };
+function itemView(i, user) {
+  const m = i.meeting_id ? q1('SELECT * FROM meetings WHERE id=?', i.meeting_id) : null, open = !m || !isHeld(m);
+  return { id: i.id, meeting_id: i.meeting_id, kind: i.kind, title: i.title, details: i.details, by: i.user_id ? nameOf(i.user_id) : '', family: i.family_id ? famName(i.family_id) : null, created_at: i.created_at,
+    can_edit: !!user.is_site_admin, can_withdraw: open && i.kind === 'question' && i.user_id === user.id && !user.is_site_admin };
+}
+function meetingView(m, user, next) {
+  const items = q(`SELECT * FROM agenda_items WHERE meeting_id=?${next ? ' OR meeting_id IS NULL' : ''} ORDER BY sort, id`, m.id).map(i => itemView(i, user));
+  // at an AGM: the costs put forward for a service charge not yet issued, for the meeting to agree
+  const forward = m.kind === 'agm' && !isHeld(m) ? q("SELECT * FROM costs WHERE status='adopted' AND funding='charge'").filter(c => !isIssued(c.year)).map(c => ({ title: c.title, amount: c.amount, year: c.year, kind: c.kind })) : [];
+  return { id: m.id, kind: m.kind, kind_label: MEETING_KIND[m.kind], title: m.title, date: m.date, place: m.place, held: isHeld(m), minutes: m.minutes, minutes_by: nameOf(m.minutes_by), minutes_at: m.minutes_at, agenda: items, put_forward: forward };
+}
+function pollView(p, user) {
+  const mine = isFamily(user) ? q1('SELECT * FROM poll_votes WHERE poll_id=? AND family_id=?', p.id, user.family_id) : null, m = p.meeting_id ? q1('SELECT title FROM meetings WHERE id=?', p.meeting_id) : null;
+  return { id: p.id, question: p.question, details: p.details, closes_on: p.closes_on, status: p.status, created_at: p.created_at, closed_at: p.closed_at, meeting: m ? m.title : null, result: pollResult(p),
+    my_vote: mine ? { choice: mine.choice, comment: mine.comment, by: nameOf(mine.user_id) } : null, can_vote: p.status === 'open' && isFamily(user) && user.role === 'family_admin', can_close: !!user.is_site_admin && p.status === 'open' };
+}
+route('GET', '/api/meetings', ({ user }) => {
+  need(user, canMeet(user), 'Meetings are for the syndicate families');
+  const next = nextMeeting(), t = today();
+  return { next: next ? meetingView(next, user, true) : null,
+    waiting: next ? [] : q('SELECT * FROM agenda_items WHERE meeting_id IS NULL ORDER BY sort, id').map(i => itemView(i, user)),
+    upcoming: q('SELECT * FROM meetings WHERE date >= ? AND minutes IS NULL AND id<>? ORDER BY date', t, next ? next.id : 0).map(m => meetingView(m, user)),
+    past: q('SELECT * FROM meetings WHERE date < ? OR minutes IS NOT NULL ORDER BY date DESC', t).map(m => meetingView(m, user)),
+    polls: q("SELECT * FROM polls WHERE status='open' OR COALESCE(closed_at, created_at) >= date('now','-12 months') ORDER BY status<>'open', created_at DESC").map(p => pollView(p, user)),
+    meetings: q('SELECT id, title, date FROM meetings WHERE date >= ? AND minutes IS NULL ORDER BY date', t), can_manage: !!user.is_site_admin, can_ask: canMeet(user) };
+});
+// anyone in the families: a question for the next meeting (on its agenda, or waiting until one is set up)
+route('POST', '/api/meetings/questions', ({ user, body }) => {
+  need(user, canMeet(user), 'Only the syndicate families can ask questions for meetings');
+  const title = String(body.title || '').trim().slice(0, 300), details = String(body.details || '').trim().slice(0, 3000) || null; if (!title) fail(400, 'Write your question');
+  const m = nextMeeting(), sort = ((q1('SELECT MAX(sort) m FROM agenda_items WHERE meeting_id IS ?', m ? m.id : null) || {}).m || 0) + 10;
+  const id = Number(run("INSERT INTO agenda_items (meeting_id,kind,title,details,user_id,family_id,sort) VALUES (?,'question',?,?,?,?,?)", m ? m.id : null, title, details, user.id, isFamily(user) ? user.family_id : null, sort).lastInsertRowid);
+  notify(siteAdmins().filter(i => i !== user.id), `${user.name}${isFamily(user) ? ` (${famName(user.family_id)})` : ''} asked a question for ${m ? `the ${m.title}` : 'the next meeting'}: “${title.slice(0, 140)}”`, '#/meetings');
+  audit(user.id, 'meeting.question', { id, meeting: m ? m.id : null }); return { id, meeting: m ? m.title : null };
+});
+route('DELETE', '/api/meetings/items/:id', ({ user, params }) => {
+  const i = q1('SELECT * FROM agenda_items WHERE id=?', params.id) || fail(404, 'That item has gone'); need(user, user && (user.is_site_admin || itemView(i, user).can_withdraw), 'Only whoever asked it can withdraw a question');
+  run('DELETE FROM agenda_items WHERE id=?', i.id); audit(user.id, 'meeting.item_delete', { id: i.id }); return { ok: true };
+});
+// the site admin: meetings, agenda items and minutes
+const meetingFields = body => { const kind = MEETING_KIND[body.kind] ? body.kind : 'agm', date = String(body.date || ''); if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) fail(400, 'Choose the date');
+  return { kind, title: String(body.title || '').trim().slice(0, 120) || `${MEETING_KIND[kind]} ${date.slice(0, 4)}`, date, place: String(body.place || '').trim().slice(0, 200) || null }; };
+route('POST', '/api/admin/meetings', ({ user, body }) => {
+  needAdmin(user); const f = meetingFields(body);
+  const id = Number(run('INSERT INTO meetings (kind,title,date,place,created_by) VALUES (?,?,?,?,?)', f.kind, f.title, f.date, f.place, user.id).lastInsertRowid);
+  const n = nextMeeting(); if (n && n.id === id) run('UPDATE agenda_items SET meeting_id=? WHERE meeting_id IS NULL', id);   // questions waiting go on the next meeting's agenda
+  notify(q("SELECT u.id FROM users u WHERE u.active=1 AND u.role IN ('family_admin','family_member')").map(r => r.id), `${f.title}: ${fmtDate(f.date)} ${f.date.slice(0, 4)}${f.place ? `, ${f.place}` : ''}. The agenda is on the Meetings page; ask a question there for it.`, '#/meetings');
+  audit(user.id, 'meeting.add', { id, ...f }); return { id };
+});
+route('PUT', '/api/admin/meetings/:id', ({ user, params, body }) => {
+  needAdmin(user); const m = getMeeting(params.id), f = meetingFields({ ...m, ...body });
+  run('UPDATE meetings SET kind=?, title=?, date=?, place=? WHERE id=?', f.kind, f.title, f.date, f.place, m.id); audit(user.id, 'meeting.edit', { id: m.id }); return { ok: true };
+});
+route('DELETE', '/api/admin/meetings/:id', ({ user, params }) => {
+  needAdmin(user); const m = getMeeting(params.id); if (m.minutes) fail(400, 'A meeting with minutes can’t be removed');
+  tx(() => { run('UPDATE agenda_items SET meeting_id=NULL WHERE meeting_id=?', m.id); run('UPDATE polls SET meeting_id=NULL WHERE meeting_id=?', m.id); run('DELETE FROM meetings WHERE id=?', m.id); });
+  audit(user.id, 'meeting.delete', { id: m.id }); return { ok: true };
+});
+route('POST', '/api/admin/meetings/:id/items', ({ user, params, body }) => {
+  needAdmin(user); const m = getMeeting(params.id), title = String(body.title || '').trim().slice(0, 300); if (!title) fail(400, 'Give the item a title');
+  const id = Number(run("INSERT INTO agenda_items (meeting_id,kind,title,details,user_id,sort) VALUES (?,'item',?,?,?,?)", m.id, title, String(body.details || '').trim().slice(0, 3000) || null, user.id,
+    ((q1('SELECT MAX(sort) m FROM agenda_items WHERE meeting_id=?', m.id) || {}).m || 0) + 10).lastInsertRowid);
+  audit(user.id, 'meeting.item_add', { id, meeting: m.id }); return { id };
+});
+route('PUT', '/api/admin/meetings/items/:id', ({ user, params, body }) => {
+  needAdmin(user); const i = q1('SELECT * FROM agenda_items WHERE id=?', params.id) || fail(404, 'That item has gone');
+  const title = String(body.title ?? i.title).trim().slice(0, 300) || i.title, meeting = body.meeting_id === undefined ? i.meeting_id : body.meeting_id ? getMeeting(body.meeting_id).id : null;
+  run('UPDATE agenda_items SET title=?, details=?, meeting_id=? WHERE id=?', title, body.details === undefined ? i.details : String(body.details || '').trim().slice(0, 3000) || null, meeting, i.id);
+  audit(user.id, 'meeting.item_edit', { id: i.id }); return { ok: true };
+});
+route('POST', '/api/admin/meetings/items/:id/move', ({ user, params, body }) => {
+  needAdmin(user); const i = q1('SELECT * FROM agenda_items WHERE id=?', params.id) || fail(404, 'That item has gone');
+  const list = q('SELECT id FROM agenda_items WHERE meeting_id IS ? ORDER BY sort, id', i.meeting_id).map(r => r.id), k = list.indexOf(i.id), j = k + (body.dir === 'up' ? -1 : 1);
+  if (j < 0 || j >= list.length) return { ok: true }; [list[k], list[j]] = [list[j], list[k]];
+  tx(() => list.forEach((id, x) => run('UPDATE agenda_items SET sort=? WHERE id=?', (x + 1) * 10, id))); return { ok: true };
+});
+route('PUT', '/api/admin/meetings/:id/minutes', ({ user, params, body }) => {
+  needAdmin(user); const m = getMeeting(params.id), text = String(body.minutes || '').trim().slice(0, 50000) || null;
+  run("UPDATE meetings SET minutes=?, minutes_by=?, minutes_at=datetime('now') WHERE id=?", text, text ? user.id : null, m.id);
+  if (text && !m.minutes) notify(q("SELECT u.id FROM users u WHERE u.active=1 AND u.role IN ('family_admin','family_member')").map(r => r.id), `The minutes of the ${m.title} are on the Meetings page.`, '#/meetings');
+  audit(user.id, 'meeting.minutes', { id: m.id }); return { ok: true };
+});
+// polls of the family admins: one vote per family; closing one puts its result on a meeting's agenda
+route('POST', '/api/admin/polls', ({ user, body }) => {
+  needAdmin(user); const question = String(body.question || '').trim().slice(0, 300); if (!question) fail(400, 'Write the question');
+  const options = [].concat(body.options || []).map(o => String(o || '').trim().slice(0, 200)).filter(Boolean).slice(0, 10); if (options.length < 2) fail(400, 'Give at least two options');
+  const closes = /^\d{4}-\d{2}-\d{2}$/.test(String(body.closes_on || '')) ? body.closes_on : null, m = body.meeting_id ? getMeeting(body.meeting_id).id : null;
+  const id = Number(run('INSERT INTO polls (question,details,options,closes_on,meeting_id,created_by) VALUES (?,?,?,?,?,?)', question, String(body.details || '').trim().slice(0, 3000) || null, JSON.stringify(options), closes, m, user.id).lastInsertRowid);
+  notify(q("SELECT u.id FROM users u JOIN families f ON f.id=u.family_id WHERE u.role='family_admin' AND u.active=1 AND f.active=1").map(r => r.id), `A poll for the family admins: “${question}”. Vote for your family on the Meetings page${closes ? ` by ${fmtDate(closes)}` : ''}.`, '#/meetings');
+  audit(user.id, 'poll.add', { id, question }); return { id };
+});
+route('POST', '/api/polls/:id/vote', ({ user, params, body }) => {
+  const p = q1('SELECT * FROM polls WHERE id=?', params.id) || fail(404, 'That poll has gone'); need(user, user && pollView(p, user).can_vote, p.status !== 'open' ? 'This poll has closed' : 'Only a family admin can vote for the family');
+  const choice = Number(body.choice); if (!Number.isInteger(choice) || !JSON.parse(p.options)[choice]) fail(400, 'Choose an answer');
+  run("INSERT INTO poll_votes (poll_id,family_id,user_id,choice,comment) VALUES (?,?,?,?,?) ON CONFLICT(poll_id,family_id) DO UPDATE SET user_id=excluded.user_id, choice=excluded.choice, comment=excluded.comment, created_at=datetime('now')",
+    p.id, user.family_id, user.id, choice, String(body.comment || '').trim().slice(0, 500) || null);
+  audit(user.id, 'poll.vote', { poll: p.id, choice }); return { ok: true };
+});
+route('POST', '/api/admin/polls/:id/close', ({ user, params, body }) => {
+  needAdmin(user); const p = q1("SELECT * FROM polls WHERE id=? AND status='open'", params.id) || fail(404, 'That poll has already closed');
+  const n = nextMeeting(), m = body.meeting_id ? getMeeting(body.meeting_id) : p.meeting_id ? getMeeting(p.meeting_id) : n;
+  tx(() => { run("UPDATE polls SET status='closed', closed_at=datetime('now'), meeting_id=? WHERE id=?", m ? m.id : null, p.id);
+    run("INSERT INTO agenda_items (meeting_id,kind,title,details,user_id,poll_id,sort) VALUES (?,'poll',?,?,?,?,?)", m ? m.id : null, `Poll of the family admins: ${p.question}`, resultText(p), user.id, p.id,
+      ((q1('SELECT MAX(sort) m FROM agenda_items WHERE meeting_id IS ?', m ? m.id : null) || {}).m || 0) + 10); });
+  notify(q("SELECT u.id FROM users u JOIN families f ON f.id=u.family_id WHERE u.role='family_admin' AND u.active=1 AND f.active=1").map(r => r.id), `The poll “${p.question}” has closed. Its result is on the agenda for ${m ? `the ${m.title}` : 'the next meeting'}.`, '#/meetings');
+  audit(user.id, 'poll.close', { id: p.id, meeting: m ? m.id : null }); return { ok: true, meeting: m ? m.title : null };
+});
+route('DELETE', '/api/admin/polls/:id', ({ user, params }) => {
+  needAdmin(user); tx(() => { run('DELETE FROM poll_votes WHERE poll_id=?', params.id); run('DELETE FROM agenda_items WHERE poll_id=?', params.id); run('DELETE FROM polls WHERE id=?', params.id); });
+  audit(user.id, 'poll.delete', { id: params.id }); return { ok: true };
 });
 
 // ---------------------------------------------------------------- maintenance

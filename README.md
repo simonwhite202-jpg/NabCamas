@@ -68,7 +68,9 @@ Icons are thin-stroke **Lucide** icons, bundled in `public/icons.js` (ISC licenc
 
 ## Home page and navigation
 
-**The public home page (v1: the future of NAB).** Before signing in, the home page is about NAB's future: a hero with **Fill in the questionnaire** and **Read the Manifesto**; the questionnaire with a card for each generation (and how many of each have answered); the Manifesto's summary with **Read it and comment**. Signing in is secondary: a small **Owners' sign in** at the top and a compact form at the bottom (and `/#/login`). Signing out returns here. Inside the portal, the families' Overview opens with a **Have your say** panel linking to the questionnaire, the Manifesto and the results.
+**The public home page (v1: the future of NAB).** Before signing in, the home page is about NAB's future: a hero with **Fill in the questionnaire** and **Read the Manifesto**; the questionnaire with a card for each generation (and how many of each have answered); the Manifesto's summary with **Read it and comment**. Signing in is secondary: a small **Owners' sign in** at the top and a compact form at the bottom (and `/#/login`). Signing out returns here. Inside the portal, the families' Overview opens with a **Have your say** panel linking to the questionnaire, the Manifesto, Meetings (with the next meeting's date) and the results.
+
+**The menu is in groups.** With the site growing, the sidebar groups its pages under headings that open and close: **Weeks**, **Money**, **The house**, **Have your say** and, for the site admin, **Admin**. Overview is always at the top (and Family & friends at the bottom for families). The group holding the page you're on is always open; open or close the others and the portal remembers it on that device. A closed group shows a count if something inside it needs you (e.g. new enquiries). Trusted friends have only six pages, so their menu isn't grouped.
 
 **Check in.** During your family's own week (or a week another family gave you), the *In residence this week* card on the Overview has **Check in** and **Not in residence**. Either can be changed during the week. Everyone else in the families, and the site admin, then sees *In residence* or *Not in residence* on that card, with when and by whom (trusted friends don't). Checking in on an undecided week marks it *Using it*; if the week is still released for booking, the card says so. There's nothing to check into for a week let to guests, or outside the week itself.
 
@@ -82,10 +84,10 @@ Everyone lands on the **Overview** (Home), headed *Welcome to Camas*, with who's
 
 | Who | Navigation | Needs your attention shows |
 |---|---|---|
-| Trusted friend | Home, Available weeks, My bookings, Maintenance, House guide, My details | Bookings to pay for |
-| Family member | Home, Calendar, Enquiries, Bookings, Service charge, Upgrades, Maintenance, House guide, Shares, Manifesto, Questionnaire, Family & friends | Bookings to pay for, and first refusals to take or pass |
-| Family admin | The same, plus Account | Also: inaccuracies reported in the house guide, enquiries to answer (release, using it or not sure yet), friends' booking enquiries, undecided weeks in the next 16 weeks, the balance to pay, and people who haven't set up their login |
-| Site admin | A separate login with no family: Home, Calendar, Upgrades, Maintenance, House guide, Shares, Manifesto, Questionnaire, Payments, Service charge, Weeks, Lets, Families, Users, Settings, Activity | Syndicate jobs: maintenance issues open (urgent ones in red), house guide inaccuracies, costs waiting to be adopted, payments to confirm, families owing money, families with no admin, service charges not issued, let-income pots not shared out, next year's weeks not set up, demo logins still active, email not switched on, and storage problems. Home also shows balances, credits, the pot and recent activity. |
+| Trusted friend | Overview, Available weeks, My bookings, Maintenance, House guide, My details | Bookings to pay for |
+| Family member | Overview; **Weeks:** Calendar, Enquiries, Bookings; **Money:** Service charge, Shares; **The house:** Upgrades, Maintenance, House guide; **Have your say:** Meetings, Questionnaire, Manifesto; Family & friends | Bookings to pay for, and first refusals to take or pass |
+| Family admin | The same, plus Account (under Money) | Also: polls to vote in for the family, inaccuracies reported in the house guide, enquiries to answer (release, using it or not sure yet), friends' booking enquiries, undecided weeks in the next 16 weeks, the balance to pay, and people who haven't set up their login |
+| Site admin | A separate login with no family: Overview; **Weeks:** Calendar, Weeks, Lets; **Money:** Payments, Service charge, Shares; **The house:** Upgrades, Maintenance, House guide; **Have your say:** Meetings, Questionnaire, Manifesto; **Admin:** Families, Users, Settings, Activity | Syndicate jobs: polls past their closing date, questions waiting with no next meeting set up, maintenance issues open (urgent ones in red), house guide inaccuracies, costs waiting to be adopted, payments to confirm, families owing money, families with no admin, service charges not issued, let-income pots not shared out, next year's weeks not set up, demo logins still active, email not switched on, and storage problems. Home also shows balances, credits, the pot and recent activity. |
 
 The panels are:
 - **Coming up:** the family's next weeks, or a friend's bookings.
@@ -132,6 +134,10 @@ Opening a page you don't have access to takes you back to Home.
 | Fill in the questionnaire | No login needed: anyone with the link, from the sign-in page | ✓ | ✓ | ✓ |
 | See the questionnaire results (families and generations) | — | ✓ | ✓ | ✓ |
 | See each response and edit the questions | — | — | — | ✓ |
+| See meeting agendas, polls and minutes | — | ✓ | ✓ | ✓ |
+| Ask a question for the next meeting (and withdraw it) | — | ✓ | ✓ | ✓ |
+| Vote in a poll (one vote per family) | — | — | ✓ | — |
+| Add meetings and agenda items, record minutes, create and close polls | — | — | — | ✓ |
 
 ## Gaps in the brief and how they're handled
 
@@ -295,6 +301,16 @@ Opening a page you don't have access to takes you back to Home.
 - **Results:** on the Questionnaire page, switch between the two questionnaires. Under each question, **Each family's answers** sets the families side by side (how many of each family's people chose each answer, or its average points), so you can see how each family would like trading to work.
 - Each questionnaire has its own responses, spreadsheet, questions, title, introduction and open/closed switch; a login can answer each once. A share-out question can be in pounds or points.
 
+**Meetings: agendas, questions, polls and minutes**
+- The **Meetings** page (under *Have your say*) is for the syndicate's AGMs and board meetings ("ADM" in the brief). Everyone in the families and the site admin can see it; trusted friends can't.
+- **Ask a question for the next meeting:** anyone in the families can. It goes on the agenda of the next meeting (marked *Question from the X family*, with who asked and when). If no meeting is set up yet, it waits and goes on the agenda as soon as the site admin adds the next one. The site admin is told. The person who asked can withdraw it until the meeting is held.
+- **The next meeting** shows its date, place and numbered agenda. The site admin adds a meeting (AGM, board meeting or other; the title fills itself in, e.g. "AGM 2027"), adds and edits agenda items, moves them up and down, or moves an item to another meeting. Everyone in the families is told when a meeting is added. An AGM's agenda also lists the **costs put forward for the service charge** (from the Service charge page) for the meeting to agree.
+- **Polls of the family admins:** the site admin creates a poll (a question, answers one per line, an optional closing date, and which meeting it's for). The family admins are told, and it shows in their *Needs your attention* ("Vote for your family: …"). **Each family gets one vote**, cast by any of its admins, with an optional comment; they can change it until the poll closes. Everyone in the families can see the running result: how many families chose each answer and the shares they hold, which families haven't voted yet, and the comments. The site admin is reminded when a poll passes its closing date.
+- **Close and add to the agenda:** closing a poll stops the voting and puts its result on the agenda (of the meeting chosen, or the next one) as *Poll of the family admins: …* with each answer's families and shares written out. The family admins are told.
+- **Past meetings and minutes:** a meeting moves to *Past meetings* once its date has passed or its minutes are in. The site admin records the minutes (paragraphs, "- " for points and "# " for headings; on the day itself, **Record the minutes…** is on the next meeting's card). Everyone in the families is told when minutes are first added, and can read them with the meeting's agenda. A meeting with minutes can't be removed.
+- The Overview's *Have your say* panel shows the next meeting and how many items are on its agenda.
+- **Start afresh** leaves meetings, agendas, polls and minutes alone.
+
 **Families and shares (site admin)**
 - Shares are set **per year**: pick the year at the top of **Families**, edit each family's shares for that year (one share = one week), then press **Save**. The shares must total **52**: a running total shows how far off you are. Save becomes clickable as soon as you change something, and if the total isn't 52 it says so and saves nothing. That year's service charges are charged per share, so changing 2026 never changes 2027. **Fill in from the {year} allocation** copies the week allocation into the boxes (nothing is saved until you press Save). Names and colours are saved with the same button. **Add family** starts a new family on 0 shares.
 - A year without its own figures uses the most recent figure set for this year or later.
@@ -333,7 +349,7 @@ Opening a page you don't have access to takes you back to Home.
   - **Green:** money arriving or accepting (Paid, Paid in full, Accept).
   - **Plain:** everything else.
   - **Red outline:** removing, cancelling or withdrawing.
-- **Shared pages:** Upgrades, Maintenance, House guide, Shares, Manifesto and Questionnaire are the same pages for every role; what you can do on them depends on your role.
+- **Shared pages:** Upgrades, Maintenance, House guide, Shares, Meetings, Manifesto and Questionnaire are the same pages for every role; what you can do on them depends on your role.
 - **Admin page titles** match the menu: Payments, Service charge, Weeks, Lets, Families, Users, Settings, Activity. Old links to `#/admin/budget`, `#/admin/expenditure`, `#/expenditure` and `#/admin/credits` still work.
 
 ## Clean-up (November 2026)

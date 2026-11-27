@@ -51,7 +51,7 @@ async function route() {
   const allowed = new Set(navTabs().map(t => t[0].split('/')[0]));
   if (!allowed.has(tab)) { if (location.hash !== '#/home') location.hash = '#/home'; else renderShell('home'); return; }
   renderShell(tab); const main = $('main');
-  const views = { home: viewHome, calendar: viewCalendar, enquiries: viewEnquiries, bookings: viewBookings, account: viewAccount, 'service-charge': viewServiceCharge, upgrades: viewUpgrades, shares: viewShares, manifesto: viewManifesto, questionnaire: viewQuestionnaire, maintenance: viewMaintenance, guide: viewGuide, people: viewPeople, admin: viewAdmin };
+  const views = { home: viewHome, calendar: viewCalendar, enquiries: viewEnquiries, bookings: viewBookings, account: viewAccount, 'service-charge': viewServiceCharge, upgrades: viewUpgrades, shares: viewShares, manifesto: viewManifesto, questionnaire: viewQuestionnaire, meetings: viewMeetings, maintenance: viewMaintenance, guide: viewGuide, people: viewPeople, admin: viewAdmin };
   try { await (views[tab] || viewHome)(main); } catch (e) { main.innerHTML = `<div class="card empty">${esc(e.message)}</div>`; }
 }
 
@@ -139,15 +139,36 @@ function whoAmI() {
   return { name: esc(u.name), role: esc(role), house: esc(house), nameIsRole };
 }
 const NAV_ICON = { home: 'house', calendar: 'calendar-days', weeks: 'calendar-range', enquiries: 'messages-square', bookings: 'bed-double', account: 'wallet', people: 'users', admin: 'settings',
-  'admin/overview': 'banknote', 'admin/service-charge': 'receipt', 'service-charge': 'receipt', upgrades: 'lightbulb', shares: 'chart-pie', manifesto: 'scroll-text', questionnaire: 'list-checks', maintenance: 'wrench', guide: 'book-open', 'admin/weeks': 'calendar-range', 'admin/lets': 'coins', 'admin/families': 'users-round', 'admin/users': 'user-cog', 'admin/settings': 'settings', 'admin/audit': 'history' };
-function navTabs() {
-  if (isSiteRole()) return [['home', 'Overview'], ['calendar', 'Calendar'], ['upgrades', 'Upgrades'], ['maintenance', 'Maintenance'], ['guide', 'House guide'], ['shares', 'Shares'], ['manifesto', 'Manifesto'], ['questionnaire', 'Questionnaire'], ...ADMIN_PAGES];
-  const friend = S.me.user.role === 'friend', fam = isFam();
-  return [['home', 'Overview'], ['calendar', friend ? 'Available weeks' : 'Calendar'], fam && ['enquiries', 'Enquiries', S.me.enquiryCount],
-    ['bookings', friend ? 'My bookings' : 'Bookings'], isFamAdmin() && ['account', 'Account'], fam && ['service-charge', 'Service charge'], fam && ['upgrades', 'Upgrades'], ['maintenance', 'Maintenance'], ['guide', 'House guide'], fam && ['shares', 'Shares'], fam && ['manifesto', 'Manifesto'], fam && ['questionnaire', 'Questionnaire'], ['people', friend ? 'My details' : 'Family & friends'], isSite() && ['admin', 'Site admin']].filter(Boolean);
+  'admin/overview': 'banknote', 'admin/service-charge': 'receipt', 'service-charge': 'receipt', upgrades: 'lightbulb', shares: 'chart-pie', manifesto: 'scroll-text', questionnaire: 'list-checks', meetings: 'clipboard-list', maintenance: 'wrench', guide: 'book-open', 'admin/weeks': 'calendar-range', 'admin/lets': 'coins', 'admin/families': 'users-round', 'admin/users': 'user-cog', 'admin/settings': 'settings', 'admin/audit': 'history' };
+// The menu, in groups: a group's header opens and closes it (remembered on this device); the current page's group is always open.
+// Trusted friends have a short menu, so theirs isn't grouped.
+function navGroups() {
+  const g = (label, items) => ({ label, items: items.filter(Boolean) });
+  if (isSiteRole()) return [g(null, [['home', 'Overview']]), g('Weeks', [['calendar', 'Calendar'], ['admin/weeks', 'Weeks'], ['admin/lets', 'Lets']]),
+    g('Money', [['admin/overview', 'Payments'], ['admin/service-charge', 'Service charge'], ['shares', 'Shares']]),
+    g('The house', [['upgrades', 'Upgrades'], ['maintenance', 'Maintenance'], ['guide', 'House guide']]),
+    g('Have your say', [['meetings', 'Meetings'], ['questionnaire', 'Questionnaire'], ['manifesto', 'Manifesto']]),
+    g('Admin', [['admin/families', 'Families'], ['admin/users', 'Users'], ['admin/settings', 'Settings'], ['admin/audit', 'Activity']])];
+  if (S.me.user.role === 'friend') return [g(null, [['home', 'Overview'], ['calendar', 'Available weeks'], ['bookings', 'My bookings'], ['maintenance', 'Maintenance'], ['guide', 'House guide'], ['people', 'My details']])];
+  return [g(null, [['home', 'Overview']]), g('Weeks', [['calendar', 'Calendar'], ['enquiries', 'Enquiries', S.me.enquiryCount], ['bookings', 'Bookings']]),
+    g('Money', [isFamAdmin() && ['account', 'Account'], ['service-charge', 'Service charge'], ['shares', 'Shares']]),
+    g('The house', [['upgrades', 'Upgrades'], ['maintenance', 'Maintenance'], ['guide', 'House guide']]),
+    g('Have your say', [['meetings', 'Meetings'], ['questionnaire', 'Questionnaire'], ['manifesto', 'Manifesto']]),
+    g(null, [['people', 'Family & friends'], isSite() && ['admin', 'Site admin']])];
+}
+const navTabs = () => navGroups().flatMap(x => x.items);
+const navOpen = { get() { try { return JSON.parse(localStorage.getItem('nab_nav') || 'null'); } catch { return null; } },
+  set(v) { try { localStorage.setItem('nab_nav', JSON.stringify(v)); } catch { /* not remembered */ } } };
+function navHtml(tab) {
+  const link = ([k, l, n]) => { const on = navOn(k, tab); return `<a href="#/${k}" class="${on ? 'on' : ''}" ${on ? 'aria-current="page"' : ''}>${icon(NAV_ICON[k] || 'chevron-right')}<span>${l}</span>${n ? `<span class="count">${n}</span>` : ''}</a>`; };
+  const saved = navOpen.get();
+  return navGroups().map(gr => { if (!gr.label) return gr.items.map(link).join('');
+    const here = gr.items.some(([k]) => navOn(k, tab)), open = here || (saved ? saved.includes(gr.label) : false), n = gr.items.reduce((t, i) => t + (i[2] || 0), 0);
+    return `<div class="nav-group${open ? ' open' : ''}${here ? ' here' : ''}" data-group="${esc(gr.label)}"><button type="button" class="nav-head" aria-expanded="${open}"><span>${esc(gr.label)}</span>${n ? `<span class="count">${n}</span>` : ''}${icon('chevron-down')}</button>
+      <div class="nav-items">${gr.items.map(link).join('')}</div></div>`; }).join('');
 }
 function renderShell(tab) {
-  const u = S.me.user, tabs = navTabs(), site = esc(S.me.settings.site_name);
+  const u = S.me.user, site = esc(S.me.settings.site_name);
   if (!$('.shell')) $('#app').innerHTML = '<div class="shell"><aside class="sidebar" aria-label="Main menu"></aside><div class="menu-scrim"></div><header class="mobilebar"></header><main id="main"></main></div>';
   const initials = esc((u.name.match(/\b[A-Za-z]/g) || ['?']).join('').slice(0, 2).toUpperCase());
   const unread = S.me.unread ? `<span class="count">${S.me.unread}</span>` : '';
@@ -155,7 +176,7 @@ function renderShell(tab) {
     <div class="whoami" role="status" aria-label="Logged in as ${esc(u.name)}"><span class="whoami-label">Logged in as</span>
       <div class="whoami-row"><span class="avatar">${initials}</span><span class="who"><b>${esc(u.name)}</b></span></div></div>
     ${viewAsPicker(u)}
-    <nav class="side-nav">${tabs.map(([k, l, n]) => { const on = navOn(k, tab); return `<a href="#/${k}" class="${on ? 'on' : ''}" ${on ? 'aria-current="page"' : ''}>${icon(NAV_ICON[k] || 'chevron-right')}<span>${l}</span>${n ? `<span class="count">${n}</span>` : ''}</a>`; }).join('')}</nav>
+    <nav class="side-nav">${navHtml(tab)}</nav>
     <div class="side-foot">
       <div class="side-actions"><button class="side-btn" data-notes>${icon('bell')}Notices${unread}</button><button class="side-btn" data-logout>${icon('log-out')}Sign out</button></div></div>`;
   $('.mobilebar').innerHTML = `<div class="mb-row"><button class="iconbtn" data-menu aria-label="Open menu">${icon('menu')}</button><a class="wordmark" href="#/home">${site}</a><button class="iconbtn" data-notes aria-label="Notifications">${icon('bell')}${unread}</button></div>
@@ -166,6 +187,9 @@ function renderShell(tab) {
   $('[data-menu]').onclick = () => document.body.classList.toggle('menu-open');
   $('.menu-scrim').onclick = () => document.body.classList.remove('menu-open');
   $('.sidebar').querySelectorAll('a').forEach(a => a.addEventListener('click', () => document.body.classList.remove('menu-open')));
+  $('.sidebar').querySelectorAll('.nav-head').forEach(b => b.onclick = () => { const gr = b.parentElement; if (gr.classList.contains('here')) return;
+    const open = gr.classList.toggle('open'); b.setAttribute('aria-expanded', open);
+    const l = gr.dataset.group, saved = (navOpen.get() || []).filter(x => x !== l); navOpen.set(open ? [...saved, l] : saved); });
 }
 // "View as" (site admin only, for testing): the dropdown in the sidebar and the banner shown while viewing as someone
 function viewAsPicker(u) {
@@ -277,8 +301,9 @@ async function viewHome(main) {
   const f = h.family, c = f && f.lets;
   const going = h.upcoming.find(x => ['using', 'booked', 'reserved'].includes(x.plan)) || null;
   const upTag = x => x.plan === 'using' || x.plan === 'booked' ? '<span class="tag booked">Going</span>' : x.plan === 'reserved' ? '<span class="tag pending">Awaiting payment</span>' : x.plan === 'let' ? '<span class="tag booked">Let</span>' : x.plan === 'released' ? '<span class="tag available">Released</span>' : x.plan === 'swap' ? '<span class="tag outline">Will swap</span>' : '<span class="tag">Undecided</span>';
-  const future = friend ? '' : `<section class="card future"><div><span class="eyebrow">The future of NAB</span><h2 style="margin:2px 0 4px">Have your say</h2><p class="small muted" style="margin:0;max-width:65ch">The questionnaire asks each generation about keeping the house, the weeks, the costs and improvements; the trading questionnaire asks how your family would like weeks to change hands. The Manifesto sets out the proposal: comment on any part of it.</p></div>
-    <div class="row" style="gap:8px"><a class="btn primary" href="#/survey">Fill in the questionnaire</a><a class="btn" href="#/survey/trading">Trading weeks questionnaire</a><a class="btn" href="#/manifesto">Manifesto</a><a class="btn" href="#/questionnaire">Results</a></div></section>`;
+  const future = friend ? '' : `<section class="card future"><div><span class="eyebrow">The future of NAB</span><h2 style="margin:2px 0 4px">Have your say</h2><p class="small muted" style="margin:0;max-width:65ch">The questionnaire asks each generation about keeping the house, the weeks, the costs and improvements; the trading questionnaire asks how your family would like weeks to change hands. The Manifesto sets out the proposal: comment on any part of it. Ask a question for the next meeting and it goes on the agenda.</p>
+      ${h.next_meeting ? `<p class="small" style="margin:8px 0 0">${icon('clipboard-list')} Next meeting: <b>${esc(h.next_meeting.title)}</b>, ${longDate(h.next_meeting.date)} · <a href="#/meetings">the agenda${h.next_meeting.items ? ` (${h.next_meeting.items} item${h.next_meeting.items === 1 ? '' : 's'})` : ''}</a></p>` : ''}</div>
+    <div class="row" style="gap:8px"><a class="btn primary" href="#/survey">Fill in the questionnaire</a><a class="btn" href="#/survey/trading">Trading weeks questionnaire</a><a class="btn" href="#/manifesto">Manifesto</a><a class="btn" href="#/meetings">Meetings</a><a class="btn" href="#/questionnaire">Results</a></div></section>`;
   main.innerHTML = `${welcomeHeader(greet)}${future}${residenceStrip(h, going)}
     <section class="stack" style="margin-bottom:var(--sp-6)"><div class="section-title"><h2>Outstanding actions</h2>${h.attention.length ? `<span class="muted small">${h.attention.length} to look at</span>` : ''}</div>
       ${h.attention.length ? h.attention.map(todoItem).join('') : todoItem({ tone: 'info', title: 'All clear', detail: 'Nothing needs your attention right now.' })}</section>
@@ -1306,6 +1331,109 @@ async function admQuestions(main, head, bindTop, reload, slug) {
       const r = await api('/admin/survey/questions/' + x.id, { method: 'DELETE' }); closeOverlay(); toast(r.switched_off ? 'Switched off (it has answers)' : 'Deleted'); reload(); }); };
   $('[data-qadd]', main).onclick = edit(null);
   main.querySelectorAll('[data-qedit]').forEach(b => b.onclick = edit(qs.find(x => x.id == b.dataset.qedit)));
+}
+
+// ------------------------------------------------------------ meetings: agendas, questions, polls and minutes
+// The next meeting's agenda (with questions from the families and polls' results), polls of the family admins, and past minutes.
+const longDate = d => `${dfmt(d, { weekday: 'long' })} ${dfmt(d, { day: 'numeric', month: 'long', year: 'numeric' })}`;   // Saturday 10 April 2027
+// minutes and details: paragraphs, - points and # headings
+const mdLite = t => { const out = []; let para = [], list = [];
+  const endPara = () => { if (para.length) out.push(`<p>${para.map(mdInline).join('<br>')}</p>`); para = []; };
+  const endList = () => { if (list.length) out.push(`<ul>${list.map(l => `<li>${mdInline(l)}</li>`).join('')}</ul>`); list = []; };
+  for (const line of String(t || '').replace(/\r/g, '').split('\n')) { let x;
+    if (!line.trim()) { endPara(); endList(); }
+    else if ((x = /^#{1,3}\s+(.*)$/.exec(line))) { endPara(); endList(); out.push(`<h4>${mdInline(x[1])}</h4>`); }
+    else if ((x = /^\s*[-*•]\s+(.*)$/.exec(line))) { endPara(); list.push(x[1]); }
+    else { endList(); para.push(line); } }
+  endPara(); endList(); return out.join(''); };
+const ITEM_BADGE = { question: f => `<span class="badge blue">Question${f ? ` from the ${esc(f)} family` : ''}</span>`, poll: () => '<span class="badge green">Poll result</span>', item: () => '' };
+function agendaHtml(m, admin) {
+  if (!m.agenda.length && !m.put_forward.length) return '<p class="small muted">Nothing on the agenda yet.</p>';
+  return `<ol class="agenda">${m.agenda.map((i, k) => `<li data-item="${i.id}"><div class="agenda-row"><div style="min-width:0"><b>${esc(i.title)}</b> ${ITEM_BADGE[i.kind](i.family)}
+      ${i.kind === 'question' ? `<div class="tiny muted">${esc(i.by)} · ${asked(i.created_at)}</div>` : ''}${i.details ? `<div class="small" style="margin-top:4px;white-space:pre-line">${esc(i.details)}</div>` : ''}</div>
+      <div class="agenda-acts">${admin ? `<button class="btn sm" data-imove="${i.id}" data-dir="up" title="Move up" aria-label="Move up" ${k ? '' : 'disabled'}>↑</button><button class="btn sm" data-imove="${i.id}" data-dir="down" title="Move down" aria-label="Move down" ${k < m.agenda.length - 1 ? '' : 'disabled'}>↓</button><button class="btn sm" data-iedit="${i.id}">Edit…</button>` : ''}
+        ${i.can_withdraw ? `<button class="btn sm danger" data-idel="${i.id}">Withdraw</button>` : ''}</div></div></li>`).join('')}</ol>
+    ${m.put_forward.length ? `<div class="small" style="margin-top:12px"><b>Costs put forward for the service charge, for the AGM to agree</b><ul style="margin:4px 0 0">${m.put_forward.map(c => `<li>${esc(c.title)}: ${money(c.amount, 2)} (${c.year})</li>`).join('')}</ul><p class="tiny muted" style="margin:4px 0 0">From the Service charge page.</p></div>` : ''}`;
+}
+function pollCard(p) {
+  const r = p.result, open = p.status === 'open', max = Math.max(1, ...r.options.map(o => o.families.length));
+  return `<div class="card flat poll" data-poll="${p.id}" style="padding:16px"><div class="row between" style="align-items:flex-start;gap:12px"><b>${esc(p.question)}</b>${open ? `<span class="badge amber">Open${p.closes_on ? ` until ${dfmt(p.closes_on)}` : ''}</span>` : '<span class="badge">Closed</span>'}</div>
+    ${p.details ? `<div class="small" style="margin-top:6px;white-space:pre-line">${esc(p.details)}</div>` : ''}
+    <div class="qchart" style="margin-top:10px">${r.options.map((o, k) => `<div class="qrow" title="${esc(o.families.join(', ') || 'No families')}"><div class="qlabel small"><b>${letter(k)}.</b> ${esc(o.label)}</div>
+      <div class="qbar"><div class="qtrack">${o.families.length ? `<span class="seg" style="width:${o.families.length / r.families * 100}%;background:var(--chart-single)"></span>` : ''}</div><span class="qval small num">${o.families.length} · ${o.shares} sh</span></div></div>`).join('')}</div>
+    <p class="tiny muted" style="margin:6px 0 0">${r.voted} of ${r.families} families have voted (one vote each; “sh” is the shares they hold, of ${r.total_shares}).${open && r.waiting.length ? ` Waiting for: ${esc(r.waiting.join(', '))}.` : ''}</p>
+    ${r.comments.length ? `<div class="small" style="margin-top:6px">${r.comments.map(c => `<div>${esc(c.family)}: “${esc(c.text)}”</div>`).join('')}</div>` : ''}
+    ${p.can_vote ? `<form class="pollf" data-pid="${p.id}" style="margin-top:10px"><div class="sopts">${r.options.map((o, k) => `<label class="sopt"><input type="radio" name="choice" value="${k}" ${p.my_vote && p.my_vote.choice === k ? 'checked' : ''} required><span><b>${letter(k)}.</b> ${esc(o.label)}</span></label>`).join('')}</div>
+      <input name="comment" placeholder="A comment for the meeting (optional)" value="${esc(p.my_vote && p.my_vote.comment || '')}" style="margin-top:8px"><div class="row" style="justify-content:flex-end;gap:8px;margin-top:8px">${p.my_vote ? `<span class="tiny muted">Your family voted (${esc(p.my_vote.by)}). You can change it.</span>` : ''}<button class="btn sm primary">${p.my_vote ? 'Change our vote' : 'Vote for our family'}</button></div></form>`
+      : open && !p.my_vote ? '<p class="tiny muted" style="margin:6px 0 0">Family admins vote for their family.</p>' : ''}
+    ${!open ? `<p class="tiny muted" style="margin:6px 0 0">Closed ${asked(p.closed_at || p.created_at)}; the result went on the agenda${p.meeting ? ` for the ${esc(p.meeting)}` : ' for the next meeting'}.</p>` : ''}
+    ${p.can_close ? `<div class="row" style="gap:8px;margin-top:10px"><button class="btn sm green" data-pclose="${p.id}">Close and add to the agenda…</button><button class="btn sm danger" data-pdel="${p.id}">Delete</button></div>` : ''}</div>`;
+}
+async function viewMeetings(main) {
+  const d = await api('/meetings'), admin = d.can_manage, n = d.next, open = d.polls.filter(p => p.status === 'open'), shut = d.polls.filter(p => p.status !== 'open');
+  const meetingHead = m => `<span class="eyebrow">${esc(m.kind_label)}${m.held ? ' · held' : ''}</span><h2 style="margin:2px 0 2px">${esc(m.title)}</h2><div class="small muted">${longDate(m.date)}${m.place ? ` · ${esc(m.place)}` : ''}</div>`;
+  main.innerHTML = `<h1>Meetings</h1><p class="muted" style="max-width:75ch">The agendas of the syndicate’s AGMs and board meetings, polls of the family admins, and the minutes of past meetings. Anyone in the families can ask a question for the next meeting: it goes on the agenda.</p>
+    ${pageBar('', `<button class="btn primary" data-ask>${icon('plus')}Ask a question for the next meeting…</button>${admin ? `<button class="btn" data-madd>${icon('plus')}Add a meeting…</button><button class="btn" data-padd>${icon('plus')}Create a poll…</button>` : ''}`)}
+    <div class="grid-2" style="align-items:start">
+      <section class="stack">${n ? `<div class="card meeting-next">${meetingHead(n)}${admin ? `<div class="row" style="gap:8px;margin:10px 0 0"><button class="btn sm" data-iadd="${n.id}">${icon('plus')}Add an agenda item…</button><button class="btn sm" data-medit="${n.id}">Edit the meeting…</button>${n.date <= new Date().toLocaleDateString('en-CA') ? `<button class="btn sm" data-minutes="${n.id}">Record the minutes…</button>` : ''}</div>` : ''}
+          <h3 style="margin:16px 0 6px">Agenda</h3>${agendaHtml(n, admin)}</div>`
+        : `<div class="card"><span class="eyebrow">Next meeting</span><h2 style="margin:2px 0 6px">Not set up yet</h2><p class="small muted" style="margin:0">${admin ? 'Add the next meeting, and the questions waiting go on its agenda.' : 'Questions asked now wait for the next meeting’s agenda.'}</p>
+          ${d.waiting.length ? `<h3 style="margin:16px 0 6px">Waiting for the next meeting</h3>${agendaHtml({ agenda: d.waiting, put_forward: [] }, admin)}` : ''}</div>`}
+        ${d.upcoming.length ? `<h3 style="margin:8px 0 0">Later meetings</h3>${d.upcoming.map(m => `<div class="card flat" style="padding:14px 16px">${meetingHead(m)}${admin ? `<div class="row" style="gap:8px;margin-top:8px"><button class="btn sm" data-iadd="${m.id}">${icon('plus')}Add an agenda item…</button><button class="btn sm" data-medit="${m.id}">Edit…</button></div>` : ''}${m.agenda.length ? `<div style="margin-top:8px">${agendaHtml(m, admin)}</div>` : ''}</div>`).join('')}` : ''}</section>
+      <section class="stack"><h2 style="margin:0">Polls of the family admins</h2>${open.map(pollCard).join('') || '<div class="card flat empty small">No polls open</div>'}
+        ${shut.length ? `<details><summary class="small muted" style="cursor:pointer">Closed polls (${shut.length})</summary><div class="stack" style="margin-top:8px">${shut.map(pollCard).join('')}</div></details>` : ''}</section></div>
+    <section class="stack" style="margin-top:24px"><h2 style="margin:0">Past meetings and minutes</h2>
+      ${d.past.map(m => `<details class="card flat past-meeting" ${d.past[0] === m ? 'open' : ''}><summary><span class="row between" style="gap:8px;width:100%"><span><b>${esc(m.title)}</b> <span class="small muted">· ${longDate(m.date)}</span></span>${m.minutes ? '<span class="badge green">Minutes</span>' : '<span class="badge amber">No minutes yet</span>'}</span></summary>
+        <div class="minutes">${m.minutes ? mdLite(m.minutes) + `<p class="tiny muted">Recorded by ${esc(m.minutes_by || 'the site admin')}${m.minutes_at ? ` on ${asked(m.minutes_at)}` : ''}.</p>` : '<p class="small muted">The minutes haven’t been added yet.</p>'}
+          ${m.agenda.length ? `<details class="small"><summary class="muted" style="cursor:pointer">The agenda</summary>${agendaHtml(m, false)}</details>` : ''}
+          ${admin ? `<div class="row" style="gap:8px;margin-top:10px"><button class="btn sm" data-minutes="${m.id}">${m.minutes ? 'Edit the minutes…' : 'Record the minutes…'}</button><button class="btn sm" data-medit="${m.id}">Edit the meeting…</button></div>` : ''}</div></details>`).join('') || '<div class="card flat empty small">No past meetings yet</div>'}</section>`;
+  const reload = () => viewMeetings(main), all = [n, ...d.upcoming, ...d.past].filter(Boolean), items = [...all.flatMap(m => m.agenda), ...d.waiting];
+  $('[data-ask]', main).onclick = () => { const m = openModal(`<form id="maf"><h2>Ask a question for the next meeting</h2><p class="small muted" style="margin-top:0">${n ? `It goes on the agenda for the ${esc(n.title)} (${longDate(n.date)}).` : 'It waits for the next meeting’s agenda.'} Everyone in the families can see the agenda.</p>
+      <div class="field"><label>Your question</label><input name="title" required maxlength="300" placeholder="e.g. Could we review the cleaning contract?"></div>
+      <div class="field"><label>More detail (optional)</label><textarea name="details" rows="3"></textarea></div>
+      <div class="row" style="justify-content:flex-end;gap:8px"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Add to the agenda</button></div></form>`);
+    $('#maf', m).onsubmit = guard(async e => { e.preventDefault(); await api('/meetings/questions', { body: formData(e.target) }); closeOverlay(); toast('Added. The site admin has been told'); reload(); }); };
+  main.querySelectorAll('[data-idel]').forEach(x => x.onclick = guard(async () => { if (!confirm('Withdraw your question?')) return; await api('/meetings/items/' + x.dataset.idel, { method: 'DELETE' }); toast('Withdrawn'); reload(); }));
+  main.querySelectorAll('.pollf').forEach(f => f.onsubmit = guard(async e => { e.preventDefault(); await api(`/polls/${f.dataset.pid}/vote`, { body: formData(f) }); toast('Your family’s vote is in'); reload(); }));
+  if (!admin) return;
+  const meetingForm = m => { const dlg = openModal(`<form id="mmf"><h2>${m ? 'Edit the meeting' : 'Add a meeting'}</h2><div class="grid-2" style="gap:12px">
+      <div class="field"><label>Kind</label><select name="kind">${Object.entries({ agm: 'AGM', board: 'Board meeting', other: 'Other meeting' }).map(([k, l]) => `<option value="${k}" ${m && m.kind === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+      <div class="field"><label>Date</label><input name="date" type="date" required value="${m ? m.date : ''}"></div></div>
+      <div class="field"><label>Title</label><input name="title" maxlength="120" value="${esc(m ? m.title : '')}" placeholder="e.g. AGM 2027 (filled in if left blank)"></div>
+      <div class="field"><label>Where (optional)</label><input name="place" maxlength="200" value="${esc(m && m.place || '')}" placeholder="e.g. At the house, or online"></div>
+      <div class="row between" style="gap:8px">${m && !m.minutes ? '<button type="button" class="btn sm danger" id="mmdel">Remove the meeting</button>' : '<span></span>'}<span class="row" style="gap:8px"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">${m ? 'Save' : 'Add'}</button></span></div></form>`);
+    $('#mmf', dlg).onsubmit = guard(async e => { e.preventDefault(); await api(m ? '/admin/meetings/' + m.id : '/admin/meetings', { method: m ? 'PUT' : 'POST', body: formData(e.target) }); closeOverlay(); toast(m ? 'Saved' : 'Added. The families have been told'); reload(); });
+    const del = $('#mmdel', dlg); if (del) del.onclick = guard(async () => { if (!confirm('Remove this meeting? Its agenda items wait for the next one.')) return; await api('/admin/meetings/' + m.id, { method: 'DELETE' }); closeOverlay(); toast('Removed'); reload(); }); };
+  $('[data-madd]', main).onclick = () => meetingForm(null);
+  main.querySelectorAll('[data-medit]').forEach(x => x.onclick = () => meetingForm(all.find(m => m.id == x.dataset.medit)));
+  const itemForm = (mid, it) => { const dlg = openModal(`<form id="mif2"><h2>${it ? 'Edit the agenda item' : 'Add an agenda item'}</h2>
+      <div class="field"><label>Item</label><input name="title" required maxlength="300" value="${esc(it ? it.title : '')}"></div>
+      <div class="field"><label>Details (optional)</label><textarea name="details" rows="${it && it.kind === 'poll' ? 6 : 3}">${esc(it && it.details || '')}</textarea></div>
+      ${it ? `<div class="field"><label>Meeting</label><select name="meeting_id"><option value="">The next meeting, when it’s set up</option>${d.meetings.map(m => `<option value="${m.id}" ${(it.meeting_id ? it.meeting_id === m.id : n && m.id === n.id) ? 'selected' : ''}>${esc(m.title)} (${dfmt(m.date)})</option>`).join('')}</select></div>` : ''}
+      <div class="row between" style="gap:8px">${it ? '<button type="button" class="btn sm danger" id="midel">Remove from the agenda</button>' : '<span></span>'}<span class="row" style="gap:8px"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">${it ? 'Save' : 'Add'}</button></span></div></form>`);
+    $('#mif2', dlg).onsubmit = guard(async e => { e.preventDefault(); await api(it ? '/admin/meetings/items/' + it.id : `/admin/meetings/${mid}/items`, { method: it ? 'PUT' : 'POST', body: formData(e.target) }); closeOverlay(); toast('Saved'); reload(); });
+    const del = $('#midel', dlg); if (del) del.onclick = guard(async () => { if (!confirm('Remove this from the agenda?')) return; await api('/meetings/items/' + it.id, { method: 'DELETE' }); closeOverlay(); toast('Removed'); reload(); }); };
+  main.querySelectorAll('[data-iadd]').forEach(x => x.onclick = () => itemForm(x.dataset.iadd, null));
+  main.querySelectorAll('[data-iedit]').forEach(x => x.onclick = () => itemForm(null, items.find(i => i.id == x.dataset.iedit)));
+  main.querySelectorAll('[data-imove]').forEach(x => x.onclick = guard(async () => { await api(`/admin/meetings/items/${x.dataset.imove}/move`, { body: { dir: x.dataset.dir } }); reload(); }));
+  main.querySelectorAll('[data-minutes]').forEach(x => x.onclick = () => { const m = all.find(y => y.id == x.dataset.minutes);
+    const dlg = openModal(`<form id="mnf"><h2>Minutes: ${esc(m.title)}</h2><p class="small muted" style="margin-top:0">${longDate(m.date)}. Paragraphs, “- ” for points and “# ” for headings. Everyone in the families is told when they’re first added.</p>
+      <div class="field"><textarea name="minutes" rows="18">${esc(m.minutes || '')}</textarea></div>
+      <div class="row" style="justify-content:flex-end;gap:8px"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Save the minutes</button></div></form>`, true);
+    $('#mnf', dlg).onsubmit = guard(async e => { e.preventDefault(); await api(`/admin/meetings/${m.id}/minutes`, { method: 'PUT', body: formData(e.target) }); closeOverlay(); toast('Minutes saved'); reload(); }); });
+  $('[data-padd]', main).onclick = () => { const dlg = openModal(`<form id="mpf"><h2>Create a poll for the family admins</h2><p class="small muted" style="margin-top:0">Each family gets one vote, cast by one of its admins. When you close it, the result goes on a meeting’s agenda.</p>
+      <div class="field"><label>Question</label><input name="question" required maxlength="300" placeholder="e.g. Should we install a log burner?"></div>
+      <div class="field"><label>More detail (optional)</label><textarea name="details" rows="2"></textarea></div>
+      <div class="field"><label>Answers, one per line</label><textarea name="options" rows="4" required>Yes\nNo\nNot sure</textarea></div>
+      <div class="grid-2" style="gap:12px"><div class="field"><label>Closes on (optional)</label><input name="closes_on" type="date"></div>
+        <div class="field"><label>Result goes on the agenda for</label><select name="meeting_id"><option value="">The next meeting</option>${d.meetings.map(m => `<option value="${m.id}">${esc(m.title)} (${dfmt(m.date)})</option>`).join('')}</select></div></div>
+      <div class="row" style="justify-content:flex-end;gap:8px"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Send to the family admins</button></div></form>`);
+    $('#mpf', dlg).onsubmit = guard(async e => { e.preventDefault(); const v = formData(e.target); await api('/admin/polls', { body: { ...v, options: v.options.split('\n') } }); closeOverlay(); toast('Poll sent to the family admins'); reload(); }); };
+  main.querySelectorAll('[data-pclose]').forEach(x => x.onclick = () => { const dlg = openModal(`<form id="mcl"><h2>Close the poll</h2><p class="small muted" style="margin-top:0">Voting stops, and the result goes on an agenda.</p>
+      <div class="field"><label>Add the result to</label><select name="meeting_id"><option value="">The next meeting${n ? ` (${esc(n.title)})` : ', when it’s set up'}</option>${d.meetings.map(m => `<option value="${m.id}">${esc(m.title)} (${dfmt(m.date)})</option>`).join('')}</select></div>
+      <div class="row" style="justify-content:flex-end;gap:8px"><button type="button" class="btn" data-close>Cancel</button><button class="btn green">Close and add to the agenda</button></div></form>`);
+    $('#mcl', dlg).onsubmit = guard(async e => { e.preventDefault(); const r = await api(`/admin/polls/${x.dataset.pclose}/close`, { body: formData(e.target) }); closeOverlay(); toast(`Closed: the result is on the agenda${r.meeting ? ` for the ${r.meeting}` : ''}`); reload(); }); });
+  main.querySelectorAll('[data-pdel]').forEach(x => x.onclick = guard(async () => { if (!confirm('Delete this poll and its votes?')) return; await api('/admin/polls/' + x.dataset.pdel, { method: 'DELETE' }); toast('Deleted'); reload(); }));
 }
 
 // ------------------------------------------------------------ maintenance
