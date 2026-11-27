@@ -201,7 +201,9 @@ The portal can run 2027 under these rules once the 2027 allocation is signed off
   - sign-off of each year's allocation, and reminders;
   - the budget, service charges, family accounts, and upgrades and maintenance quotes waiting to be adopted;
   - maintenance reports, the house guide, and checking in during your week;
-  - share offers between families, and the share register.
+  - share offers between families, with first refusal in proportion to holdings, and the share register;
+  - this paper as the portal's Manifesto page, open to every family's comments and suggested wording;
+  - a questionnaire on NAB's future, with its own questions for founders, the second generation and the third, and a summary of the answers by family and generation.
 - **Still to build:** part weeks.
 - **Needed before families rely on it:**
   - emails switched on, which needs a domain and an email-sending account;
