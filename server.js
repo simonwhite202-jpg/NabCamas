@@ -87,16 +87,18 @@ CREATE TABLE IF NOT EXISTS share_transfers (id INTEGER PRIMARY KEY, from_family_
   from_year INTEGER NOT NULL, offer_id INTEGER, note TEXT, created_by INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 -- a document the families read and comment on (the manifesto): its text as Markdown, the text before each edit, and comments.
 -- A comment is on one block of the text (block_text = that block's wording when it was made, so it follows the block if others
--- move) or on the whole document (block_index -1). kind: comment | suggestion (with new wording) | reply (parent_id).
+-- move) or on the whole document (block_index -1). kind: comment | suggestion (with new wording) | reply (parent_id). Someone
+-- commenting without a login gives their name (author) and family; their user_id is 0.
 CREATE TABLE IF NOT EXISTS documents (slug TEXT PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL, updated_by INTEGER, updated_at TEXT);
 CREATE TABLE IF NOT EXISTS document_versions (id INTEGER PRIMARY KEY, slug TEXT NOT NULL, body TEXT NOT NULL, edited_by INTEGER, edited_at TEXT);
 CREATE TABLE IF NOT EXISTS document_comments (id INTEGER PRIMARY KEY, slug TEXT NOT NULL, parent_id INTEGER, block_text TEXT, block_index INTEGER,
   kind TEXT NOT NULL DEFAULT 'comment' CHECK (kind IN ('comment','suggestion','reply')), text TEXT, suggestion TEXT, user_id INTEGER NOT NULL, family_id INTEGER,
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','accepted','declined','resolved')), resolved_by INTEGER, resolved_at TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
--- the questionnaire about NAB's future: its questions (versions = the generations each is asked of; options as JSON) and the
+-- the questionnaire about NAB's future: its questions (versions = the generations each is asked of; text = the plain wording in the
+-- results, texts = its wording for each generation; options as JSON, each with a plain label and any per-generation wording) and the
 -- responses (generation, family, name, and the answers as JSON keyed by question id). user_id when filled in while logged in.
 CREATE TABLE IF NOT EXISTS survey_questions (id INTEGER PRIMARY KEY, sort INTEGER NOT NULL DEFAULT 0, section TEXT, versions TEXT NOT NULL DEFAULT 'founder,second,third',
-  kind TEXT NOT NULL CHECK (kind IN ('single','multi','allocation','text')), text TEXT NOT NULL, help TEXT, options TEXT, max_choices INTEGER, total REAL, active INTEGER NOT NULL DEFAULT 1);
+  kind TEXT NOT NULL CHECK (kind IN ('single','multi','allocation','text')), text TEXT NOT NULL, texts TEXT, help TEXT, options TEXT, max_choices INTEGER, total REAL, active INTEGER NOT NULL DEFAULT 1);
 CREATE TABLE IF NOT EXISTS survey_responses (id INTEGER PRIMARY KEY, generation TEXT NOT NULL CHECK (generation IN ('founder','second','third')), family_id INTEGER, family_other TEXT,
   name TEXT NOT NULL, email TEXT, user_id INTEGER, answers TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT);
 -- a problem at the house, reported by anyone who logs in and kept up to date by the site admin. urgency: urgent (safety, or the
@@ -151,7 +153,7 @@ for (const [t, def] of [['weeks', 'end_date TEXT'], ['weeks', 'comment TEXT'], [
   ['weeks', "sale_to TEXT NOT NULL DEFAULT 'all'"], ['weeks', 'released_at TEXT'], ['weeks', 'enquiry_until TEXT'], ['weeks', 'reminded INTEGER NOT NULL DEFAULT 0'],
   ['weeks', 'residence TEXT'], ['weeks', 'residence_by INTEGER'], ['weeks', 'residence_at TEXT'],
   ['sessions', 'viewer_id INTEGER'], ['bookings', 'letting_cost REAL'], ['bookings', 'gift INTEGER'], ['budget_items', 'notes TEXT'], ["budget_items", "funding TEXT NOT NULL DEFAULT 'charge'"], ['ledger', 'entry_date TEXT'],
-  ['enquiries', 'reply TEXT'], ['enquiries', 'replied_at TEXT'], ['outgoing_proposals', 'funding TEXT'], ['outgoing_proposals', 'funding_detail TEXT']])
+  ['enquiries', 'reply TEXT'], ['enquiries', 'replied_at TEXT'], ['outgoing_proposals', 'funding TEXT'], ['outgoing_proposals', 'funding_detail TEXT'], ['survey_questions', 'texts TEXT'], ['document_comments', 'author TEXT']])
   try { db.exec(`ALTER TABLE ${t} ADD COLUMN ${def}`); } catch { }
 db.exec("UPDATE users SET is_site_admin = CASE WHEN role='site_admin' THEN 1 ELSE 0 END WHERE is_site_admin <> (role='site_admin')");
 // One-off clean-up: retired features' tables, columns and settings go. They were in-year swaps, change requests, credits and
@@ -1682,12 +1684,14 @@ function saveDoc(user, body) {
   run('INSERT INTO document_versions (slug,body,edited_by,edited_at) VALUES (?,?,?,?)', 'manifesto', d.body, d.updated_by, d.updated_at);
   run("UPDATE documents SET body=?, updated_by=?, updated_at=datetime('now') WHERE slug='manifesto'", body, user.id);
 }
+// The manifesto is public: anyone can read it and comment (giving their name and family) without a login; a family login
+// comments as itself, and the site admin manages comments and the text.
+const commentRate = new Map();
 route('GET', '/api/manifesto', ({ user }) => {
-  need(user, canComment(user), 'The manifesto is for the syndicate families');
-  const d = getDoc(), blocks = mdBlocks(d.body), admin = !!user.is_site_admin;
+  const u = user && canComment(user) ? user : null, d = getDoc(), blocks = mdBlocks(d.body), admin = !!(u && u.is_site_admin);
   const rows = q("SELECT * FROM document_comments WHERE slug='manifesto' ORDER BY created_at, id");
-  const view = c => ({ id: c.id, kind: c.kind, text: c.text, suggestion: c.suggestion, status: c.status, block_text: c.block_text, by: nameOf(c.user_id), family: c.family_id ? famName(c.family_id) : null,
-    created_at: c.created_at, resolved_by: nameOf(c.resolved_by), resolved_at: c.resolved_at, can_delete: admin || (c.user_id === user.id && c.status === 'open'), replies: [] });
+  const view = c => ({ id: c.id, kind: c.kind, text: c.text, suggestion: c.suggestion, status: c.status, block_text: c.block_text, by: c.author || nameOf(c.user_id), family: c.family_id ? famName(c.family_id) : null,
+    created_at: c.created_at, resolved_by: nameOf(c.resolved_by), resolved_at: c.resolved_at, can_delete: admin || (!!u && c.user_id === u.id && c.status === 'open'), replies: [] });
   const top = rows.filter(c => !c.parent_id).map(view), byId = Object.fromEntries(top.map(c => [c.id, c]));
   for (const r of rows.filter(c => c.parent_id)) if (byId[r.parent_id]) byId[r.parent_id].replies.push(view(r));
   const on = blocks.map(() => []), general = [], orphans = [];
@@ -1695,26 +1699,35 @@ route('GET', '/api/manifesto', ({ user }) => {
     if (raw.block_index === -1 || raw.block_text == null) { general.push(c); continue; }
     const b = findBlock(blocks, raw.block_text, raw.block_index); (b ? on[b.i] : orphans).push(c); }
   return { title: d.title, updated_at: d.updated_at, updated_by: nameOf(d.updated_by), blocks: blocks.map(b => ({ i: b.i, type: b.type, level: b.level, num: b.num, text: b.text, comments: on[b.i] })),
-    general, orphans, open: top.filter(c => c.status === 'open').length, can_comment: canComment(user), can_manage: admin };
+    general, orphans, open: top.filter(c => c.status === 'open').length, can_comment: true, can_manage: admin, signed_in: !!u,
+    families: u ? [] : q('SELECT id, name FROM families WHERE active=1 ORDER BY name') };
 });
-route('POST', '/api/manifesto/comments', ({ user, body }) => {
-  need(user, canComment(user), 'Only the syndicate families can comment on the manifesto');
-  const text = String(body.text || '').trim().slice(0, 3000) || null, who = `${user.name}${isFamily(user) ? ` (${famName(user.family_id)})` : ''}`;
+route('POST', '/api/manifesto/comments', ({ user: who0, body, req }) => {
+  let user = who0 && canComment(who0) ? who0 : null, author = null, fam = null;
+  if (!user) {   // without a login: a name and family, a box only robots fill in, and a limit per address
+    if (body.website) return { id: 0 };
+    const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim(), now = Date.now(), hits = (commentRate.get(ip) || []).filter(t => now - t < 3600e3);
+    if (hits.length >= 30) fail(429, 'Too many comments from here in the last hour. Please try again later.'); commentRate.set(ip, [...hits, now]);
+    author = String(body.name || '').trim().slice(0, 120); if (!author) fail(400, 'Enter your name');
+    fam = body.family_id ? (q1('SELECT id FROM families WHERE id=? AND active=1', body.family_id) || fail(400, 'Choose your family')).id : fail(400, 'Choose your family');
+    user = { id: 0, name: author };
+  } else fam = isFamily(user) ? user.family_id : null;
+  const text = String(body.text || '').trim().slice(0, 3000) || null, who = `${user.name}${fam ? ` (${famName(fam)})` : ''}`;
   if (body.parent_id) {   // a reply: everyone in the thread, and the site admin, is told
     const p = q1("SELECT * FROM document_comments WHERE id=? AND parent_id IS NULL AND slug='manifesto'", body.parent_id) || fail(404, 'That comment has been removed'); if (!text) fail(400, 'Write your reply');
-    const id = Number(run("INSERT INTO document_comments (slug,parent_id,kind,text,user_id,family_id) VALUES ('manifesto',?,'reply',?,?,?)", p.id, text, user.id, isFamily(user) ? user.family_id : null).lastInsertRowid);
+    const id = Number(run("INSERT INTO document_comments (slug,parent_id,kind,text,user_id,family_id,author) VALUES ('manifesto',?,'reply',?,?,?,?)", p.id, text, user.id, fam, author).lastInsertRowid);
     const people = [p.user_id, ...q('SELECT user_id FROM document_comments WHERE parent_id=?', p.id).map(r => r.user_id), ...siteAdmins()];
-    notify([...new Set(people)].filter(i => i !== user.id), `${who} replied on the Manifesto: “${text.slice(0, 160)}${text.length > 160 ? '…' : ''}”`, '#/manifesto');
-    audit(user.id, 'manifesto.reply', { id, parent: p.id }); return { id };
+    notify([...new Set(people)].filter(i => i > 0 && i !== user.id), `${who} replied on the Manifesto: “${text.slice(0, 160)}${text.length > 160 ? '…' : ''}”`, '#/manifesto');
+    audit(user.id || null, 'manifesto.reply', { id, parent: p.id, by: author || undefined }); return { id };
   }
   const blocks = mdBlocks(getDoc().body), at = Number(body.block), b = at === -1 ? null : blocks[at] || fail(400, 'That part of the manifesto has changed: reload the page');
   const kind = body.kind === 'suggestion' ? 'suggestion' : 'comment', suggestion = kind === 'suggestion' ? String(body.suggestion || '').trim().slice(0, 5000) : null;
   if (kind === 'suggestion') { if (!b || b.type === 'table') fail(400, 'Suggest wording for a heading, paragraph or point'); if (!suggestion || suggestion === b.text) fail(400, 'Change the wording to suggest something different'); }
   else if (!text) fail(400, 'Write your comment');
-  const id = Number(run("INSERT INTO document_comments (slug,block_text,block_index,kind,text,suggestion,user_id,family_id) VALUES ('manifesto',?,?,?,?,?,?,?)",
-    b ? b.text : null, b ? b.i : -1, kind, text, suggestion, user.id, isFamily(user) ? user.family_id : null).lastInsertRowid);
+  const id = Number(run("INSERT INTO document_comments (slug,block_text,block_index,kind,text,suggestion,user_id,family_id,author) VALUES ('manifesto',?,?,?,?,?,?,?,?)",
+    b ? b.text : null, b ? b.i : -1, kind, text, suggestion, user.id, fam, author).lastInsertRowid);
   notify(siteAdmins().filter(i => i !== user.id), `${who} ${kind === 'suggestion' ? 'suggested new wording for' : 'commented on'} the Manifesto${b ? `: “${b.text.replace(/\*\*/g, '').slice(0, 80)}…”` : ''}.`, '#/manifesto');
-  audit(user.id, 'manifesto.' + kind, { id, block: b ? b.i : -1 }); return { id };
+  audit(user.id || null, 'manifesto.' + kind, { id, block: b ? b.i : -1, by: author || undefined }); return { id };
 });
 route('DELETE', '/api/manifesto/comments/:id', ({ user, params }) => {
   const c = q1("SELECT * FROM document_comments WHERE id=? AND slug='manifesto'", params.id) || fail(404, 'That comment has already gone');
@@ -1739,7 +1752,7 @@ route('POST', '/api/manifesto/comments/:id/resolve', ({ user, params, body }) =>
   } else fail(400, 'Choose what to do with it');
   const note = String(body.note || '').trim().slice(0, 1000);
   if (note) run("INSERT INTO document_comments (slug,parent_id,kind,text,user_id) VALUES ('manifesto',?,'reply',?,?)", c.id, note, user.id);
-  if (c.user_id !== user.id) notify([c.user_id], { accept: 'Your suggestion on the Manifesto was accepted, and the wording has been changed.', decline: 'Your suggestion on the Manifesto wasn’t taken up this time.', resolve: 'Your comment on the Manifesto has been marked as resolved.' }[action] + (note ? ` ${note}` : ''), '#/manifesto');
+  if (c.user_id > 0 && c.user_id !== user.id) notify([c.user_id], { accept: 'Your suggestion on the Manifesto was accepted, and the wording has been changed.', decline: 'Your suggestion on the Manifesto wasn’t taken up this time.', resolve: 'Your comment on the Manifesto has been marked as resolved.' }[action] + (note ? ` ${note}` : ''), '#/manifesto');
   audit(user.id, 'manifesto.' + action, { id: c.id, by: who }); return { ok: true };
 });
 route('PUT', '/api/manifesto', ({ user, body }) => {
@@ -1756,39 +1769,102 @@ route('GET', '/api/manifesto/versions', ({ user }) => { needAdmin(user); return 
 // for the next generation). A question can be in more than one set, so the answers can be compared across generations. The families
 // see the results on the Questionnaire page; the site admin edits the questions and sees each response.
 const GENERATIONS = { founder: 'Founder member', second: 'Second generation', third: 'Third generation' };
-const GEN_HELP = { founder: 'One of the original NAB families’ shareholders or directors', second: 'A son or daughter of a founder member', third: 'A grandchild of a founder member' };
-const opts = (...l) => l.map(x => typeof x === 'string' ? { label: x } : x);
-const ALLOCATION = opts('Heating and energy efficiency', 'Drainage and water management', 'Driveway and access', 'Interior decoration and furnishings', 'Kitchen and bathroom improvements', 'Sauna and hot tub', { label: 'Other improvements (please specify)', input: 'text' });
-// [section, versions, kind, question, options, extra]
+const GEN_HELP = { founder: 'One of the original NAB families’ shareholders or directors', second: 'A son or daughter of a founder member. Many already hold shares', third: 'A grandchild of a founder member' };
+// Each question is one underlying question, worded for each generation it's asked of: founders are asked about the younger
+// generations; the second generation as owners (many already hold shares alongside the founders) or owners to be; the third about
+// their own future use. Its options line up across
+// generations (each can have its own wording), so the answers can be compared; "label" is the plain wording used in the results.
+// A few questions are for one generation only. [section, kind, in the results, { founder, second, third } wording, options, extra]
+const opt = (label, w, input) => ({ label, ...(w ? { labels: w } : {}), ...(input ? { input } : {}) });
+const same = (...l) => l.map(x => opt(x));
+const fst = (f, st) => ({ founder: f, second: st, third: st }), fs_t = (fs, t) => ({ founder: fs, second: fs, third: t });
+const ALLOCATION = [...same('Heating and energy efficiency', 'Drainage and water management', 'Driveway and access', 'Interior decoration and furnishings', 'Kitchen and bathroom improvements', 'Sauna and hot tub'), opt('Other improvements (please specify)', null, 'text')];
 const SURVEY_SEED = [
-  ['Your future involvement', 'second,third', 'single', 'How important is it to you that NAB remains available to your family over the next 20 years?', opts('Very important', 'Quite important', 'Not particularly important', 'Unsure')],
-  ['Your future involvement', 'third', 'single', 'If you inherited or became responsible for your family’s existing NAB shares, would you want to retain them?', opts('Yes, all of them', 'Yes, but I might prefer fewer weeks', 'I would consider selling some or all of them', 'Unsure')],
-  ['Your future involvement', 'third', 'single', 'Would you be happy to contribute to the annual running costs through subscriptions?', opts('Yes, at approximately the current level, allowing for inflation', 'Yes, but I would prefer to reduce costs where possible', 'Only if I was using the house regularly', 'Probably not', 'Unsure')],
-  ['Your future involvement', 'second,third', 'single', 'How frequently do you imagine using NAB in the future?', opts('Several weeks every year', 'One or two weeks a year', 'Occasionally, but not every year', 'Rarely or never')],
-  ['Succession', 'founder,second', 'single', 'Do you believe the next generation of your family will want to retain its existing NAB shares and allocated weeks?', opts('Yes, probably all of them', 'Yes, but possibly fewer weeks', 'Uncertain', 'Probably not')],
-  ['Succession', 'founder,second', 'single', 'Do you believe the next generation will be happy to continue paying the annual subscriptions at approximately their current level, allowing for inflation?', opts('Yes', 'Yes, but they would prefer to reduce the cost where possible', 'Only if the house and facilities are improved', 'Uncertain', 'Probably not')],
-  ['Succession', 'founder,second', 'single', 'Do you anticipate any difficulties with passing ownership and responsibility to the next generation?', opts('No, succession is reasonably clear', 'Possibly, because several family members may inherit or share responsibility', 'Possibly, because some family members may not want to contribute financially', 'We haven’t discussed this yet')],
-  ['Weeks and flexibility', 'founder,second,third', 'single', 'Would you be interested in buying additional permanent weeks from another NAB family if they became available?', opts('Yes', 'Possibly, depending on price and season', 'No')],
-  ['Weeks and flexibility', 'third', 'single', 'Would you consider selling some of your family’s permanent weeks if you were not using them?', opts('Yes', 'Possibly, depending on their value', 'No', 'Unsure')],
-  ['Weeks and flexibility', 'founder,second', 'single', 'Would you support exploring a system where families could offer unused weeks to other NAB families for an agreed payment, rather than simply swapping or lending them?', opts('Yes, with different values for different weeks of the year', 'Yes, but with a common rate for all weeks', 'No, retain the existing informal arrangements', 'Unsure')],
-  ['Weeks and flexibility', 'founder,second', 'single', 'Would you support individual families being able to offer their unused weeks to a trusted network of previous guests, friends and extended family, with any payment going to the family offering the week?', opts('Yes', 'Yes, provided there are agreed rules and safeguards', 'No, I would prefer to keep use within the syndicate', 'Unsure')],
-  ['Weeks and flexibility', 'founder,second', 'single', 'If a trusted guest system were introduced, how should prices be determined?', opts('Each family sets its own price for its available weeks', 'NAB establishes suggested prices according to the season', 'NAB establishes fixed prices for all participating families', 'I would not support paid guest use')],
-  ['Weeks and flexibility', 'third', 'single', 'Would you prefer a more flexible system for using your weeks?', opts('Keep the current allocation and informal swapping arrangements', 'Allow paid exchanges of unused weeks between NAB families', 'Allow paid use of unused weeks by trusted friends and previous guests', 'A combination of these options')],
-  ['Weeks and flexibility', 'third', 'single', 'If you could receive payment from trusted guests for weeks you were not using, would this make you more inclined to retain your NAB shares?', opts('Yes, significantly', 'Possibly', 'It wouldn’t make much difference', 'No')],
-  ['Maintenance, improvements and funding', 'founder,second', 'single', 'Which approach to maintaining and improving the house would you prefer?', opts('Continue dealing with issues as they arise', 'Gradually increase subscriptions to build a reserve for future work', 'Make a one-off contribution to undertake a programme of improvements', 'Use income from unused weeks to help fund improvements', 'A combination of the above')],
-  ['Maintenance, improvements and funding', 'third', 'single', 'Which approach to improving the house would you favour?', opts('Keep costs low and repair things as necessary', 'Increase annual subscriptions slightly to fund gradual improvements', 'Make a one-off contribution for a significant programme of improvements', 'Use income from unused weeks to help fund improvements', 'A combination')],
-  ['Maintenance, improvements and funding', 'founder,second,third', 'allocation', 'If NAB had an extra £20,000 to spend on improvements, how would you allocate it?', ALLOCATION, { help: 'Share the £20,000 across these areas according to your priorities. You can put nothing against anything you think is unnecessary.', total: 20000 }],
-  ['Maintenance, improvements and funding', 'founder,second', 'single', 'How much would you be willing to contribute to see the changes you have specified?', opts({ label: 'An additional amount each year (£ thousand)', input: 'amount' }, { label: 'A lump sum (£ thousand)', input: 'amount' }, 'Just money from the yearly charge', 'I don’t want to spend additional money on improvements if possible')],
-  ['Maintenance, improvements and funding', 'third', 'single', 'Would you be willing to contribute to a one-off investment to improve the house?', opts('Yes', 'Possibly, depending on the amount', 'No, I would prefer gradual funding through subscriptions', 'Unsure')],
-  ['Maintenance, improvements and funding', 'founder,second', 'single', 'Over what timescale do you think any improvements should be undertaken?', opts('Within the next 1–2 years', 'Gradually over 3–5 years', 'Only when essential repairs become necessary', 'Dependent on the cost and funding available')],
-  ['Looking ahead', 'third', 'multi', 'What would make you more likely to continue your involvement in NAB?', opts('Lower annual subscriptions', 'Greater flexibility over weeks', 'Ability to earn money from unused weeks', 'Improved heating and comfort', 'Better facilities and furnishings', 'More transparent management and booking arrangements', 'More opportunities to use the house with friends and extended family', 'Keeping NAB largely as it is'), { help: 'Choose up to three.', max: 3 }],
-  ['Looking ahead', 'second,third', 'single', 'Would you be interested in helping with the future management of NAB?', opts('Yes, actively', 'Occasionally, for particular tasks', 'Prefer not to', 'Unsure')],
-  ['Looking ahead', 'founder,second', 'text', 'Are there any other issues you believe NAB should consider as ownership and responsibility pass to future generations?'],
-  ['Looking ahead', 'third', 'text', 'Is there anything else you would like NAB to consider for the future?'],
+  ['You and NAB', 'single', 'Shares already passed to the next generation', { founder: 'Have you already passed some or all of your NAB shares to the next generation?' }, same('Yes, all of them', 'Yes, some of them', 'Not yet, but we plan to', 'No')],
+  ['You and NAB', 'single', 'Talked with the next generation about NAB', { founder: 'Have you talked with the younger generations of your family about your wishes for NAB?' }, same('Yes, in some detail', 'Briefly', 'Not yet')],
+  ['You and NAB', 'single', 'Already a shareholder or director', { second: 'Are you already a NAB shareholder or director?' }, same('Yes, a shareholder', 'Yes, a shareholder and a director', 'Not yet, but I expect to become one', 'No')],
+  ['You and NAB', 'single', 'Time spent at NAB in the last five years', { third: 'How often have you stayed at NAB in the last five years?' }, same('Every year', 'Most years', 'Once or twice', 'Not at all')],
+  ['You and NAB', 'single', 'How important it is that NAB stays available to the family for the next 20 years', {
+    founder: 'How important is it to you that NAB remains available to your children and grandchildren over the next 20 years?',
+    second: 'How important is it to you that NAB remains available to you and your children over the next 20 years?',
+    third: 'How important is it to you that NAB remains available to your family over the next 20 years?' }, same('Very important', 'Quite important', 'Not particularly important', 'Unsure')],
+  ['You and NAB', 'single', 'Keeping the family’s shares and weeks', {
+    founder: 'Do you believe the younger generations of your family will want to keep its NAB shares and allocated weeks?',
+    second: 'Would you want to keep your family’s NAB shares, whether you hold them now or take them on later?',
+    third: 'If you inherited or became responsible for your family’s NAB shares one day, would you want to keep them?' },
+    [opt('Keep all of them', fst('Yes, probably all of them', 'Yes, all of them')), opt('Keep them, with fewer weeks', fst('Yes, but possibly fewer weeks', 'Yes, but I might prefer fewer weeks')),
+     opt('Sell some or all of them', fst('Probably not', 'I would consider selling some or all of them')), opt('Unsure', fst('Uncertain', 'Unsure'))]],
+  ['You and NAB', 'single', 'Paying the annual subscriptions', {
+    founder: 'Do you believe the younger generations will be happy to keep paying the annual subscriptions at about their current level, allowing for inflation?',
+    second: 'Would you be happy to keep paying the annual subscriptions at about their current level, allowing for inflation?',
+    third: 'Would you be happy to contribute to the annual running costs through subscriptions, at about the current level allowing for inflation?' },
+    [opt('Yes, at about the current level', { founder: 'Yes', second: 'Yes', third: 'Yes, at approximately the current level' }),
+     opt('Yes, but would prefer lower costs', fst('Yes, but they would prefer to reduce the cost where possible', 'Yes, but I would prefer to reduce costs where possible')),
+     opt('Only if the house and facilities are improved'), opt('Only if using the house regularly', fst('Only if they are using the house regularly', 'Only if I was using the house regularly')),
+     opt('Probably not'), opt('Unsure', fst('Uncertain', 'Unsure'))]],
+  ['You and NAB', 'single', 'How often they would use NAB', { founder: 'How often do you expect to use NAB yourself over the coming years?',
+    second: 'How often do you imagine using NAB over the next 10 to 20 years?', third: 'How often do you imagine using NAB in the future?' },
+    same('Several weeks every year', 'One or two weeks a year', 'Occasionally, but not every year', 'Rarely or never')],
+  ['You and NAB', 'single', 'Passing on ownership and responsibility', {
+    founder: 'Do you anticipate any difficulties in passing ownership and responsibility to the next generation?',
+    second: 'Do you anticipate any difficulties in handing on ownership and responsibility, whether from the founders to your generation or later to your children?',
+    third: 'Has your family talked about how its NAB shares and responsibilities will be passed on?' },
+    [opt('Succession is reasonably clear', fs_t('No, succession is reasonably clear', 'Yes, and it’s reasonably clear')),
+     opt('Several people may inherit or share responsibility', fs_t('Possibly, because several family members may inherit or share responsibility', 'Partly, but several of us may inherit or share responsibility')),
+     opt('Some may not want to contribute financially', fs_t('Possibly, because some family members may not want to contribute financially', 'Partly, but some of us may not want to contribute financially')),
+     opt('Not discussed yet', fs_t('We haven’t discussed this yet', 'Not yet'))]],
+  ['Weeks and flexibility', 'single', 'Buying more permanent weeks', fs_t('Would you be interested in buying additional permanent weeks from another NAB family if they became available?',
+    'Would you be interested in your family buying additional permanent weeks from another NAB family if they became available?'), same('Yes', 'Possibly, depending on price and season', 'No')],
+  ['Weeks and flexibility', 'single', 'Selling weeks the family isn’t using', fst('Would you consider selling some of your family’s permanent weeks if they weren’t being used?',
+    'Would you consider selling some of your family’s permanent weeks if you weren’t using them?'), same('Yes', 'Possibly, depending on their value', 'No', 'Unsure')],
+  ['Weeks and flexibility', 'single', 'Paid exchanges of unused weeks between NAB families', fs_t('Would you support exploring a system where families could offer unused weeks to other NAB families for an agreed payment, rather than simply swapping or lending them?',
+    'Would you like NAB families to be able to offer unused weeks to each other for an agreed payment, rather than just swapping or lending them?'),
+    [opt('Yes, with different values for different weeks of the year'), opt('Yes, but with a common rate for all weeks'), opt('No, keep the existing informal arrangements', fs_t('No, retain the existing informal arrangements', 'No, keep the existing informal arrangements')), opt('Unsure')]],
+  ['Weeks and flexibility', 'single', 'Offering unused weeks to trusted guests', fs_t('Would you support individual families being able to offer their unused weeks to a trusted network of previous guests, friends and extended family, with any payment going to the family offering the week?',
+    'Would you like families to be able to offer their unused weeks to trusted friends, previous guests and extended family, with the payment going to the family offering the week?'),
+    [opt('Yes'), opt('Yes, with agreed rules and safeguards', fs_t('Yes, provided there are agreed rules and safeguards', 'Yes, with agreed rules and safeguards')), opt('No, keep use within the syndicate', fs_t('No, I would prefer to keep use within the syndicate', 'No, keep use within the syndicate')), opt('Unsure')]],
+  ['Weeks and flexibility', 'single', 'How prices for trusted guests should be set', fs_t('If a trusted guest system were introduced, how should prices be determined?', 'If families could offer weeks to trusted guests, how should prices be set?'),
+    [opt('Each family sets its own price'), opt('NAB suggests prices by season'), opt('NAB sets fixed prices for every family'), opt('No paid guest use')].map((o, k) => ({ ...o, labels: { founder: ['Each family sets its own price for its available weeks', 'NAB establishes suggested prices according to the season', 'NAB establishes fixed prices for all participating families', 'I would not support paid guest use'][k], second: ['Each family sets its own price for its available weeks', 'NAB establishes suggested prices according to the season', 'NAB establishes fixed prices for all participating families', 'I would not support paid guest use'][k], third: ['Each family sets its own price for the weeks it offers', 'NAB suggests prices according to the season', 'NAB sets fixed prices for every family', 'I wouldn’t want paid guests'][k] } }))],
+  ['Weeks and flexibility', 'single', 'Whether income from guests would help keep the shares', {
+    founder: 'If families could be paid by trusted guests for weeks they don’t use, do you think the younger generations would be more inclined to keep your family’s shares?',
+    second: 'If your family could be paid by trusted guests for weeks it didn’t use, would that make you more inclined to keep your NAB shares?',
+    third: 'If you could receive payment from trusted guests for weeks you were not using, would this make you more inclined to keep your NAB shares?' },
+    [opt('Yes, significantly'), opt('Possibly'), opt('It wouldn’t make much difference'), opt('No')]],
+  ['Maintenance, improvements and funding', 'single', 'How to maintain and improve the house', fs_t('Which approach to maintaining and improving the house would you prefer?', 'Which approach to improving the house would you favour?'),
+    [opt('Deal with things as they arise', fs_t('Continue dealing with issues as they arise', 'Keep costs low and repair things as necessary')),
+     opt('Raise subscriptions gradually', fs_t('Gradually increase subscriptions to build a reserve for future work', 'Increase annual subscriptions slightly to fund gradual improvements')),
+     opt('A one-off contribution for a programme of work', fs_t('Make a one-off contribution to undertake a programme of improvements', 'Make a one-off contribution for a significant programme of improvements')),
+     opt('Use income from unused weeks', fs_t('Use income from unused weeks to help fund improvements', 'Use income from unused weeks to help fund improvements')), opt('A combination', fs_t('A combination of the above', 'A combination'))]],
+  ['Maintenance, improvements and funding', 'allocation', 'Sharing out £20,000 for improvements', fst('If NAB had an extra £20,000 to spend on improvements, how would you allocate it?', 'If NAB had an extra £20,000 to spend on improvements, how would you allocate it?'),
+    ALLOCATION, { help: 'Share the £20,000 across these areas according to your priorities. You can put nothing against anything you think is unnecessary.', total: 20000 }],
+  ['Maintenance, improvements and funding', 'single', 'Contributing more for improvements', fs_t('How much would you be willing to contribute to see the improvements you’d like?', 'Would you be willing to contribute towards improving the house, and how?'),
+    [opt('An extra amount each year', fs_t('An additional amount each year (£ thousand)', 'Yes, an extra amount each year (£ thousand)'), 'amount'), opt('A one-off lump sum', fs_t('A lump sum (£ thousand)', 'Yes, a one-off lump sum (£ thousand)'), 'amount'),
+     opt('Possibly, depending on the amount'), opt('Only through the yearly charge', fs_t('Just money from the yearly charge', 'No, I would prefer gradual funding through subscriptions')),
+     opt('No extra money if possible', fs_t('I don’t want to spend additional money on improvements if possible', 'I’d rather not spend extra money on improvements')), opt('Unsure')]],
+  ['Maintenance, improvements and funding', 'single', 'When improvements should happen', fs_t('Over what timescale do you think any improvements should be undertaken?', 'Over what timescale would you like to see improvements made?'),
+    same('Within the next 1–2 years', 'Gradually over 3–5 years', 'Only when essential repairs become necessary', 'Depending on the cost and the funding available')],
+  ['Looking ahead', 'multi', 'What would keep the family involved', { founder: 'What do you think would make the younger generations more likely to stay involved in NAB?',
+    second: 'What would make you more likely to stay involved in NAB?', third: 'What would make you more likely to continue your involvement in NAB?' },
+    same('Lower annual subscriptions', 'Greater flexibility over weeks', 'Ability to earn money from unused weeks', 'Improved heating and comfort', 'Better facilities and furnishings', 'More transparent management and booking arrangements', 'More opportunities to use the house with friends and extended family', 'Keeping NAB largely as it is'), { help: 'Choose up to three.', max: 3 }],
+  ['Looking ahead', 'single', 'Helping to manage NAB', { founder: 'Would you like to stay involved in managing NAB, or hand it on?',
+    second: 'Would you be interested in helping with the management of NAB, now or in the future (if you don’t already)?', third: 'Would you be interested in helping with the future management of NAB?' },
+    [opt('Yes, actively', { founder: 'I’d like to stay actively involved', second: 'Yes, actively', third: 'Yes, actively' }), opt('Occasionally, for particular tasks'), opt('Prefer not to', { founder: 'I’d prefer to hand it on', second: 'Prefer not to', third: 'Prefer not to' }), opt('Unsure')]],
+  ['Looking ahead', 'text', 'Anything else NAB should consider', { founder: 'Are there any other issues you believe NAB should consider as ownership and responsibility pass to future generations?',
+    second: 'Is there anything else NAB should consider as ownership passes between the generations?', third: 'Is there anything else you would like NAB to consider for the future?' }],
 ];
-if (!q1('SELECT 1 FROM survey_questions')) tx(() => SURVEY_SEED.forEach(([section, versions, kind, text, options, x = {}], k) =>
-  run('INSERT INTO survey_questions (sort,section,versions,kind,text,help,options,max_choices,total) VALUES (?,?,?,?,?,?,?,?,?)', (k + 1) * 10, section, versions, kind, text, x.help || null, options ? JSON.stringify(options) : null, x.max || null, x.total || null)));
-const surveyQ = r => ({ id: r.id, sort: r.sort, section: r.section, versions: r.versions.split(',').filter(v => GENERATIONS[v]), kind: r.kind, text: r.text, help: r.help, options: JSON.parse(r.options || '[]'), max: r.max_choices, total: r.total, active: !!r.active });
+// the question set, loaded once (an earlier set is removed, or switched off if anyone has answered it, so those answers stay)
+if (!q1("SELECT 1 FROM settings WHERE key='survey_v2'")) tx(() => {
+  if (q1('SELECT 1 FROM survey_responses')) run('UPDATE survey_questions SET active=0'); else run('DELETE FROM survey_questions');
+  const base = ((q1('SELECT MAX(sort) m FROM survey_questions') || {}).m || 0);
+  SURVEY_SEED.forEach(([section, kind, text, texts, options, x = {}], k) => run('INSERT INTO survey_questions (sort,section,versions,kind,text,texts,help,options,max_choices,total) VALUES (?,?,?,?,?,?,?,?,?,?)',
+    base + (k + 1) * 10, section, Object.keys(texts).join(','), kind, text, JSON.stringify(texts), x.help || null, options ? JSON.stringify(options) : null, x.max || null, x.total || null));
+  run("INSERT INTO settings (key,value) VALUES ('survey_v2','1')");
+});
+// a question: its wording for each generation it's asked of (older questions have one wording for all), and its options
+const surveyQ = r => { const versions = r.versions.split(',').filter(v => GENERATIONS[v]), t = JSON.parse(r.texts || 'null') || {};
+  return { id: r.id, sort: r.sort, section: r.section, versions, kind: r.kind, text: r.text, texts: Object.fromEntries(versions.map(g => [g, t[g] || r.text])), help: r.help,
+    options: JSON.parse(r.options || '[]'), max: r.max_choices, total: r.total, active: !!r.active }; };
+const optLabel = (o, g) => (o && o.labels && o.labels[g]) || (o && o.label) || '?';
 const surveyQuestions = (all = false) => q(`SELECT * FROM survey_questions ${all ? '' : 'WHERE active=1'} ORDER BY sort, id`).map(surveyQ);
 const surveyRate = new Map();   // submissions per address in the last hour (the form is public)
 const familyLabel = r => r.family_id ? famName(r.family_id) : r.family_other ? `${r.family_other} (not listed)` : 'Not given';
@@ -1833,6 +1909,15 @@ route('POST', '/api/survey', ({ user, body, req }) => {
   else run('INSERT INTO survey_responses (generation,family_id,family_other,name,email,user_id,answers) VALUES (?,?,?,?,?,?,?)', gen, fam, other, name, email, user ? user.id : null, answers);
   return { ok: true, updated: !!was };
 });
+// the public home page: the questionnaire (how many have answered so far) and the manifesto (its summary and how many comments)
+route('GET', '/api/public', () => {
+  const s = settings(), d = q1("SELECT * FROM documents WHERE slug='manifesto'"), blocks = d ? mdBlocks(d.body) : [];
+  const k = blocks.findIndex(b => b.type === 'h2' && /summary/i.test(b.text)), summary = (blocks.slice(k + 1).find(b => b.type === 'p') || blocks.find(b => b.type === 'p') || {}).text || '';
+  const n = g => q1(`SELECT COUNT(*) n FROM survey_responses${g ? ' WHERE generation=?' : ''}`, ...(g ? [g] : [])).n;
+  return { site: s.site_name, place: s.place_line, hero: !!s.hero_version, survey: { open: s.survey_open !== '0', title: s.survey_title, intro: s.survey_intro, total: n(), by: Object.fromEntries(Object.keys(GENERATIONS).map(g => [g, n(g)])),
+      generations: Object.entries(GENERATIONS).map(([key, label]) => ({ key, label, help: GEN_HELP[key] })) },
+    manifesto: d ? { title: (blocks.find(b => b.type === 'h1') || {}).text || d.title, summary, comments: q1("SELECT COUNT(*) n FROM document_comments WHERE slug='manifesto'").n } : null };
+});
 // the results for the families: who has answered (by family and generation) and a summary of each question; names stay with the site admin
 route('GET', '/api/survey/results', ({ user, query }) => {
   need(user, user && (isFamily(user) || user.is_site_admin), 'The results are for the syndicate families');
@@ -1843,11 +1928,11 @@ route('GET', '/api/survey/results', ({ user, query }) => {
   const gf = GENERATIONS[query.generation] ? query.generation : null, ff = query.family ? Number(query.family) : null;
   const rs = all.filter(r => (!gf || r.generation === gf) && (!ff || r.family_id === ff));
   const questions = surveyQuestions().filter(x => !gf || x.versions.includes(gf)).map(qn => {
-    const mine = rs.filter(r => qn.versions.includes(r.generation)), ans = mine.filter(r => r.a[qn.id]), base = { id: qn.id, section: qn.section, text: qn.text, kind: qn.kind, versions: qn.versions, help: qn.help, asked: mine.length, n: ans.length };
+    const mine = rs.filter(r => qn.versions.includes(r.generation)), ans = mine.filter(r => r.a[qn.id]), base = { id: qn.id, section: qn.section, text: qn.text, texts: qn.texts, kind: qn.kind, versions: qn.versions, help: qn.help, asked: mine.length, n: ans.length };
     const per = g => ans.filter(r => r.generation === g);
     if (qn.kind === 'single' || qn.kind === 'multi') return { ...base, max: qn.max, options: qn.options.map((o, k) => { const hit = r => qn.kind === 'single' ? r.a[qn.id].choice === k : r.a[qn.id].choices.includes(k);
       const amounts = o.input === 'amount' ? ans.filter(hit).map(r => r.a[qn.id].input).filter(v => v != null) : [];
-      return { label: o.label, count: ans.filter(hit).length, by: Object.fromEntries(gens.map(g => [g, per(g).filter(hit).length])), ...(amounts.length ? { amount_avg: round2(amounts.reduce((x, y) => x + y, 0) / amounts.length), amount_n: amounts.length } : {}) }; }) };
+      return { label: o.label, labels: o.labels || null, count: ans.filter(hit).length, by: Object.fromEntries(gens.map(g => [g, per(g).filter(hit).length])), ...(amounts.length ? { amount_avg: round2(amounts.reduce((x, y) => x + y, 0) / amounts.length), amount_n: amounts.length } : {}) }; }) };
     if (qn.kind === 'allocation') return { ...base, total: qn.total, options: qn.options.map((o, k) => ({ label: o.label, avg: ans.length ? round2(ans.reduce((x, r) => x + (r.a[qn.id].amounts[k] || 0), 0) / ans.length) : 0,
       by: Object.fromEntries(gens.map(g => [g, per(g).length ? round2(per(g).reduce((x, r) => x + (r.a[qn.id].amounts[k] || 0), 0) / per(g).length) : null])) })),
       other: ans.filter(r => r.a[qn.id].other).map(r => ({ text: r.a[qn.id].other, family: familyLabel(r), generation: GENERATIONS[r.generation] })) };
@@ -1860,28 +1945,31 @@ route('GET', '/api/survey/results', ({ user, query }) => {
 route('GET', '/api/admin/survey/responses', ({ user }) => {
   needAdmin(user); const qs = Object.fromEntries(surveyQuestions(true).map(x => [x.id, x]));
   return q('SELECT * FROM survey_responses ORDER BY created_at DESC, id DESC').map(r => ({ id: r.id, name: r.name, email: r.email, family: familyLabel(r), generation: GENERATIONS[r.generation], at: r.updated_at || r.created_at, by_login: !!r.user_id,
-    answers: Object.entries(JSON.parse(r.answers)).map(([id, a]) => { const qn = qs[id]; if (!qn) return null;
-      const text = qn.kind === 'single' ? `${qn.options[a.choice]?.label || '?'}${a.input != null ? `: ${a.input}` : ''}` : qn.kind === 'multi' ? a.choices.map(c => qn.options[c]?.label).join('; ')
+    answers: Object.entries(JSON.parse(r.answers)).map(([id, a]) => { const qn = qs[id], g = r.generation; if (!qn) return null;
+      const text = qn.kind === 'single' ? `${optLabel(qn.options[a.choice], g)}${a.input != null ? `: ${a.input}` : ''}` : qn.kind === 'multi' ? a.choices.map(c => optLabel(qn.options[c], g)).join('; ')
         : qn.kind === 'allocation' ? qn.options.map((o, k) => a.amounts[k] ? `${o.label} £${a.amounts[k].toLocaleString('en-GB')}` : null).filter(Boolean).join('; ') + (a.other ? ` (other: ${a.other})` : '') : a.text;
-      return { question: qn.text, answer: text }; }).filter(Boolean) }));
+      return { question: qn.texts[g] || qn.text, answer: text }; }).filter(Boolean) }));
 });
 route('DELETE', '/api/admin/survey/responses/:id', ({ user, params }) => { needAdmin(user); run('DELETE FROM survey_responses WHERE id=?', params.id); audit(user.id, 'survey.delete_response', { id: params.id }); return { ok: true }; });
 route('GET', '/api/admin/survey/questions', ({ user }) => {
   needAdmin(user); const counts = {}; for (const r of q('SELECT answers FROM survey_responses')) for (const id of Object.keys(JSON.parse(r.answers))) counts[id] = (counts[id] || 0) + 1;
   return surveyQuestions(true).map(x => ({ ...x, answers: counts[x.id] || 0 }));
 });
-// options are typed one per line; "[amount]" after one adds a box for an amount, "[specify]" a box for words
-const parseOptions = t => String(t || '').split('\n').map(l => l.trim()).filter(Boolean).slice(0, 20).map(l => { const m = /\s*\[(amount|specify)\]$/i.exec(l);
-  return m ? { label: l.slice(0, m.index).trim(), input: m[1].toLowerCase() === 'amount' ? 'amount' : 'text' } : { label: l }; });
+// a question as the site admin edits it: the plain wording shown in the results, a wording for each generation it's asked of, and
+// options (each with a plain label, its own wording for any generation, and an optional box for an amount or for words)
 function saveQuestion(body, id) {
   const kind = ['single', 'multi', 'allocation', 'text'].includes(body.kind) ? body.kind : fail(400, 'Choose the kind of question');
-  const text = String(body.text || '').trim().slice(0, 500); if (!text) fail(400, 'Write the question');
-  const versions = Object.keys(GENERATIONS).filter(g => [].concat(body.versions || []).includes(g)); if (!versions.length) fail(400, 'Choose at least one generation');
-  const options = kind === 'text' ? [] : parseOptions(body.options); if (kind !== 'text' && options.length < 2) fail(400, 'Give at least two options, one per line');
-  const v = [String(body.section || '').trim().slice(0, 120) || null, versions.join(','), kind, text, String(body.help || '').trim().slice(0, 500) || null, kind === 'text' ? null : JSON.stringify(options),
+  const text = String(body.text || '').trim().slice(0, 500); if (!text) fail(400, 'Write the question as it should appear in the results');
+  const texts = Object.fromEntries(Object.keys(GENERATIONS).map(g => [g, String((body.texts || {})[g] || '').trim().slice(0, 500)]).filter(([, t]) => t));
+  if (!Object.keys(texts).length) fail(400, 'Word it for at least one generation');
+  const options = kind === 'text' ? [] : (body.options || []).map(o => { const label = String(o.label || '').trim().slice(0, 200); if (!label) return null;
+    const labels = Object.fromEntries(Object.keys(texts).map(g => [g, String((o.labels || {})[g] || '').trim().slice(0, 200)]).filter(([, t]) => t && t !== label));
+    return { label, ...(Object.keys(labels).length ? { labels } : {}), ...(o.input === 'amount' || o.input === 'text' ? { input: o.input } : {}) }; }).filter(Boolean).slice(0, 20);
+  if (kind !== 'text' && options.length < 2) fail(400, 'Give at least two options');
+  const v = [String(body.section || '').trim().slice(0, 120) || null, Object.keys(texts).join(','), kind, text, JSON.stringify(texts), String(body.help || '').trim().slice(0, 500) || null, kind === 'text' ? null : JSON.stringify(options),
     kind === 'multi' ? Math.max(1, Number(body.max) || options.length) : null, kind === 'allocation' ? Math.max(1, Number(body.total) || 20000) : null, body.active === false || body.active === 'false' ? 0 : 1];
-  if (id) run('UPDATE survey_questions SET section=?, versions=?, kind=?, text=?, help=?, options=?, max_choices=?, total=?, active=? WHERE id=?', ...v, id);
-  else run('INSERT INTO survey_questions (section,versions,kind,text,help,options,max_choices,total,active,sort) VALUES (?,?,?,?,?,?,?,?,?,?)', ...v, ((q1('SELECT MAX(sort) m FROM survey_questions') || {}).m || 0) + 10);
+  if (id) run('UPDATE survey_questions SET section=?, versions=?, kind=?, text=?, texts=?, help=?, options=?, max_choices=?, total=?, active=? WHERE id=?', ...v, id);
+  else run('INSERT INTO survey_questions (section,versions,kind,text,texts,help,options,max_choices,total,active,sort) VALUES (?,?,?,?,?,?,?,?,?,?,?)', ...v, ((q1('SELECT MAX(sort) m FROM survey_questions') || {}).m || 0) + 10);
 }
 route('POST', '/api/admin/survey/questions', ({ user, body }) => { needAdmin(user); saveQuestion(body); audit(user.id, 'survey.question_add', { text: body.text }); return { ok: true }; });
 route('PUT', '/api/admin/survey/questions/:id', ({ user, params, body }) => { needAdmin(user); q1('SELECT 1 FROM survey_questions WHERE id=?', params.id) || fail(404, 'Not found'); saveQuestion(body, Number(params.id)); audit(user.id, 'survey.question_edit', { id: params.id }); return { ok: true }; });

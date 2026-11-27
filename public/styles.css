@@ -433,3 +433,32 @@ ol.queue > li.done { opacity: .55; }
 .qval { min-width: 64px; text-align: right; color: var(--ink); }
 .qquote { margin: 0; padding: 8px 12px; border-left: 3px solid var(--line); background: var(--surface-2); border-radius: 0 var(--r-sm) var(--r-sm) 0; white-space: pre-line; }
 @media (max-width: 640px) { .qrow { grid-template-columns: 1fr; } }
+
+/* a question asked of one generation only: marked in its colour */
+.badge.only { background: color-mix(in srgb, var(--gc) 14%, white); color: var(--ink); border: 1px solid color-mix(in srgb, var(--gc) 45%, white); }
+.qcard.one-gen { border-left: 4px solid var(--gc); }
+.qotable input, .qotable select { min-width: 110px; }
+
+/* the public home page: about NAB's future (the questionnaire, then the manifesto); signing in is secondary */
+.landing { min-height: 100vh; background: var(--bg); }
+.btn.ghost-light { background: transparent; color: #fff; border-color: rgba(255,255,255,.45); }
+.btn.ghost-light:hover { background: rgba(255,255,255,.12); }
+.btn.lg { padding: 12px 22px; font-size: var(--fs-md); }
+.hero { position: relative; background: var(--woodland) center/cover no-repeat; color: #fff; }
+.hero::before { content: ''; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(36,61,50,.55), rgba(36,61,50,.85)); }
+.hero-inner { position: relative; max-width: 960px; margin: 0 auto; padding: clamp(48px, 9vw, 110px) 16px clamp(40px, 7vw, 80px); }
+.hero h1 { color: #fff; font-size: clamp(2.2rem, 6vw, var(--fs-3xl)); font-weight: 400; margin: 6px 0 14px; }
+.hero .eyebrow { color: rgba(255,255,255,.85); }
+.hero .lead { color: rgba(255,255,255,.92); font-size: var(--fs-lg); max-width: 62ch; margin: 0 0 22px; line-height: 1.55; }
+.hero .btn:not(.primary) { background: rgba(255,255,255,.95); }
+.landing-main { max-width: 960px; margin: 0 auto; padding: var(--sp-7) 16px; display: grid; gap: var(--sp-7); }
+.gen-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 12px; }
+.gen-card { display: flex; flex-direction: column; gap: 8px; min-height: 150px; text-decoration: none; color: inherit; border-top: 4px solid var(--gc); }
+.gen-card:hover { box-shadow: 0 2px 10px rgba(0,0,0,.08); background: var(--surface); }
+.manifesto-preview { border-left: 4px solid var(--woodland); padding: var(--sp-6); }
+.owners { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: var(--sp-5) 0; border-top: 1px solid var(--line); }
+.lf-compact { display: flex; gap: 8px; flex-wrap: wrap; }
+.lf-compact input { width: 200px; max-width: 100%; }
+.future { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: var(--sp-6); border-left: 4px solid var(--woodland); }
+@media (max-width: 640px) { .lf-compact input, .lf-compact .btn { width: 100%; } }
+.landing .survey-head { padding-left: max(16px, calc((100vw - 960px) / 2 + 16px)); padding-right: max(16px, calc((100vw - 960px) / 2 + 16px)); }

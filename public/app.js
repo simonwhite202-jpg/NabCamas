@@ -33,7 +33,7 @@ const formData = f => Object.fromEntries([...new FormData(f).entries()]);
 async function boot() {
   const hash = location.hash;
   if (hash.startsWith('#/invite/')) return renderInvite(hash.split('/')[2]);
-  try { S.me = await api('/me'); } catch { S.me = null; return hash.startsWith('#/survey') ? renderSurvey() : renderLogin(); }
+  try { S.me = await api('/me'); } catch { S.me = null; return publicRoute(); }
   if (hash.startsWith('#/survey')) return renderSurvey();
   if (!S.filterSet) { S.filter = 'all'; S.filterSet = true; }
   // one year for every page: it starts on the working year and follows the year last picked on any page
@@ -41,7 +41,7 @@ async function boot() {
   route();
 }
 window.addEventListener('hashchange', () => { const h = location.hash; if (h.startsWith('#/invite/')) return boot();
-  if (h.startsWith('#/survey')) return guard(renderSurvey)(); if (S.me) route(); else if (!$('#lf')) renderLogin(); });
+  if (h.startsWith('#/survey')) return guard(renderSurvey)(); if (S.me) route(); else publicRoute(); });
 async function refreshMe() { S.me = await api('/me'); renderShell(currentTab()); }
 function currentTab() { return (location.hash.replace('#/', '').split('/')[0]) || 'home'; }
 async function route() {
@@ -62,6 +62,40 @@ function loginLayout(inner) {
     <div class="login-form">${inner}</div></div>`;
   const img = new Image(); img.onload = () => { const a = $('#loginArt'); if (a) a.style.backgroundImage = 'url(/media/hero)'; }; img.src = '/media/hero';
 }
+// Without a login: the home page is about NAB's future (the questionnaire, then the manifesto); signing in is secondary.
+function publicRoute() {
+  const h = location.hash;
+  if (h.startsWith('#/survey')) return guard(renderSurvey)();
+  if (h.startsWith('#/manifesto')) return guard(renderPublicManifesto)();
+  if (h.startsWith('#/login')) return renderLogin();
+  return guard(renderLanding)();
+}
+const publicHead = (right = '') => `<header class="survey-head"><a class="wordmark" href="#/">Nab Camas</a><nav class="row" style="gap:8px">${right}</nav></header>`;
+async function renderLanding() {
+  closeOverlay(); const d = await api('/public'), sv = d.survey, mf = d.manifesto;
+  $('#app').innerHTML = `<div class="landing">${publicHead('<a class="btn sm ghost-light" href="#/manifesto">Manifesto</a><button class="btn sm ghost-light" data-owners>Owners’ sign in</button>')}
+    <section class="hero" ${d.hero ? 'style="background-image:url(/media/hero)"' : ''}><div class="hero-inner"><span class="eyebrow">${esc(d.place || '')}</span><h1>The future of NAB</h1>
+      <p class="lead">${esc(sv.intro)}</p>
+      ${sv.open ? `<div class="row" style="gap:10px"><a class="btn primary lg" href="#/survey">Fill in the questionnaire</a><a class="btn lg" href="#/manifesto">Read the Manifesto</a></div>
+        <p class="small" style="margin:10px 0 0;opacity:.9">About ten minutes · no login needed${sv.total ? ` · ${sv.total} ${sv.total === 1 ? 'person has' : 'people have'} answered so far` : ''}</p>` : `<div class="row" style="gap:10px"><a class="btn primary lg" href="#/manifesto">Read the Manifesto</a></div>`}</div></section>
+    <main class="landing-main">
+      ${sv.open ? `<section class="stack"><span class="eyebrow">The questionnaire</span><h2 style="margin:0">${esc(sv.title)}</h2>
+        <p class="muted" style="margin:0;max-width:70ch">It starts by asking which generation you are. Each generation then has its own questions about keeping the house in the family, using the weeks, paying for it and improving it. Choose yours:</p>
+        <div class="gen-cards">${sv.generations.map(g => `<a class="card gen-card" href="#/survey?g=${g.key}" style="--gc:${GEN_COLOR[g.key]}"><span class="eyebrow">${genDot(g.key)}${esc(g.label)}</span><span class="small muted">${esc(g.help)}</span>
+          <span class="row between small" style="margin-top:auto"><b>Start →</b><span class="muted">${sv.by[g.key] ? `${sv.by[g.key]} answered` : ''}</span></span></a>`).join('')}</div></section>` : ''}
+      ${mf ? `<section class="card manifesto-preview"><span class="eyebrow">Manifesto · Nab Camas 2.0</span><h2 style="margin:4px 0 8px">${mdInline(mf.title)}</h2><p style="margin:0 0 10px;max-width:70ch">${mdInline(mf.summary)}</p>
+        <p class="small muted" style="margin:0 0 14px">Anyone in the families can comment on any part of it or suggest different wording, with no login: just your name and family.${mf.comments ? ` ${mf.comments} comment${mf.comments === 1 ? '' : 's'} so far.` : ''}</p>
+        <a class="btn primary" href="#/manifesto">Read it and comment →</a></section>` : ''}
+      <section class="owners" id="owners"><div><h3 style="margin:0 0 4px">Owners’ portal</h3><p class="small muted" style="margin:0">For the families and their trusted friends: the calendar, bookings and accounts, and the questionnaire results.</p></div>
+        <form id="lf" class="lf-compact"><input name="email" type="email" autocomplete="username" placeholder="Email" aria-label="Email" required><input name="password" type="password" autocomplete="current-password" placeholder="Password" aria-label="Password" required><button class="btn">Sign in</button></form></section>
+    </main></div>`;
+  $('[data-owners]').onclick = () => { $('#owners').scrollIntoView({ behavior: 'smooth', block: 'center' }); setTimeout(() => $('#lf [name=email]').focus(), 400); };
+  $('#lf').onsubmit = guard(async e => { e.preventDefault(); await api('/login', { body: formData(e.target) }); history.replaceState(null, '', '#/home'); boot(); });
+}
+async function renderPublicManifesto() {
+  closeOverlay(); $('#app').innerHTML = `<div class="survey-page">${publicHead('<a class="btn sm ghost-light" href="#/survey">Questionnaire</a><a class="btn sm ghost-light" href="#/">Home</a>')}<main class="survey-main" id="pmm" style="max-width:960px"></main></div>`;
+  await viewManifesto($('#pmm'));
+}
 function renderLogin(msg) {
   loginLayout(`<form id="lf"><span class="eyebrow">Owners’ portal</span><h1>Sign in</h1><p class="muted" style="margin:0 0 24px">Welcome back. Sign in with the email address your invitation was sent to.</p>
     ${msg ? `<div class="notice" style="margin-bottom:16px">${esc(msg)}</div>` : ''}
@@ -69,9 +103,8 @@ function renderLogin(msg) {
     <div class="field"><label for="lf-pw">Password</label><input id="lf-pw" name="password" type="password" autocomplete="current-password" required></div>
     <button class="btn primary block" style="margin-top:8px">Sign in</button>
     <p class="muted small" style="margin:24px 0 0">New here? Your household’s admin will send you an invitation. Forgotten your password? Ask them to send a new link.</p></form>`);
-  $('#lf').onsubmit = guard(async e => { e.preventDefault(); await api('/login', { body: formData(e.target) }); location.hash = '#/home'; boot(); });
-  api('/survey').then(d => { if (!d.open || !$('#lf')) return; $('#lf').insertAdjacentHTML('afterend', `<a class="card survey-cta" href="#/survey"><span class="eyebrow">Questionnaire · no login needed</span>
-    <b>${esc(d.title)}</b><span class="small muted">Have your say on how NAB looks after the house and the weeks over the next 20 years. Founders, second and third generations each have their own questions.</span><span class="small"><b>Fill in the questionnaire →</b></span></a>`); }).catch(() => { });
+  $('#lf').onsubmit = guard(async e => { e.preventDefault(); await api('/login', { body: formData(e.target) }); history.replaceState(null, '', '#/home'); boot(); });
+  $('#lf').insertAdjacentHTML('afterend', '<p class="small" style="margin-top:24px"><a href="#/">← The future of NAB: the questionnaire and the Manifesto</a></p>');
 }
 async function renderInvite(tok) {
   let inv; try { inv = await api('/invite/' + tok); } catch (e) { return renderLogin(e.message); }
@@ -126,7 +159,7 @@ function renderShell(tab) {
     <div class="mb-who">Logged in as <b>${esc(u.name)}</b></div>`;
   viewAsBar();
   document.querySelectorAll('[data-notes]').forEach(b => b.onclick = guard(showNotifications));
-  $('[data-logout]').onclick = guard(async () => { await api('/logout', { body: {} }); S.me = null; document.body.classList.remove('menu-open'); $('#app').innerHTML = ''; renderLogin(); });
+  $('[data-logout]').onclick = guard(async () => { await api('/logout', { body: {} }); S.me = null; document.body.classList.remove('menu-open'); $('#app').innerHTML = ''; location.hash = '#/'; publicRoute(); });
   $('[data-menu]').onclick = () => document.body.classList.toggle('menu-open');
   $('.menu-scrim').onclick = () => document.body.classList.remove('menu-open');
   $('.sidebar').querySelectorAll('a').forEach(a => a.addEventListener('click', () => document.body.classList.remove('menu-open')));
@@ -241,7 +274,9 @@ async function viewHome(main) {
   const f = h.family, c = f && f.lets;
   const going = h.upcoming.find(x => ['using', 'booked', 'reserved'].includes(x.plan)) || null;
   const upTag = x => x.plan === 'using' || x.plan === 'booked' ? '<span class="tag booked">Going</span>' : x.plan === 'reserved' ? '<span class="tag pending">Awaiting payment</span>' : x.plan === 'let' ? '<span class="tag booked">Let</span>' : x.plan === 'released' ? '<span class="tag available">Released</span>' : x.plan === 'swap' ? '<span class="tag outline">Will swap</span>' : '<span class="tag">Undecided</span>';
-  main.innerHTML = `${welcomeHeader(greet)}${residenceStrip(h, going)}
+  const future = friend ? '' : `<section class="card future"><div><span class="eyebrow">The future of NAB</span><h2 style="margin:2px 0 4px">Have your say</h2><p class="small muted" style="margin:0;max-width:65ch">The questionnaire asks each generation about keeping the house, the weeks, the costs and improvements. The Manifesto sets out the proposal: comment on any part of it.</p></div>
+    <div class="row" style="gap:8px"><a class="btn primary" href="#/survey">Fill in the questionnaire</a><a class="btn" href="#/manifesto">Manifesto</a><a class="btn" href="#/questionnaire">Results</a></div></section>`;
+  main.innerHTML = `${welcomeHeader(greet)}${future}${residenceStrip(h, going)}
     <section class="stack" style="margin-bottom:var(--sp-6)"><div class="section-title"><h2>Outstanding actions</h2>${h.attention.length ? `<span class="muted small">${h.attention.length} to look at</span>` : ''}</div>
       ${h.attention.length ? h.attention.map(todoItem).join('') : todoItem({ tone: 'info', title: 'All clear', detail: 'Nothing needs your attention right now.' })}</section>
     <div class="home-grid">
@@ -990,12 +1025,17 @@ function mThread(c, admin) {
 // a block's threads: open ones shown, the rest folded away
 const mThreads = (cs, admin) => { if (!cs.length) return ''; const open = cs.filter(c => c.status === 'open'), done = cs.filter(c => c.status !== 'open');
   return `<div class="mthreads">${open.map(c => mThread(c, admin)).join('')}${done.length ? `<details class="small"><summary class="muted" style="cursor:pointer">${done.length} dealt with</summary><div class="mthreads" style="margin:8px 0 0">${done.map(c => mThread(c, admin)).join('')}</div></details>` : ''}</div>`; };
+// who's commenting without a login: remembered on this device so they needn't type it again
+const guest = { get: () => { try { return JSON.parse(localStorage.getItem('nab_guest') || '{}'); } catch { return {}; } }, set: v => { try { localStorage.setItem('nab_guest', JSON.stringify(v)); } catch { } } };
+const guestFields = d => { const g = guest.get(); return `<div class="grid-2" style="gap:12px"><div class="field"><label>Your name</label><input name="name" required maxlength="120" autocomplete="name" value="${esc(g.name || '')}"></div>
+  <div class="field"><label>Your family</label><select name="family_id" required><option value="">Choose…</option>${d.families.map(f => `<option value="${f.id}" ${String(g.family_id) === String(f.id) ? 'selected' : ''}>${esc(f.name)}</option>`).join('')}</select></div></div>
+  <div class="hp" aria-hidden="true"><label>Leave this empty<input name="website" tabindex="-1" autocomplete="off"></label></div>`; };
 async function viewManifesto(main) {
-  const d = await api('/manifesto'), admin = d.can_manage;
+  const d = await api('/manifesto'), admin = d.can_manage, pub = !d.signed_in;
   const body = d.blocks.map(b => { const n = b.comments.filter(c => c.status === 'open').length, li = b.type === 'ul' || b.type === 'ol';
     return `<div class="mblock ${li ? `li l${b.level}` : b.type}" data-b="${b.i}" ${b.type === 'ol' ? `data-num="${b.num}."` : ''}>${mdBlockHtml(b)}
       <button class="iconbtn mcom ${n ? 'has' : ''}" data-comment="${b.i}" title="Comment${b.type === 'table' ? '' : ' or suggest wording'}" aria-label="Comment on this part">${icon('message-square-plus')}${n ? `<span class="mcount">${n}</span>` : ''}</button></div>${mThreads(b.comments, admin)}`; }).join('');
-  main.innerHTML = `<h1>Manifesto</h1><p class="muted" style="max-width:75ch">Nab Camas 2.0: the proposal for how the syndicate could run from here. Read it, then comment on any part, or suggest different wording, with the speech bubble beside each paragraph. The site admin gathers comments and suggestions, and updates the text.</p>
+  main.innerHTML = `${pub ? '<span class="eyebrow">Nab Camas 2.0</span>' : ''}<h1>Manifesto</h1><p class="muted" style="max-width:75ch">Nab Camas 2.0: the proposal for how the syndicate could run from here. Read it, then comment on any part, or suggest different wording, with the speech bubble beside each paragraph.${pub ? ' No login needed: just give your name and family.' : ''} The site admin gathers comments and suggestions, and updates the text.</p>
     ${pageBar(`<span class="small muted">${d.open} open comment${d.open === 1 ? '' : 's'} and suggestions · text updated ${asked(d.updated_at || '')}${d.updated_by ? ` by ${esc(d.updated_by)}` : ''}</span>`,
       `<button class="btn" data-comment="-1">${icon('message-square-plus')}Comment on the whole manifesto…</button>${admin ? '<button class="btn" id="medit">Edit the text…</button>' : ''}`)}
     <article class="manifesto card">${body}</article>
@@ -1003,6 +1043,7 @@ async function viewManifesto(main) {
     ${d.orphans.length ? `<section class="stack" style="margin-top:24px;max-width:860px"><h2 style="margin:0">On wording that has since changed</h2><p class="small muted" style="margin:0">These were on text that has been edited since.</p>
       ${d.orphans.map(c => `<div class="small muted" style="margin-top:6px">On: “${mdInline(c.block_text.slice(0, 200))}${c.block_text.length > 200 ? '…' : ''}”</div>${mThreads([c], admin)}`).join('')}</section>` : ''}`;
   const reload = () => { const y = scrollY; viewManifesto(main).then(() => scrollTo(0, y)); };
+  const post = async body => { if (pub) guest.set({ name: body.name, family_id: body.family_id }); return api('/manifesto/comments', { body }); };
   const all = [...d.blocks.flatMap(b => b.comments), ...d.general, ...d.orphans], find = id => all.find(c => c.id == id);
   main.querySelectorAll('[data-comment]').forEach(x => x.onclick = () => { const i = Number(x.dataset.comment), b = d.blocks[i], canSuggest = b && b.type !== 'table';
     const m = openModal(`<form id="mcf"><h2>${b ? 'Comment on this part' : 'Comment on the whole manifesto'}</h2>
@@ -1010,11 +1051,16 @@ async function viewManifesto(main) {
       ${canSuggest ? `<div class="field"><label>What would you like to do?</label><select name="kind"><option value="comment">Comment or ask a question</option><option value="suggestion">Suggest different wording</option></select></div>` : '<input type="hidden" name="kind" value="comment">'}
       <div class="field" id="msug" style="display:none"><label>Suggested wording</label><textarea name="suggestion" rows="5">${b ? esc(b.text) : ''}</textarea><p class="tiny muted" style="margin:4px 0 0">Change the words above. Text between **double stars** shows in bold.</p></div>
       <div class="field"><label id="mtl">Your comment</label><textarea name="text" rows="4" placeholder="What do you think?"></textarea></div>
+      ${pub ? guestFields(d) : ''}
       <div class="row" style="justify-content:flex-end;gap:8px"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Post</button></div></form>`, true);
     const f = $('#mcf', m), sync = () => { const s = f.kind.value === 'suggestion'; $('#msug', m).style.display = s ? '' : 'none'; $('#mtl', m).textContent = s ? 'Why (optional)' : 'Your comment'; };
     if (f.kind.tagName === 'SELECT') { f.kind.onchange = sync; sync(); }
-    f.onsubmit = guard(async e => { e.preventDefault(); await api('/manifesto/comments', { body: { ...formData(f), block: i } }); closeOverlay(); toast('Posted. The site admin has been told'); reload(); }); });
-  main.querySelectorAll('[data-mreply]').forEach(x => x.onclick = () => { const t = x.closest('.mthread'); if ($('.mreplyf', t)) return;
+    f.onsubmit = guard(async e => { e.preventDefault(); await post({ ...formData(f), block: i }); closeOverlay(); toast('Posted. Thank you'); reload(); }); });
+  main.querySelectorAll('[data-mreply]').forEach(x => x.onclick = () => { const t = x.closest('.mthread');
+    if (pub) { const m = openModal(`<form id="mrf"><h2>Reply</h2><div class="field"><label>Your reply</label><textarea name="text" rows="3" required></textarea></div>${guestFields(d)}
+        <div class="row" style="justify-content:flex-end;gap:8px"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Reply</button></div></form>`);
+      $('#mrf', m).onsubmit = guard(async e => { e.preventDefault(); await post({ ...formData(e.target), parent_id: x.dataset.mreply }); closeOverlay(); toast('Replied'); reload(); }); return; }
+    if ($('.mreplyf', t)) return;
     t.insertAdjacentHTML('beforeend', `<form class="mreplyf row" style="gap:8px;margin-top:8px"><input name="text" placeholder="Write a reply…" style="flex:1;min-width:180px" required><button class="btn sm primary">Reply</button></form>`);
     const f = $('.mreplyf', t); f.text.focus(); f.onsubmit = guard(async e => { e.preventDefault(); await api('/manifesto/comments', { body: { parent_id: x.dataset.mreply, text: f.text.value } }); toast('Replied'); reload(); }); });
   const act = (sel, action, msg, ask) => main.querySelectorAll(`[${sel}]`).forEach(x => x.onclick = guard(async () => { const id = x.getAttribute(sel), c = find(id);
@@ -1038,21 +1084,22 @@ async function viewManifesto(main) {
 // page, or from inside the portal (one response per login: sending again replaces it).
 const GEN_COLOR = { founder: 'var(--gen-founder)', second: 'var(--gen-second)', third: 'var(--gen-third)' };
 const letter = k => String.fromCharCode(65 + k);
-function surveyQuestionHtml(qn, n, prev) {
+const optText = (o, g) => (o.labels && o.labels[g]) || o.label;   // an option in a generation's own wording
+function surveyQuestionHtml(qn, n, prev, gen) {
   const a = prev || {}, name = `q${qn.id}`;
-  const head = `<legend><span class="qnum">${n}.</span> ${esc(qn.text)}</legend>${qn.help ? `<p class="small muted" style="margin:2px 0 8px">${esc(qn.help)}</p>` : ''}`;
+  const head = `<legend><span class="qnum">${n}.</span> ${esc(qn.texts[gen] || qn.text)}</legend>${qn.help ? `<p class="small muted" style="margin:2px 0 8px">${esc(qn.help)}</p>` : ''}`;
   if (qn.kind === 'text') return `<fieldset class="sq" data-q="${qn.id}" data-kind="text">${head}<textarea name="${name}" rows="4" placeholder="Your comments">${esc(a.text || '')}</textarea></fieldset>`;
   if (qn.kind === 'allocation') return `<fieldset class="sq" data-q="${qn.id}" data-kind="allocation" data-total="${qn.total}">${head}<div class="table-wrap"><table class="alloc"><thead><tr><th>Improvement</th><th class="r">Allocation (£)</th></tr></thead><tbody>
     ${qn.options.map((o, k) => `<tr><td>${esc(o.label)}${o.input === 'text' ? `<input name="${name}_other" placeholder="Please specify" value="${esc(a.other || '')}" style="margin-top:6px">` : ''}</td><td class="r"><input name="${name}_${k}" type="number" min="0" step="100" inputmode="numeric" value="${a.amounts && a.amounts[k] ? a.amounts[k] : ''}" style="max-width:130px;text-align:right"></td></tr>`).join('')}</tbody>
     <tfoot><tr><td>Total</td><td class="r num" data-sum>£0 of £${Number(qn.total).toLocaleString('en-GB')}</td></tr></tfoot></table></div></fieldset>`;
   const multi = qn.kind === 'multi', chosen = k => multi ? (a.choices || []).includes(k) : a.choice === k;
-  return `<fieldset class="sq" data-q="${qn.id}" data-kind="${qn.kind}" ${qn.max ? `data-max="${qn.max}"` : ''}>${head}<div class="sopts">${qn.options.map((o, k) => `<label class="sopt"><input type="${multi ? 'checkbox' : 'radio'}" name="${name}" value="${k}" ${chosen(k) ? 'checked' : ''}><span><b>${letter(k)}.</b> ${esc(o.label)}</span>
+  return `<fieldset class="sq" data-q="${qn.id}" data-kind="${qn.kind}" ${qn.max ? `data-max="${qn.max}"` : ''}>${head}<div class="sopts">${qn.options.map((o, k) => `<label class="sopt"><input type="${multi ? 'checkbox' : 'radio'}" name="${name}" value="${k}" ${chosen(k) ? 'checked' : ''}><span><b>${letter(k)}.</b> ${esc(optText(o, gen))}</span>
       ${o.input === 'amount' ? `<input class="sinput" name="${name}_in${k}" type="number" min="0" step="0.5" placeholder="£ thousand" value="${chosen(k) && a.input != null ? a.input : ''}">` : ''}</label>`).join('')}</div></fieldset>`;
 }
 async function renderSurvey() {
   closeOverlay(); document.body.classList.remove('menu-open');
-  const d = await api('/survey'), back = d.me ? '#/questionnaire' : '#/';
-  $('#app').innerHTML = `<div class="survey-page"><header class="survey-head"><a class="wordmark" href="${back}">Nab Camas</a><a class="btn sm" href="${back}">${d.me ? 'Back to the portal' : 'Sign in'}</a></header>
+  const d = await api('/survey'), back = d.me ? '#/questionnaire' : '#/', pick = (/[?&]g=(\w+)/.exec(location.hash) || [])[1];
+  $('#app').innerHTML = `<div class="survey-page">${publicHead(d.me ? `<a class="btn sm ghost-light" href="${back}">Back to the portal</a>` : '<a class="btn sm ghost-light" href="#/manifesto">Manifesto</a><a class="btn sm ghost-light" href="#/">Home</a>')}
     <main class="survey-main" id="svm"></main></div>`;
   const m = $('#svm');
   if (!d.open) { m.innerHTML = `<h1>${esc(d.title)}</h1><div class="card empty">The questionnaire is closed at the moment. Thank you for your interest.</div>`; return; }
@@ -1061,7 +1108,7 @@ async function renderSurvey() {
     ${prev ? `<div class="notice small" style="margin-bottom:16px">You filled this in on ${asked(prev.at)}. Your answers are below: sending again replaces them.</div>` : ''}
     <form id="svf" novalidate><section class="card stack"><h2 style="margin:0">About you</h2>
       <fieldset class="sq" data-kind="generation"><legend><span class="qnum">1.</span> Which generation are you?</legend><div class="gens">
-        ${d.generations.map(g => `<label class="gen"><input type="radio" name="generation" value="${g.key}" ${prev && prev.generation === g.key ? 'checked' : ''} required><span><b>${esc(g.label)}</b><span class="small muted">${esc(g.help)}</span></span></label>`).join('')}</div></fieldset>
+        ${d.generations.map(g => `<label class="gen"><input type="radio" name="generation" value="${g.key}" ${(prev ? prev.generation === g.key : pick === g.key) ? 'checked' : ''} required><span><b>${esc(g.label)}</b><span class="small muted">${esc(g.help)}</span></span></label>`).join('')}</div></fieldset>
       <div class="grid-2" style="gap:12px"><div class="field"><label>Your family</label><select name="family_id" required><option value="">Choose…</option>${d.families.map(f => `<option value="${f.id}" ${String((prev || me).family_id || '') === String(f.id) ? 'selected' : ''}>${esc(f.name)}</option>`).join('')}<option value="other" ${prev && !prev.family_id ? 'selected' : ''}>Another family, or not listed</option></select>
           <input name="family_other" placeholder="Family name" value="${esc(prev && prev.family_other || '')}" style="margin-top:8px;${prev && !prev.family_id ? '' : 'display:none'}"></div>
         <div class="field"><label>Your name</label><input name="name" required maxlength="120" autocomplete="name" value="${esc((prev || me).name || '')}"></div>
@@ -1074,7 +1121,7 @@ async function renderSurvey() {
     $('#svgo').disabled = false; let sec = null, n = 1, html = '';
     for (const qn of d.questions.filter(x => x.versions.includes(gen))) {
       if (qn.section !== sec) { html += `${sec !== null ? '</section>' : ''}<section class="card stack" style="margin-top:16px"><h2 style="margin:0">${esc(qn.section || '')}</h2>`; sec = qn.section; }
-      html += surveyQuestionHtml(qn, ++n, prev && prev.generation === gen ? prev.answers[qn.id] : null); }
+      html += surveyQuestionHtml(qn, ++n, prev && prev.generation === gen ? prev.answers[qn.id] : null, gen); }
     qbox.innerHTML = html + (sec !== null ? '</section>' : '');
     // up to N choices; the amount box goes with its option; the £20,000 adds up as you go
     qbox.querySelectorAll('[data-max]').forEach(fs => { const max = Number(fs.dataset.max), boxes = [...fs.querySelectorAll('input[type=checkbox]')];
@@ -1097,7 +1144,7 @@ async function renderSurvey() {
     const b = $('#svgo'); b.disabled = true;
     try { const r = await api('/survey', { body: { generation: f.generation.value, family_id: f.family_id.value, family_other: f.family_other.value, name: f.name.value, email: f.email.value, website: f.website.value, answers } });
       m.innerHTML = `<span class="eyebrow">Questionnaire</span><h1>Thank you</h1><p class="lead">Your answers have been ${r.updated ? 'updated' : 'saved'}. The families will see a summary of everyone’s answers in the portal, by family and generation.</p>
-        <div class="row" style="gap:8px"><a class="btn primary" href="${back}">${d.me ? 'See the results' : 'Back to sign in'}</a>${d.me ? '' : '<a class="btn" href="#/survey" id="again">Fill in another</a>'}</div>`;
+        <div class="row" style="gap:8px"><a class="btn primary" href="${back}">${d.me ? 'See the results' : 'Back to the home page'}</a>${d.me ? '' : '<a class="btn" href="#/manifesto">Read the Manifesto</a><a class="btn" href="#/survey" id="again">Fill in another</a>'}</div>`;
       scrollTo(0, 0); const ag = $('#again'); if (ag) ag.onclick = e => { e.preventDefault(); renderSurvey(); };
     } finally { b.disabled = false; } });
 }
@@ -1107,16 +1154,24 @@ async function renderSurvey() {
 // answer; with every generation showing, each bar is split by generation (founders, second, third), with the numbers beside it.
 const GENS = ['founder', 'second', 'third'], GEN_NAME = { founder: 'Founders', second: 'Second generation', third: 'Third generation' };
 const genDot = g => `<i class="gdot" style="background:${GEN_COLOR[g]}"></i>`;
-const genList = vs => vs.map(g => GEN_NAME[g]).join(', ');
+const genList = vs => vs.length === 3 ? 'all three generations' : vs.map(g => GEN_NAME[g].toLowerCase()).join(' and ');
+// who a question was asked of: a clear badge when it was only one generation
+const askedOf = qn => qn.versions.length === 1 ? `<span class="badge only" style="--gc:${GEN_COLOR[qn.versions[0]]}">${genDot(qn.versions[0])}Only asked of ${qn.versions[0] === 'founder' ? 'founder members' : `the ${GEN_NAME[qn.versions[0]].toLowerCase()}`}</span>`
+  : `<span class="tiny muted">Asked of ${genList(qn.versions)}: ${qn.versions.map(g => genDot(g)).join('')}</span>`;
+// each generation's wording of the question (and of any answer worded differently)
+const howAsked = qn => { if (qn.versions.length < 2) return '';
+  const diff = (qn.options || []).filter(o => o.labels && Object.keys(o.labels).length);
+  return `<details class="small" style="margin-top:8px"><summary class="muted" style="cursor:pointer">How each generation was asked</summary><div class="stack" style="gap:6px;margin-top:6px">
+    ${qn.versions.map(g => `<div>${genDot(g)}<b>${GEN_NAME[g]}:</b> ${esc(qn.texts[g])}${diff.length ? `<div class="tiny muted" style="margin-left:15px">${diff.map(o => `“${esc(optText(o, g))}”`).join(' · ')}</div>` : ''}</div>`).join('')}</div></details>`; };
 function qChart(qn, split) {
-  const gs = GENS.filter(g => qn.versions.includes(g)), stacked = split && gs.length > 1;
+  const gs = GENS.filter(g => qn.versions.includes(g)), stacked = split && gs.length > 1, one = gs.length === 1 ? GEN_COLOR[gs[0]] : 'var(--chart-single)';
   if (qn.kind === 'allocation') { const max = Math.max(1, ...qn.options.map(o => o.avg));
     return `<div class="qchart">${qn.options.map(o => `<div class="qrow" title="${esc(o.label)}: average £${o.avg.toLocaleString('en-GB')}${gs.length > 1 ? ' · ' + gs.map(g => `${GEN_NAME[g]} ${o.by[g] == null ? '–' : '£' + o.by[g].toLocaleString('en-GB')}`).join(', ') : ''}">
-      <div class="qlabel small">${esc(o.label)}</div><div class="qbar"><div class="qtrack"><span class="seg" style="width:${o.avg / max * 100}%;background:var(--chart-single)"></span></div><span class="qval small num">£${Math.round(o.avg).toLocaleString('en-GB')}</span></div></div>`).join('')}</div>
+      <div class="qlabel small">${esc(o.label)}</div><div class="qbar"><div class="qtrack">${o.avg ? `<span class="seg" style="width:${o.avg / max * 100}%;background:${one}"></span>` : ''}</div><span class="qval small num">£${Math.round(o.avg).toLocaleString('en-GB')}</span></div></div>`).join('')}</div>
       <p class="tiny muted" style="margin:6px 0 0">Average of ${qn.n} answer${qn.n === 1 ? '' : 's'}, out of £${Number(qn.total).toLocaleString('en-GB')}.</p>
       ${qn.other.length ? `<div class="small" style="margin-top:8px"><b>Other improvements suggested</b>${qn.other.map(o => `<div>“${esc(o.text)}” <span class="muted">· ${esc(o.family)}, ${esc(o.generation.toLowerCase())}</span></div>`).join('')}</div>` : ''}`; }
   return `<div class="qchart">${qn.options.map((o, k) => { const pct = qn.n ? o.count / qn.n * 100 : 0;
-    const segs = stacked ? gs.filter(g => o.by[g]).map(g => `<span class="seg" style="width:${o.by[g] / qn.n * 100}%;background:${GEN_COLOR[g]}"></span>`).join('') : `<span class="seg" style="width:${pct}%;background:var(--chart-single)"></span>`;
+    const segs = stacked ? gs.filter(g => o.by[g]).map(g => `<span class="seg" style="width:${o.by[g] / qn.n * 100}%;background:${GEN_COLOR[g]}"></span>`).join('') : pct ? `<span class="seg" style="width:${pct}%;background:${one}"></span>` : '';
     return `<div class="qrow" title="${esc(o.label)}: ${o.count} of ${qn.n}${stacked ? ' · ' + gs.map(g => `${GEN_NAME[g]} ${o.by[g]}`).join(', ') : ''}">
       <div class="qlabel small"><b>${letter(k)}.</b> ${esc(o.label)}${o.amount_avg != null ? ` <span class="muted">· on average £${o.amount_avg.toLocaleString('en-GB')} thousand (${o.amount_n})</span>` : ''}</div>
       <div class="qbar"><div class="qtrack">${segs}</div><span class="qval small num">${o.count} · ${Math.round(pct)}%</span></div></div>`; }).join('')}</div>`;
@@ -1146,9 +1201,9 @@ async function viewQuestionnaire(main) {
   let sec = null, body = '';
   for (const qn of d.questions) {
     if (qn.section !== sec) { body += `<h2 style="margin:24px 0 8px">${esc(qn.section || '')}</h2>`; sec = qn.section; }
-    body += `<div class="card qcard"><div class="row between" style="align-items:flex-start;gap:12px"><b>${esc(qn.text)}</b><span class="tiny muted" style="white-space:nowrap">${qn.n} of ${qn.asked} answered</span></div>
-      <div class="tiny muted" style="margin:2px 0 10px">Asked of: ${genList(qn.versions)}${qn.max ? ` · up to ${qn.max} choices each, so the shares add up to more than 100%` : ''}</div>
-      ${!qn.n ? '<div class="small muted">No answers yet.</div>' : qn.kind === 'text' ? `<div class="stack" style="gap:8px">${qn.comments.map(c => `<blockquote class="qquote small">“${esc(c.text)}”<span class="muted"> · ${esc(c.family)}, ${esc(c.generation.toLowerCase())}</span></blockquote>`).join('')}</div>` : qChart(qn, !gf) + qNumbers(qn)}</div>`;
+    body += `<div class="card qcard ${qn.versions.length === 1 ? 'one-gen' : ''}" ${qn.versions.length === 1 ? `style="--gc:${GEN_COLOR[qn.versions[0]]}"` : ''}><div class="row between" style="align-items:flex-start;gap:12px"><b>${esc(qn.text)}</b><span class="tiny muted" style="white-space:nowrap">${qn.n} of ${qn.asked} answered</span></div>
+      <div class="row" style="gap:8px;margin:4px 0 10px">${askedOf(qn)}${qn.max ? '<span class="tiny muted">Up to ' + qn.max + ' choices each, so the shares add up to more than 100%</span>' : ''}</div>
+      ${!qn.n ? '<div class="small muted">No answers yet.</div>' : qn.kind === 'text' ? `<div class="stack" style="gap:8px">${qn.comments.map(c => `<blockquote class="qquote small">“${esc(c.text)}”<span class="muted"> · ${esc(c.family)}, ${esc(c.generation.toLowerCase())}</span></blockquote>`).join('')}</div>` : qChart(qn, !gf) + qNumbers(qn)}${howAsked(qn)}</div>`;
   }
   main.innerHTML = `${head(filters)}
     <section class="qstats"><div class="card stat"><span class="eyebrow">Responses</span><b class="num">${d.total}</b><span class="tiny muted">${d.open ? 'The questionnaire is open' : 'The questionnaire is closed'}${d.last ? ` · latest ${asked(d.last)}` : ''}</span></div>
@@ -1157,7 +1212,7 @@ async function viewQuestionnaire(main) {
       ${d.families.map(f => `<tr><td>${esc(f.name)}</td>${GENS.map(g => `<td class="r num ${f[g] ? '' : 'muted'}">${f[g]}</td>`).join('')}<td class="r num"><b>${f.total}</b></td></tr>`).join('')}</tbody>
       <tfoot><tr><td>Total</td>${GENS.map(g => `<td class="r num">${d.by_generation[g]}</td>`).join('')}<td class="r num">${d.total}</td></tr></tfoot></table></div></div>
       <div class="card"><h3>Reading the results</h3><p class="small muted" style="margin-top:0">${gf || ff ? `Showing ${d.filtered} response${d.filtered === 1 ? '' : 's'}${gf ? ` from the ${GEN_NAME[gf].toLowerCase()}` : ''}${ff ? ` in the ${esc((d.family_list.find(x => String(x.id) === String(ff)) || {}).name || '')} family` : ''}.` : `Showing all ${d.total} responses.`}
-        Each bar is the share of the people asked that question who chose that answer.${gf ? '' : ' Bars are split by generation:'}</p>
+        Each generation was asked the same underlying questions in its own words; a few questions were for one generation only, and are marked. Each bar is the share of the people asked that question who chose that answer.${gf ? '' : ' Bars are split by generation:'}</p>
         ${gf ? '' : `<div class="legend small">${GENS.map(g => `<span>${genDot(g)}${GEN_NAME[g]}</span>`).join('')}</div>`}
         <p class="small muted" style="margin-bottom:0">Hover over a bar for the detail, or open “The numbers” under each question.</p></div></div>
     ${d.total ? body : '<div class="card empty" style="margin-top:16px">No one has filled in the questionnaire yet. It’s on the sign-in page, and the button above.</div>'}`;
@@ -1191,7 +1246,7 @@ async function admQuestions(main, head, bindTop, reload) {
       <div class="card"><h3>Link to share</h3><p class="small muted" style="margin-top:0">No login is needed. The first question is which generation someone is; each generation then sees its own questions (marked F, 2 and 3 below).</p>
         <div class="row" style="gap:8px"><input value="${esc(link)}" readonly style="flex:1;min-width:200px" id="qlink"><button class="btn sm" id="qcopy">${icon('copy')}Copy</button></div></div></div>
     <div class="table-wrap"><table><thead><tr><th>#</th><th>Question</th><th>Kind</th><th>Asked of</th><th class="r">Answers</th><th></th></tr></thead><tbody>
-      ${qs.map((x, k) => `<tr class="${x.active ? '' : 'muted'}"><td class="num">${k + 1}</td><td><div class="tiny muted">${esc(x.section || '')}</div>${esc(x.text)}${x.active ? '' : ' <span class="badge">Switched off</span>'}</td>
+      ${qs.map((x, k) => `<tr class="${x.active ? '' : 'muted'}"><td class="num">${k + 1}</td><td><div class="tiny muted">${esc(x.section || '')}</div>${esc(x.text)}${x.active ? '' : ' <span class="badge">Switched off</span>'}${x.versions.length > 1 ? `<div class="tiny muted">Worded for each generation it’s asked of</div>` : ''}</td>
         <td class="small">${{ single: 'One answer', multi: `Up to ${x.max}`, allocation: `Share £${Number(x.total).toLocaleString('en-GB')}`, text: 'Comments' }[x.kind]}</td>
         <td style="white-space:nowrap">${GENS.map(g => x.versions.includes(g) ? `<span class="tag" title="${GEN_NAME[g]}">${genDot(g)}${{ founder: 'F', second: '2', third: '3' }[g]}</span>` : '').join(' ')}</td><td class="r num">${x.answers}</td>
         <td class="r" style="white-space:nowrap"><button class="iconbtn" data-qmove="${x.id}" data-dir="up" title="Move up" ${k ? '' : 'disabled'}>↑</button><button class="iconbtn" data-qmove="${x.id}" data-dir="down" title="Move down" ${k < qs.length - 1 ? '' : 'disabled'}>↓</button> <button class="btn sm" data-qedit="${x.id}">Edit…</button></td></tr>`).join('')}</tbody></table></div>
@@ -1200,21 +1255,32 @@ async function admQuestions(main, head, bindTop, reload) {
   $('#qsf', main).onsubmit = guard(async e => { e.preventDefault(); const f = e.target; await api('/admin/settings', { method: 'PUT', body: { survey_open: f.survey_open.checked ? '1' : '0', survey_title: f.survey_title.value, survey_intro: f.survey_intro.value } }); toast('Saved'); reload(); });
   $('#qcopy', main).onclick = () => { $('#qlink', main).select(); try { navigator.clipboard.writeText(link); } catch { document.execCommand('copy'); } toast('Link copied'); };
   main.querySelectorAll('[data-qmove]').forEach(x => x.onclick = guard(async () => { await api(`/admin/survey/questions/${x.dataset.qmove}/move`, { body: { dir: x.dataset.dir } }); reload(); }));
-  const edit = x => () => { const optText = x ? x.options.map(o => o.label + (o.input === 'amount' ? ' [amount]' : o.input === 'text' ? ' [specify]' : '')).join('\n') : '';
+  const edit = x => () => {
+    const opt0 = x ? x.options : [{ label: '' }, { label: '' }];
+    const row = (o = {}) => `<tr><td><input data-o="label" value="${esc(o.label || '')}" placeholder="In the results"></td>${GENS.map(g => `<td><input data-o="${g}" value="${esc((o.labels || {})[g] || '')}" placeholder="Same"></td>`).join('')}
+      <td><select data-o="input"><option value="">–</option><option value="amount" ${o.input === 'amount' ? 'selected' : ''}>Amount box</option><option value="text" ${o.input === 'text' ? 'selected' : ''}>Words box</option></select></td><td><button type="button" class="iconbtn" data-orm title="Remove">${icon('trash-2')}</button></td></tr>`;
     const m = openModal(`<form id="qef"><h2>${x ? 'Edit the question' : 'Add a question'}</h2>${x && x.answers ? `<p class="small muted" style="margin-top:0">${x.answers} answer${x.answers === 1 ? '' : 's'} so far.</p>` : ''}
       <div class="grid-2" style="gap:12px"><div class="field"><label>Section</label><input name="section" list="qsecs" value="${esc(x ? x.section || '' : '')}"><datalist id="qsecs">${sections.map(v => `<option value="${esc(v)}">`).join('')}</datalist></div>
         <div class="field"><label>Kind</label><select name="kind">${[['single', 'Choose one answer'], ['multi', 'Choose several'], ['allocation', 'Share out a sum of money'], ['text', 'Comments']].map(([k, l]) => `<option value="${k}" ${x && x.kind === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div></div>
-      <div class="field"><label>Question</label><textarea name="text" rows="2" required>${esc(x ? x.text : '')}</textarea></div>
+      <div class="field"><label>The question, as it’s shown in the results</label><input name="text" required value="${esc(x ? x.text : '')}" placeholder="e.g. Keeping the family’s shares"></div>
+      <p class="small muted" style="margin:0 0 8px">Word it for each generation it’s asked of, so it relates to them; leave a generation blank to not ask it.</p>
+      ${GENS.map(g => `<div class="field"><label>${genDot(g)}${GEN_NAME[g]}</label><textarea name="t_${g}" rows="2" placeholder="Not asked of the ${GEN_NAME[g].toLowerCase()}">${esc(x && x.texts[g] || '')}</textarea></div>`).join('')}
       <div class="field"><label>Help (optional)</label><input name="help" value="${esc(x ? x.help || '' : '')}"></div>
-      <div class="field" id="qopts"><label>Options, one per line</label><textarea name="options" rows="6">${esc(optText)}</textarea><p class="tiny muted" style="margin:4px 0 0">Add [amount] after an option for a box for an amount, or [specify] for a box for words.</p></div>
+      <div class="field" id="qopts"><label>Options</label><p class="tiny muted" style="margin:0 0 6px">The first column is how each answer is shown in the results; give a generation its own wording where it helps. Keep them in the same order once answers have come in.</p>
+        <div class="table-wrap"><table class="qotable"><thead><tr><th>In the results</th>${GENS.map(g => `<th>${genDot(g)}${{ founder: 'Founders', second: 'Second', third: 'Third' }[g]}</th>`).join('')}<th>Box</th><th></th></tr></thead><tbody>${opt0.map(row).join('')}</tbody></table></div>
+        <button type="button" class="btn sm" id="qoadd" style="margin-top:6px">${icon('plus')}Add an option</button></div>
       <div class="grid-2" style="gap:12px"><div class="field" id="qmax"><label>Choose up to</label><input name="max" type="number" min="1" value="${x && x.max || 3}"></div><div class="field" id="qtot"><label>Sum to share out (£)</label><input name="total" type="number" min="1" value="${x && x.total || 20000}"></div></div>
-      <div class="field"><label>Asked of</label><div class="row" style="gap:16px">${GENS.map(g => `<label class="row" style="gap:6px"><input type="checkbox" name="versions" value="${g}" ${!x || x.versions.includes(g) ? 'checked' : ''}>${genDot(g)}${GEN_NAME[g]}</label>`).join('')}</div></div>
       ${x ? `<label class="check"><input type="checkbox" name="active" ${x.active ? 'checked' : ''}><span><b>In use</b>Switch off to stop asking it; its answers stay.</span></label>` : ''}
       <div class="row between" style="gap:8px;margin-top:12px">${x ? '<button type="button" class="btn sm danger" id="qdel">Delete</button>' : '<span></span>'}<span class="row" style="gap:8px"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">${x ? 'Save' : 'Add'}</button></span></div></form>`, true);
-    const f = $('#qef', m), sync = () => { const k = f.kind.value; $('#qopts', m).style.display = k === 'text' ? 'none' : ''; $('#qmax', m).style.display = k === 'multi' ? '' : 'none'; $('#qtot', m).style.display = k === 'allocation' ? '' : 'none'; };
+    const f = $('#qef', m), body = $('.qotable tbody', m), sync = () => { const k = f.kind.value; $('#qopts', m).style.display = k === 'text' ? 'none' : ''; $('#qmax', m).style.display = k === 'multi' ? '' : 'none'; $('#qtot', m).style.display = k === 'allocation' ? '' : 'none'; };
+    const bindRm = () => body.querySelectorAll('[data-orm]').forEach(b => b.onclick = () => b.closest('tr').remove());
+    $('#qoadd', m).onclick = () => { body.insertAdjacentHTML('beforeend', row()); bindRm(); }; bindRm();
     f.kind.onchange = sync; sync();
-    f.onsubmit = guard(async e => { e.preventDefault(); const v = formData(f); v.versions = [...f.querySelectorAll('[name=versions]:checked')].map(i => i.value); if (x) v.active = f.active.checked;
-      await api(x ? `/admin/survey/questions/${x.id}` : '/admin/survey/questions', { method: x ? 'PUT' : 'POST', body: v }); closeOverlay(); toast('Saved'); reload(); });
+    f.onsubmit = guard(async e => { e.preventDefault(); const v = formData(f);
+      const out = { section: v.section, kind: v.kind, text: v.text, help: v.help, max: v.max, total: v.total, texts: Object.fromEntries(GENS.map(g => [g, v['t_' + g]])),
+        options: [...body.querySelectorAll('tr')].map(tr => { const get = k => tr.querySelector(`[data-o="${k}"]`).value; return { label: get('label'), labels: Object.fromEntries(GENS.map(g => [g, get(g)])), input: get('input') }; }) };
+      if (x) out.active = f.active.checked;
+      await api(x ? `/admin/survey/questions/${x.id}` : '/admin/survey/questions', { method: x ? 'PUT' : 'POST', body: out }); closeOverlay(); toast('Saved'); reload(); });
     const del = $('#qdel', m); if (del) del.onclick = guard(async () => { if (!confirm('Delete this question? If anyone has answered it, it’s switched off instead so the answers stay.')) return;
       const r = await api('/admin/survey/questions/' + x.id, { method: 'DELETE' }); closeOverlay(); toast(r.switched_off ? 'Switched off (it has answers)' : 'Deleted'); reload(); }); };
   $('[data-qadd]', main).onclick = edit(null);
