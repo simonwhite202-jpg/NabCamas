@@ -33,13 +33,15 @@ const formData = f => Object.fromEntries([...new FormData(f).entries()]);
 async function boot() {
   const hash = location.hash;
   if (hash.startsWith('#/invite/')) return renderInvite(hash.split('/')[2]);
-  try { S.me = await api('/me'); } catch { return renderLogin(); }
+  try { S.me = await api('/me'); } catch { S.me = null; return hash.startsWith('#/survey') ? renderSurvey() : renderLogin(); }
+  if (hash.startsWith('#/survey')) return renderSurvey();
   if (!S.filterSet) { S.filter = 'all'; S.filterSet = true; }
   // one year for every page: it starts on the working year and follows the year last picked on any page
   if (!S.me.years.includes(S.year)) S.year = S.me.years.includes(S.me.working_year) ? S.me.working_year : S.me.years.at(-1) || S.me.working_year;
   route();
 }
-window.addEventListener('hashchange', () => { if (location.hash.startsWith('#/invite/')) return boot(); if (S.me) route(); });
+window.addEventListener('hashchange', () => { const h = location.hash; if (h.startsWith('#/invite/')) return boot();
+  if (h.startsWith('#/survey')) return guard(renderSurvey)(); if (S.me) route(); else if (!$('#lf')) renderLogin(); });
 async function refreshMe() { S.me = await api('/me'); renderShell(currentTab()); }
 function currentTab() { return (location.hash.replace('#/', '').split('/')[0]) || 'home'; }
 async function route() {
@@ -49,7 +51,7 @@ async function route() {
   const allowed = new Set(navTabs().map(t => t[0].split('/')[0]));
   if (!allowed.has(tab)) { if (location.hash !== '#/home') location.hash = '#/home'; else renderShell('home'); return; }
   renderShell(tab); const main = $('main');
-  const views = { home: viewHome, calendar: viewCalendar, enquiries: viewEnquiries, bookings: viewBookings, account: viewAccount, 'service-charge': viewServiceCharge, upgrades: viewUpgrades, shares: viewShares, manifesto: viewManifesto, maintenance: viewMaintenance, guide: viewGuide, people: viewPeople, admin: viewAdmin };
+  const views = { home: viewHome, calendar: viewCalendar, enquiries: viewEnquiries, bookings: viewBookings, account: viewAccount, 'service-charge': viewServiceCharge, upgrades: viewUpgrades, shares: viewShares, manifesto: viewManifesto, questionnaire: viewQuestionnaire, maintenance: viewMaintenance, guide: viewGuide, people: viewPeople, admin: viewAdmin };
   try { await (views[tab] || viewHome)(main); } catch (e) { main.innerHTML = `<div class="card empty">${esc(e.message)}</div>`; }
 }
 
@@ -68,6 +70,8 @@ function renderLogin(msg) {
     <button class="btn primary block" style="margin-top:8px">Sign in</button>
     <p class="muted small" style="margin:24px 0 0">New here? Your household’s admin will send you an invitation. Forgotten your password? Ask them to send a new link.</p></form>`);
   $('#lf').onsubmit = guard(async e => { e.preventDefault(); await api('/login', { body: formData(e.target) }); location.hash = '#/home'; boot(); });
+  api('/survey').then(d => { if (!d.open || !$('#lf')) return; $('#lf').insertAdjacentHTML('afterend', `<a class="card survey-cta" href="#/survey"><span class="eyebrow">Questionnaire · no login needed</span>
+    <b>${esc(d.title)}</b><span class="small muted">Have your say on how NAB looks after the house and the weeks over the next 20 years. Founders, second and third generations each have their own questions.</span><span class="small"><b>Fill in the questionnaire →</b></span></a>`); }).catch(() => { });
 }
 async function renderInvite(tok) {
   let inv; try { inv = await api('/invite/' + tok); } catch (e) { return renderLogin(e.message); }
@@ -99,16 +103,16 @@ function whoAmI() {
   return { name: esc(u.name), role: esc(role), house: esc(house), nameIsRole };
 }
 const NAV_ICON = { home: 'house', calendar: 'calendar-days', weeks: 'calendar-range', enquiries: 'messages-square', bookings: 'bed-double', account: 'wallet', people: 'users', admin: 'settings',
-  'admin/overview': 'banknote', 'admin/service-charge': 'receipt', 'service-charge': 'receipt', upgrades: 'lightbulb', shares: 'chart-pie', manifesto: 'scroll-text', maintenance: 'wrench', guide: 'book-open', 'admin/weeks': 'calendar-range', 'admin/lets': 'coins', 'admin/families': 'users-round', 'admin/users': 'user-cog', 'admin/settings': 'settings', 'admin/audit': 'history' };
+  'admin/overview': 'banknote', 'admin/service-charge': 'receipt', 'service-charge': 'receipt', upgrades: 'lightbulb', shares: 'chart-pie', manifesto: 'scroll-text', questionnaire: 'list-checks', maintenance: 'wrench', guide: 'book-open', 'admin/weeks': 'calendar-range', 'admin/lets': 'coins', 'admin/families': 'users-round', 'admin/users': 'user-cog', 'admin/settings': 'settings', 'admin/audit': 'history' };
 function navTabs() {
-  if (isSiteRole()) return [['home', 'Overview'], ['calendar', 'Calendar'], ['upgrades', 'Upgrades'], ['maintenance', 'Maintenance'], ['guide', 'House guide'], ['shares', 'Shares'], ['manifesto', 'Manifesto'], ...ADMIN_PAGES];
+  if (isSiteRole()) return [['home', 'Overview'], ['calendar', 'Calendar'], ['upgrades', 'Upgrades'], ['maintenance', 'Maintenance'], ['guide', 'House guide'], ['shares', 'Shares'], ['manifesto', 'Manifesto'], ['questionnaire', 'Questionnaire'], ...ADMIN_PAGES];
   const friend = S.me.user.role === 'friend', fam = isFam();
   return [['home', 'Overview'], ['calendar', friend ? 'Available weeks' : 'Calendar'], fam && ['enquiries', 'Enquiries', S.me.enquiryCount],
-    ['bookings', friend ? 'My bookings' : 'Bookings'], isFamAdmin() && ['account', 'Account'], fam && ['service-charge', 'Service charge'], fam && ['upgrades', 'Upgrades'], ['maintenance', 'Maintenance'], ['guide', 'House guide'], fam && ['shares', 'Shares'], fam && ['manifesto', 'Manifesto'], ['people', friend ? 'My details' : 'Family & friends'], isSite() && ['admin', 'Site admin']].filter(Boolean);
+    ['bookings', friend ? 'My bookings' : 'Bookings'], isFamAdmin() && ['account', 'Account'], fam && ['service-charge', 'Service charge'], fam && ['upgrades', 'Upgrades'], ['maintenance', 'Maintenance'], ['guide', 'House guide'], fam && ['shares', 'Shares'], fam && ['manifesto', 'Manifesto'], fam && ['questionnaire', 'Questionnaire'], ['people', friend ? 'My details' : 'Family & friends'], isSite() && ['admin', 'Site admin']].filter(Boolean);
 }
 function renderShell(tab) {
   const u = S.me.user, tabs = navTabs(), site = esc(S.me.settings.site_name);
-  if (!$('main')) $('#app').innerHTML = '<div class="shell"><aside class="sidebar" aria-label="Main menu"></aside><div class="menu-scrim"></div><header class="mobilebar"></header><main id="main"></main></div>';
+  if (!$('.shell')) $('#app').innerHTML = '<div class="shell"><aside class="sidebar" aria-label="Main menu"></aside><div class="menu-scrim"></div><header class="mobilebar"></header><main id="main"></main></div>';
   const initials = esc((u.name.match(/\b[A-Za-z]/g) || ['?']).join('').slice(0, 2).toUpperCase());
   const unread = S.me.unread ? `<span class="count">${S.me.unread}</span>` : '';
   $('.sidebar').innerHTML = `<a class="wordmark" href="#/home">${site}</a><span class="place">${esc(S.me.settings.place_line || '')}</span>
@@ -1027,6 +1031,194 @@ async function viewManifesto(main) {
     const f = $('#mef', m); f.body.value = (await api('/manifesto/text')).body;
     const lv = $('#mverLoad', m); if (lv) lv.onclick = () => { f.body.value = full[$('#mver', m).value].body; toast('Earlier version loaded. Save to bring it back'); };
     f.onsubmit = guard(async e => { e.preventDefault(); await api('/manifesto', { method: 'PUT', body: { body: f.body.value } }); closeOverlay(); toast('Saved'); reload(); }); });
+}
+
+// ------------------------------------------------------------ the questionnaire (public: no login needed)
+// "NAB: your house, your future". First, which generation you are; then that generation's questions. Filled in from the sign-in
+// page, or from inside the portal (one response per login: sending again replaces it).
+const GEN_COLOR = { founder: 'var(--gen-founder)', second: 'var(--gen-second)', third: 'var(--gen-third)' };
+const letter = k => String.fromCharCode(65 + k);
+function surveyQuestionHtml(qn, n, prev) {
+  const a = prev || {}, name = `q${qn.id}`;
+  const head = `<legend><span class="qnum">${n}.</span> ${esc(qn.text)}</legend>${qn.help ? `<p class="small muted" style="margin:2px 0 8px">${esc(qn.help)}</p>` : ''}`;
+  if (qn.kind === 'text') return `<fieldset class="sq" data-q="${qn.id}" data-kind="text">${head}<textarea name="${name}" rows="4" placeholder="Your comments">${esc(a.text || '')}</textarea></fieldset>`;
+  if (qn.kind === 'allocation') return `<fieldset class="sq" data-q="${qn.id}" data-kind="allocation" data-total="${qn.total}">${head}<div class="table-wrap"><table class="alloc"><thead><tr><th>Improvement</th><th class="r">Allocation (£)</th></tr></thead><tbody>
+    ${qn.options.map((o, k) => `<tr><td>${esc(o.label)}${o.input === 'text' ? `<input name="${name}_other" placeholder="Please specify" value="${esc(a.other || '')}" style="margin-top:6px">` : ''}</td><td class="r"><input name="${name}_${k}" type="number" min="0" step="100" inputmode="numeric" value="${a.amounts && a.amounts[k] ? a.amounts[k] : ''}" style="max-width:130px;text-align:right"></td></tr>`).join('')}</tbody>
+    <tfoot><tr><td>Total</td><td class="r num" data-sum>£0 of £${Number(qn.total).toLocaleString('en-GB')}</td></tr></tfoot></table></div></fieldset>`;
+  const multi = qn.kind === 'multi', chosen = k => multi ? (a.choices || []).includes(k) : a.choice === k;
+  return `<fieldset class="sq" data-q="${qn.id}" data-kind="${qn.kind}" ${qn.max ? `data-max="${qn.max}"` : ''}>${head}<div class="sopts">${qn.options.map((o, k) => `<label class="sopt"><input type="${multi ? 'checkbox' : 'radio'}" name="${name}" value="${k}" ${chosen(k) ? 'checked' : ''}><span><b>${letter(k)}.</b> ${esc(o.label)}</span>
+      ${o.input === 'amount' ? `<input class="sinput" name="${name}_in${k}" type="number" min="0" step="0.5" placeholder="£ thousand" value="${chosen(k) && a.input != null ? a.input : ''}">` : ''}</label>`).join('')}</div></fieldset>`;
+}
+async function renderSurvey() {
+  closeOverlay(); document.body.classList.remove('menu-open');
+  const d = await api('/survey'), back = d.me ? '#/questionnaire' : '#/';
+  $('#app').innerHTML = `<div class="survey-page"><header class="survey-head"><a class="wordmark" href="${back}">Nab Camas</a><a class="btn sm" href="${back}">${d.me ? 'Back to the portal' : 'Sign in'}</a></header>
+    <main class="survey-main" id="svm"></main></div>`;
+  const m = $('#svm');
+  if (!d.open) { m.innerHTML = `<h1>${esc(d.title)}</h1><div class="card empty">The questionnaire is closed at the moment. Thank you for your interest.</div>`; return; }
+  const prev = d.mine, me = d.me || {};
+  m.innerHTML = `<span class="eyebrow">Questionnaire</span><h1>${esc(d.title)}</h1><p class="lead">${esc(d.intro)}</p>
+    ${prev ? `<div class="notice small" style="margin-bottom:16px">You filled this in on ${asked(prev.at)}. Your answers are below: sending again replaces them.</div>` : ''}
+    <form id="svf" novalidate><section class="card stack"><h2 style="margin:0">About you</h2>
+      <fieldset class="sq" data-kind="generation"><legend><span class="qnum">1.</span> Which generation are you?</legend><div class="gens">
+        ${d.generations.map(g => `<label class="gen"><input type="radio" name="generation" value="${g.key}" ${prev && prev.generation === g.key ? 'checked' : ''} required><span><b>${esc(g.label)}</b><span class="small muted">${esc(g.help)}</span></span></label>`).join('')}</div></fieldset>
+      <div class="grid-2" style="gap:12px"><div class="field"><label>Your family</label><select name="family_id" required><option value="">Choose…</option>${d.families.map(f => `<option value="${f.id}" ${String((prev || me).family_id || '') === String(f.id) ? 'selected' : ''}>${esc(f.name)}</option>`).join('')}<option value="other" ${prev && !prev.family_id ? 'selected' : ''}>Another family, or not listed</option></select>
+          <input name="family_other" placeholder="Family name" value="${esc(prev && prev.family_other || '')}" style="margin-top:8px;${prev && !prev.family_id ? '' : 'display:none'}"></div>
+        <div class="field"><label>Your name</label><input name="name" required maxlength="120" autocomplete="name" value="${esc((prev || me).name || '')}"></div>
+        <div class="field"><label>Email (optional)</label><input name="email" type="email" maxlength="200" autocomplete="email" value="${esc((prev || me).email || '')}"></div></div>
+      <div class="hp" aria-hidden="true"><label>Leave this empty<input name="website" tabindex="-1" autocomplete="off"></label></div></section>
+      <div id="svq"></div>
+      <div class="row" style="justify-content:flex-end;margin-top:16px"><button class="btn primary" id="svgo" disabled>Send my answers</button></div></form>`;
+  const f = $('#svf'), qbox = $('#svq');
+  const show = () => { const gen = f.generation.value; if (!gen) { qbox.innerHTML = '<div class="card flat empty small" style="margin-top:16px">Choose your generation to see your questions.</div>'; return; }
+    $('#svgo').disabled = false; let sec = null, n = 1, html = '';
+    for (const qn of d.questions.filter(x => x.versions.includes(gen))) {
+      if (qn.section !== sec) { html += `${sec !== null ? '</section>' : ''}<section class="card stack" style="margin-top:16px"><h2 style="margin:0">${esc(qn.section || '')}</h2>`; sec = qn.section; }
+      html += surveyQuestionHtml(qn, ++n, prev && prev.generation === gen ? prev.answers[qn.id] : null); }
+    qbox.innerHTML = html + (sec !== null ? '</section>' : '');
+    // up to N choices; the amount box goes with its option; the £20,000 adds up as you go
+    qbox.querySelectorAll('[data-max]').forEach(fs => { const max = Number(fs.dataset.max), boxes = [...fs.querySelectorAll('input[type=checkbox]')];
+      const lim = () => { const c = boxes.filter(b => b.checked).length; boxes.forEach(b => b.disabled = !b.checked && c >= max); }; boxes.forEach(b => b.onchange = lim); lim(); });
+    qbox.querySelectorAll('[data-kind=allocation]').forEach(fs => { const total = Number(fs.dataset.total), sum = () => { const t = [...fs.querySelectorAll('input[type=number]')].reduce((x, i) => x + (Number(i.value) || 0), 0), el = $('[data-sum]', fs);
+      el.textContent = `£${t.toLocaleString('en-GB')} of £${total.toLocaleString('en-GB')}${t && t !== total ? (t > total ? ` · £${(t - total).toLocaleString('en-GB')} too much` : ` · £${(total - t).toLocaleString('en-GB')} left`) : ''}`; el.style.color = t > total ? 'var(--st-alert-ink)' : ''; };
+      fs.querySelectorAll('input[type=number]').forEach(i => i.oninput = sum); sum(); });
+    qbox.querySelectorAll('.sinput').forEach(i => i.onfocus = () => { const r = i.closest('.sopt').querySelector('input[type=radio]'); if (r) r.checked = true; });
+  };
+  f.querySelectorAll('[name=generation]').forEach(r => r.onchange = show); show();
+  f.family_id.onchange = () => { f.family_other.style.display = f.family_id.value === 'other' ? '' : 'none'; };
+  f.onsubmit = guard(async e => { e.preventDefault();
+    if (!f.generation.value) throw new Error('Say which generation you are'); if (!f.family_id.value) throw new Error('Choose your family'); if (!f.name.value.trim()) throw new Error('Enter your name');
+    const answers = {};
+    qbox.querySelectorAll('.sq[data-q]').forEach(fs => { const id = fs.dataset.q, kind = fs.dataset.kind;
+      if (kind === 'text') { const t = fs.querySelector('textarea').value.trim(); if (t) answers[id] = { text: t }; }
+      else if (kind === 'allocation') { const am = [...fs.querySelectorAll('tbody input[type=number]')].map(i => Number(i.value) || 0); if (am.some(Boolean)) answers[id] = { amounts: am, other: (fs.querySelector(`[name=q${id}_other]`) || {}).value || '' }; }
+      else if (kind === 'multi') { const cs = [...fs.querySelectorAll('input[type=checkbox]:checked')].map(i => Number(i.value)); if (cs.length) answers[id] = { choices: cs }; }
+      else { const c = fs.querySelector('input[type=radio]:checked'); if (c) { const inp = fs.querySelector(`[name=q${id}_in${c.value}]`); answers[id] = { choice: Number(c.value), ...(inp && inp.value !== '' ? { input: Number(inp.value) } : {}) }; } } });
+    const b = $('#svgo'); b.disabled = true;
+    try { const r = await api('/survey', { body: { generation: f.generation.value, family_id: f.family_id.value, family_other: f.family_other.value, name: f.name.value, email: f.email.value, website: f.website.value, answers } });
+      m.innerHTML = `<span class="eyebrow">Questionnaire</span><h1>Thank you</h1><p class="lead">Your answers have been ${r.updated ? 'updated' : 'saved'}. The families will see a summary of everyone’s answers in the portal, by family and generation.</p>
+        <div class="row" style="gap:8px"><a class="btn primary" href="${back}">${d.me ? 'See the results' : 'Back to sign in'}</a>${d.me ? '' : '<a class="btn" href="#/survey" id="again">Fill in another</a>'}</div>`;
+      scrollTo(0, 0); const ag = $('#again'); if (ag) ag.onclick = e => { e.preventDefault(); renderSurvey(); };
+    } finally { b.disabled = false; } });
+}
+
+// ------------------------------------------------------------ questionnaire results (inside the portal)
+// Who has answered (by family and generation) and a summary of each question. Bars are the share of people asked who chose each
+// answer; with every generation showing, each bar is split by generation (founders, second, third), with the numbers beside it.
+const GENS = ['founder', 'second', 'third'], GEN_NAME = { founder: 'Founders', second: 'Second generation', third: 'Third generation' };
+const genDot = g => `<i class="gdot" style="background:${GEN_COLOR[g]}"></i>`;
+const genList = vs => vs.map(g => GEN_NAME[g]).join(', ');
+function qChart(qn, split) {
+  const gs = GENS.filter(g => qn.versions.includes(g)), stacked = split && gs.length > 1;
+  if (qn.kind === 'allocation') { const max = Math.max(1, ...qn.options.map(o => o.avg));
+    return `<div class="qchart">${qn.options.map(o => `<div class="qrow" title="${esc(o.label)}: average £${o.avg.toLocaleString('en-GB')}${gs.length > 1 ? ' · ' + gs.map(g => `${GEN_NAME[g]} ${o.by[g] == null ? '–' : '£' + o.by[g].toLocaleString('en-GB')}`).join(', ') : ''}">
+      <div class="qlabel small">${esc(o.label)}</div><div class="qbar"><div class="qtrack"><span class="seg" style="width:${o.avg / max * 100}%;background:var(--chart-single)"></span></div><span class="qval small num">£${Math.round(o.avg).toLocaleString('en-GB')}</span></div></div>`).join('')}</div>
+      <p class="tiny muted" style="margin:6px 0 0">Average of ${qn.n} answer${qn.n === 1 ? '' : 's'}, out of £${Number(qn.total).toLocaleString('en-GB')}.</p>
+      ${qn.other.length ? `<div class="small" style="margin-top:8px"><b>Other improvements suggested</b>${qn.other.map(o => `<div>“${esc(o.text)}” <span class="muted">· ${esc(o.family)}, ${esc(o.generation.toLowerCase())}</span></div>`).join('')}</div>` : ''}`; }
+  return `<div class="qchart">${qn.options.map((o, k) => { const pct = qn.n ? o.count / qn.n * 100 : 0;
+    const segs = stacked ? gs.filter(g => o.by[g]).map(g => `<span class="seg" style="width:${o.by[g] / qn.n * 100}%;background:${GEN_COLOR[g]}"></span>`).join('') : `<span class="seg" style="width:${pct}%;background:var(--chart-single)"></span>`;
+    return `<div class="qrow" title="${esc(o.label)}: ${o.count} of ${qn.n}${stacked ? ' · ' + gs.map(g => `${GEN_NAME[g]} ${o.by[g]}`).join(', ') : ''}">
+      <div class="qlabel small"><b>${letter(k)}.</b> ${esc(o.label)}${o.amount_avg != null ? ` <span class="muted">· on average £${o.amount_avg.toLocaleString('en-GB')} thousand (${o.amount_n})</span>` : ''}</div>
+      <div class="qbar"><div class="qtrack">${segs}</div><span class="qval small num">${o.count} · ${Math.round(pct)}%</span></div></div>`; }).join('')}</div>`;
+}
+// the same numbers as a table (for anyone who can't tell the colours apart, or wants the detail)
+function qNumbers(qn) {
+  const gs = GENS.filter(g => qn.versions.includes(g));
+  if (qn.kind === 'text') return '';
+  const head = `<tr><th>${qn.kind === 'allocation' ? 'Improvement' : 'Answer'}</th><th class="r">${qn.kind === 'allocation' ? 'Average' : 'All'}</th>${gs.length > 1 ? gs.map(g => `<th class="r">${GEN_NAME[g]}</th>`).join('') : ''}</tr>`;
+  const rows = qn.options.map((o, k) => qn.kind === 'allocation' ? `<tr><td>${esc(o.label)}</td><td class="r num">£${Math.round(o.avg).toLocaleString('en-GB')}</td>${gs.length > 1 ? gs.map(g => `<td class="r num">${o.by[g] == null ? '–' : '£' + Math.round(o.by[g]).toLocaleString('en-GB')}</td>`).join('') : ''}</tr>`
+    : `<tr><td>${letter(k)}. ${esc(o.label)}</td><td class="r num">${o.count}</td>${gs.length > 1 ? gs.map(g => `<td class="r num">${o.by[g]}</td>`).join('') : ''}</tr>`).join('');
+  return `<details class="small" style="margin-top:8px"><summary class="muted" style="cursor:pointer">The numbers</summary><div class="table-wrap" style="margin-top:6px"><table>${head}${rows}</table></div></details>`;
+}
+async function viewQuestionnaire(main) {
+  const admin = isSite(), view = admin && ['responses', 'questions'].includes(S.qview) ? S.qview : 'results';
+  const seg = admin ? `<div class="seg" aria-label="View">${[['results', 'Results'], ['responses', 'Responses'], ['questions', 'Questions']].map(([k, l]) => `<button data-qv="${k}" class="${k === view ? 'on' : ''}">${l}</button>`).join('')}</div>` : '';
+  const head = (bar, right = '') => `<h1>Questionnaire</h1><p class="muted" style="max-width:75ch">Answers to “NAB: your house, your future”, the questionnaire on the sign-in page. Founders, the second generation and the third each have their own questions; questions asked of more than one generation can be compared.${admin ? '' : ' Names aren’t shown here: only families and generations.'}</p>
+    ${pageBar(`${seg}${bar}`, `${right}<a class="btn" href="#/survey">${icon('list-checks')}Fill in the questionnaire</a>`)}`;
+  const reload = () => viewQuestionnaire(main);
+  const bindTop = () => main.querySelectorAll('[data-qv]').forEach(b => b.onclick = () => { S.qview = b.dataset.qv; reload(); });
+  if (view === 'responses') return admResponses(main, head, bindTop, reload);
+  if (view === 'questions') return admQuestions(main, head, bindTop, reload);
+  const gf = S.qgen || '', ff = S.qfam || '';
+  const d = await api(`/survey/results?generation=${gf}&family=${ff}`);
+  const filters = `<div class="seg" aria-label="Generation">${[['', 'All generations'], ...d.generations.map(g => [g.key, g.label])].map(([k, l]) => `<button data-qg="${k}" class="${k === gf ? 'on' : ''}">${l}</button>`).join('')}</div>
+    <select id="qfam" aria-label="Family" style="width:auto"><option value="">All families</option>${d.family_list.map(f => `<option value="${f.id}" ${String(f.id) === String(ff) ? 'selected' : ''}>${esc(f.name)}</option>`).join('')}</select>`;
+  let sec = null, body = '';
+  for (const qn of d.questions) {
+    if (qn.section !== sec) { body += `<h2 style="margin:24px 0 8px">${esc(qn.section || '')}</h2>`; sec = qn.section; }
+    body += `<div class="card qcard"><div class="row between" style="align-items:flex-start;gap:12px"><b>${esc(qn.text)}</b><span class="tiny muted" style="white-space:nowrap">${qn.n} of ${qn.asked} answered</span></div>
+      <div class="tiny muted" style="margin:2px 0 10px">Asked of: ${genList(qn.versions)}${qn.max ? ` · up to ${qn.max} choices each, so the shares add up to more than 100%` : ''}</div>
+      ${!qn.n ? '<div class="small muted">No answers yet.</div>' : qn.kind === 'text' ? `<div class="stack" style="gap:8px">${qn.comments.map(c => `<blockquote class="qquote small">“${esc(c.text)}”<span class="muted"> · ${esc(c.family)}, ${esc(c.generation.toLowerCase())}</span></blockquote>`).join('')}</div>` : qChart(qn, !gf) + qNumbers(qn)}</div>`;
+  }
+  main.innerHTML = `${head(filters)}
+    <section class="qstats"><div class="card stat"><span class="eyebrow">Responses</span><b class="num">${d.total}</b><span class="tiny muted">${d.open ? 'The questionnaire is open' : 'The questionnaire is closed'}${d.last ? ` · latest ${asked(d.last)}` : ''}</span></div>
+      ${d.generations.map(g => `<div class="card stat"><span class="eyebrow">${genDot(g.key)} ${esc(g.label)}</span><b class="num">${d.by_generation[g.key]}</b><span class="tiny muted">${d.total ? Math.round(d.by_generation[g.key] / d.total * 100) : 0}% of responses</span></div>`).join('')}</section>
+    <div class="grid-2" style="align-items:start;margin-top:16px"><div class="card"><h3>Who has answered</h3><div class="table-wrap"><table><thead><tr><th>Family</th>${GENS.map(g => `<th class="r">${genDot(g)}${GEN_NAME[g].replace(' generation', '')}</th>`).join('')}<th class="r">Total</th></tr></thead><tbody>
+      ${d.families.map(f => `<tr><td>${esc(f.name)}</td>${GENS.map(g => `<td class="r num ${f[g] ? '' : 'muted'}">${f[g]}</td>`).join('')}<td class="r num"><b>${f.total}</b></td></tr>`).join('')}</tbody>
+      <tfoot><tr><td>Total</td>${GENS.map(g => `<td class="r num">${d.by_generation[g]}</td>`).join('')}<td class="r num">${d.total}</td></tr></tfoot></table></div></div>
+      <div class="card"><h3>Reading the results</h3><p class="small muted" style="margin-top:0">${gf || ff ? `Showing ${d.filtered} response${d.filtered === 1 ? '' : 's'}${gf ? ` from the ${GEN_NAME[gf].toLowerCase()}` : ''}${ff ? ` in the ${esc((d.family_list.find(x => String(x.id) === String(ff)) || {}).name || '')} family` : ''}.` : `Showing all ${d.total} responses.`}
+        Each bar is the share of the people asked that question who chose that answer.${gf ? '' : ' Bars are split by generation:'}</p>
+        ${gf ? '' : `<div class="legend small">${GENS.map(g => `<span>${genDot(g)}${GEN_NAME[g]}</span>`).join('')}</div>`}
+        <p class="small muted" style="margin-bottom:0">Hover over a bar for the detail, or open “The numbers” under each question.</p></div></div>
+    ${d.total ? body : '<div class="card empty" style="margin-top:16px">No one has filled in the questionnaire yet. It’s on the sign-in page, and the button above.</div>'}`;
+  bindTop();
+  main.querySelectorAll('[data-qg]').forEach(b => b.onclick = () => { S.qgen = b.dataset.qg; reload(); });
+  $('#qfam', main).onchange = e => { S.qfam = e.target.value; reload(); };
+}
+async function admResponses(main, head, bindTop, reload) {
+  const rs = await api('/admin/survey/responses');
+  main.innerHTML = `${head('', '<a class="btn" href="/api/admin/survey/export">Download as a spreadsheet (CSV)</a>')}
+    ${rs.length ? `<div class="table-wrap"><table><thead><tr><th>When</th><th>Name</th><th>Family</th><th>Generation</th><th class="r">Answers</th><th></th></tr></thead><tbody>
+      ${rs.map(r => `<tr><td class="small">${asked(r.at)}</td><td>${esc(r.name)}${r.email ? `<div class="tiny muted">${esc(r.email)}</div>` : ''}${r.by_login ? '<div class="tiny muted">from their login</div>' : ''}</td><td>${esc(r.family)}</td><td>${esc(r.generation)}</td><td class="r num">${r.answers.length}</td>
+        <td class="r" style="white-space:nowrap"><button class="btn sm" data-rview="${r.id}">View</button> <button class="btn sm danger" data-rdel="${r.id}">Delete</button></td></tr>`).join('')}</tbody></table></div>`
+      : '<div class="card empty">No responses yet.</div>'}`;
+  bindTop();
+  main.querySelectorAll('[data-rview]').forEach(x => x.onclick = () => { const r = rs.find(y => y.id == x.dataset.rview);
+    openModal(`<h2>${esc(r.name)}</h2><p class="small muted" style="margin-top:0">${esc(r.family)} · ${esc(r.generation)} · ${asked(r.at)}${r.email ? ` · ${esc(r.email)}` : ''}</p>
+      <div class="stack" style="gap:10px">${r.answers.map(a => `<div class="small"><b>${esc(a.question)}</b><div style="white-space:pre-line">${esc(a.answer)}</div></div>`).join('') || '<div class="small muted">No answers</div>'}</div>
+      <div class="row" style="justify-content:flex-end;margin-top:16px"><button class="btn" data-close>Close</button></div>`, true); });
+  main.querySelectorAll('[data-rdel]').forEach(x => x.onclick = guard(async () => { if (!confirm('Delete this response? Use it for duplicates or tests.')) return; await api('/admin/survey/responses/' + x.dataset.rdel, { method: 'DELETE' }); toast('Deleted'); reload(); }));
+}
+async function admQuestions(main, head, bindTop, reload) {
+  const [qs, s] = await Promise.all([api('/admin/survey/questions'), api('/admin/settings')]), link = `${location.origin}/#/survey`;
+  const sections = [...new Set(qs.map(x => x.section).filter(Boolean))];
+  main.innerHTML = `${head('', `<button class="btn" data-qadd>${icon('plus')}Add a question…</button>`)}
+    <div class="grid-2" style="align-items:start;margin-bottom:16px"><form class="card" id="qsf"><h3>The questionnaire</h3>
+      <label class="check"><input type="checkbox" name="survey_open" ${s.survey_open !== '0' ? 'checked' : ''}><span><b>Open</b>Shown on the sign-in page, and anyone with the link can fill it in.</span></label>
+      <div class="field" style="margin-top:12px"><label>Title</label><input name="survey_title" value="${esc(s.survey_title || '')}"></div>
+      <div class="field"><label>Introduction</label><textarea name="survey_intro" rows="4">${esc(s.survey_intro || '')}</textarea></div>
+      <div class="row" style="justify-content:flex-end"><button class="btn primary">Save</button></div></form>
+      <div class="card"><h3>Link to share</h3><p class="small muted" style="margin-top:0">No login is needed. The first question is which generation someone is; each generation then sees its own questions (marked F, 2 and 3 below).</p>
+        <div class="row" style="gap:8px"><input value="${esc(link)}" readonly style="flex:1;min-width:200px" id="qlink"><button class="btn sm" id="qcopy">${icon('copy')}Copy</button></div></div></div>
+    <div class="table-wrap"><table><thead><tr><th>#</th><th>Question</th><th>Kind</th><th>Asked of</th><th class="r">Answers</th><th></th></tr></thead><tbody>
+      ${qs.map((x, k) => `<tr class="${x.active ? '' : 'muted'}"><td class="num">${k + 1}</td><td><div class="tiny muted">${esc(x.section || '')}</div>${esc(x.text)}${x.active ? '' : ' <span class="badge">Switched off</span>'}</td>
+        <td class="small">${{ single: 'One answer', multi: `Up to ${x.max}`, allocation: `Share £${Number(x.total).toLocaleString('en-GB')}`, text: 'Comments' }[x.kind]}</td>
+        <td style="white-space:nowrap">${GENS.map(g => x.versions.includes(g) ? `<span class="tag" title="${GEN_NAME[g]}">${genDot(g)}${{ founder: 'F', second: '2', third: '3' }[g]}</span>` : '').join(' ')}</td><td class="r num">${x.answers}</td>
+        <td class="r" style="white-space:nowrap"><button class="iconbtn" data-qmove="${x.id}" data-dir="up" title="Move up" ${k ? '' : 'disabled'}>↑</button><button class="iconbtn" data-qmove="${x.id}" data-dir="down" title="Move down" ${k < qs.length - 1 ? '' : 'disabled'}>↓</button> <button class="btn sm" data-qedit="${x.id}">Edit…</button></td></tr>`).join('')}</tbody></table></div>
+    <p class="tiny muted">Answers are kept against each option’s position, so reword options freely but avoid reordering them once answers have come in.</p>`;
+  bindTop();
+  $('#qsf', main).onsubmit = guard(async e => { e.preventDefault(); const f = e.target; await api('/admin/settings', { method: 'PUT', body: { survey_open: f.survey_open.checked ? '1' : '0', survey_title: f.survey_title.value, survey_intro: f.survey_intro.value } }); toast('Saved'); reload(); });
+  $('#qcopy', main).onclick = () => { $('#qlink', main).select(); try { navigator.clipboard.writeText(link); } catch { document.execCommand('copy'); } toast('Link copied'); };
+  main.querySelectorAll('[data-qmove]').forEach(x => x.onclick = guard(async () => { await api(`/admin/survey/questions/${x.dataset.qmove}/move`, { body: { dir: x.dataset.dir } }); reload(); }));
+  const edit = x => () => { const optText = x ? x.options.map(o => o.label + (o.input === 'amount' ? ' [amount]' : o.input === 'text' ? ' [specify]' : '')).join('\n') : '';
+    const m = openModal(`<form id="qef"><h2>${x ? 'Edit the question' : 'Add a question'}</h2>${x && x.answers ? `<p class="small muted" style="margin-top:0">${x.answers} answer${x.answers === 1 ? '' : 's'} so far.</p>` : ''}
+      <div class="grid-2" style="gap:12px"><div class="field"><label>Section</label><input name="section" list="qsecs" value="${esc(x ? x.section || '' : '')}"><datalist id="qsecs">${sections.map(v => `<option value="${esc(v)}">`).join('')}</datalist></div>
+        <div class="field"><label>Kind</label><select name="kind">${[['single', 'Choose one answer'], ['multi', 'Choose several'], ['allocation', 'Share out a sum of money'], ['text', 'Comments']].map(([k, l]) => `<option value="${k}" ${x && x.kind === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div></div>
+      <div class="field"><label>Question</label><textarea name="text" rows="2" required>${esc(x ? x.text : '')}</textarea></div>
+      <div class="field"><label>Help (optional)</label><input name="help" value="${esc(x ? x.help || '' : '')}"></div>
+      <div class="field" id="qopts"><label>Options, one per line</label><textarea name="options" rows="6">${esc(optText)}</textarea><p class="tiny muted" style="margin:4px 0 0">Add [amount] after an option for a box for an amount, or [specify] for a box for words.</p></div>
+      <div class="grid-2" style="gap:12px"><div class="field" id="qmax"><label>Choose up to</label><input name="max" type="number" min="1" value="${x && x.max || 3}"></div><div class="field" id="qtot"><label>Sum to share out (£)</label><input name="total" type="number" min="1" value="${x && x.total || 20000}"></div></div>
+      <div class="field"><label>Asked of</label><div class="row" style="gap:16px">${GENS.map(g => `<label class="row" style="gap:6px"><input type="checkbox" name="versions" value="${g}" ${!x || x.versions.includes(g) ? 'checked' : ''}>${genDot(g)}${GEN_NAME[g]}</label>`).join('')}</div></div>
+      ${x ? `<label class="check"><input type="checkbox" name="active" ${x.active ? 'checked' : ''}><span><b>In use</b>Switch off to stop asking it; its answers stay.</span></label>` : ''}
+      <div class="row between" style="gap:8px;margin-top:12px">${x ? '<button type="button" class="btn sm danger" id="qdel">Delete</button>' : '<span></span>'}<span class="row" style="gap:8px"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">${x ? 'Save' : 'Add'}</button></span></div></form>`, true);
+    const f = $('#qef', m), sync = () => { const k = f.kind.value; $('#qopts', m).style.display = k === 'text' ? 'none' : ''; $('#qmax', m).style.display = k === 'multi' ? '' : 'none'; $('#qtot', m).style.display = k === 'allocation' ? '' : 'none'; };
+    f.kind.onchange = sync; sync();
+    f.onsubmit = guard(async e => { e.preventDefault(); const v = formData(f); v.versions = [...f.querySelectorAll('[name=versions]:checked')].map(i => i.value); if (x) v.active = f.active.checked;
+      await api(x ? `/admin/survey/questions/${x.id}` : '/admin/survey/questions', { method: x ? 'PUT' : 'POST', body: v }); closeOverlay(); toast('Saved'); reload(); });
+    const del = $('#qdel', m); if (del) del.onclick = guard(async () => { if (!confirm('Delete this question? If anyone has answered it, it’s switched off instead so the answers stay.')) return;
+      const r = await api('/admin/survey/questions/' + x.id, { method: 'DELETE' }); closeOverlay(); toast(r.switched_off ? 'Switched off (it has answers)' : 'Deleted'); reload(); }); };
+  $('[data-qadd]', main).onclick = edit(null);
+  main.querySelectorAll('[data-qedit]').forEach(b => b.onclick = edit(qs.find(x => x.id == b.dataset.qedit)));
 }
 
 // ------------------------------------------------------------ maintenance

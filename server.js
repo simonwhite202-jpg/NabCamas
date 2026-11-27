@@ -93,6 +93,12 @@ CREATE TABLE IF NOT EXISTS document_versions (id INTEGER PRIMARY KEY, slug TEXT 
 CREATE TABLE IF NOT EXISTS document_comments (id INTEGER PRIMARY KEY, slug TEXT NOT NULL, parent_id INTEGER, block_text TEXT, block_index INTEGER,
   kind TEXT NOT NULL DEFAULT 'comment' CHECK (kind IN ('comment','suggestion','reply')), text TEXT, suggestion TEXT, user_id INTEGER NOT NULL, family_id INTEGER,
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','accepted','declined','resolved')), resolved_by INTEGER, resolved_at TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+-- the questionnaire about NAB's future: its questions (versions = the generations each is asked of; options as JSON) and the
+-- responses (generation, family, name, and the answers as JSON keyed by question id). user_id when filled in while logged in.
+CREATE TABLE IF NOT EXISTS survey_questions (id INTEGER PRIMARY KEY, sort INTEGER NOT NULL DEFAULT 0, section TEXT, versions TEXT NOT NULL DEFAULT 'founder,second,third',
+  kind TEXT NOT NULL CHECK (kind IN ('single','multi','allocation','text')), text TEXT NOT NULL, help TEXT, options TEXT, max_choices INTEGER, total REAL, active INTEGER NOT NULL DEFAULT 1);
+CREATE TABLE IF NOT EXISTS survey_responses (id INTEGER PRIMARY KEY, generation TEXT NOT NULL CHECK (generation IN ('founder','second','third')), family_id INTEGER, family_other TEXT,
+  name TEXT NOT NULL, email TEXT, user_id INTEGER, answers TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT);
 -- a problem at the house, reported by anyone who logs in and kept up to date by the site admin. urgency: urgent (safety, or the
 -- house can't be used) | soon | whenever. status: open (reported) | in_hand | fixed | closed. photo = one picture, resized in the
 -- browser. A quote for the work is a cost (costs.issue_id).
@@ -203,6 +209,9 @@ const DEFAULT_SETTINGS = {
   members_first_days: '7', enquiry_hours: '48', hold_days: '3', reminder_weeks: '16,8', allow_member_account_charge: '1',
   // shares: the agreed price per share (a 52nd of the house's value), and how many days an offer stays open for interest
   share_price: '8650', share_offer_days: '28',
+  // the questionnaire on the sign-in page: open or closed, its title and introduction
+  survey_open: '1', survey_title: 'NAB: your house, your future',
+  survey_intro: 'As NAB moves towards another generation of family involvement, we’d like to understand how each generation would like to use and look after the house over the next 20 to 25 years. There are no proposed changes or decisions to be made: the questions are exploratory and don’t commit anyone to anything. Please feel free to talk them over with your family.',
   // creating a new year's weeks
   winter_changeover_day: '5', summer_changeover_day: '6', summer_changeover_from: '12', summer_changeover_to: '43', summer_months: '6,7,8', shoulder_months: '4,5,9,10',
   bank_name: 'Syndicate bank account', bank_account_name: 'Nab Camas Syndicate', bank_sort_code: '00-00-00', bank_account_no: '00000000', bank_iban: '',
@@ -1740,6 +1749,154 @@ route('PUT', '/api/manifesto', ({ user, body }) => {
 route('GET', '/api/manifesto/text', ({ user }) => { needAdmin(user); const d = getDoc(); return { body: d.body }; });
 route('GET', '/api/manifesto/versions', ({ user }) => { needAdmin(user); return q("SELECT v.id, v.body, v.edited_at, u.name edited_by FROM document_versions v LEFT JOIN users u ON u.id=v.edited_by WHERE v.slug='manifesto' ORDER BY v.id DESC LIMIT 30"); });
 
+// ---------------------------------------------------------------- the questionnaire
+// "NAB: your house, your future": filled in from the sign-in page without logging in (or from inside the portal). The first question
+// is which generation you are; founders, the second generation and the third each get their own set of questions, drawn from the
+// syndicate's two questionnaires ("Looking ahead to the next generation" for founders and shareholders, "Your house, your future"
+// for the next generation). A question can be in more than one set, so the answers can be compared across generations. The families
+// see the results on the Questionnaire page; the site admin edits the questions and sees each response.
+const GENERATIONS = { founder: 'Founder member', second: 'Second generation', third: 'Third generation' };
+const GEN_HELP = { founder: 'One of the original NAB families’ shareholders or directors', second: 'A son or daughter of a founder member', third: 'A grandchild of a founder member' };
+const opts = (...l) => l.map(x => typeof x === 'string' ? { label: x } : x);
+const ALLOCATION = opts('Heating and energy efficiency', 'Drainage and water management', 'Driveway and access', 'Interior decoration and furnishings', 'Kitchen and bathroom improvements', 'Sauna and hot tub', { label: 'Other improvements (please specify)', input: 'text' });
+// [section, versions, kind, question, options, extra]
+const SURVEY_SEED = [
+  ['Your future involvement', 'second,third', 'single', 'How important is it to you that NAB remains available to your family over the next 20 years?', opts('Very important', 'Quite important', 'Not particularly important', 'Unsure')],
+  ['Your future involvement', 'third', 'single', 'If you inherited or became responsible for your family’s existing NAB shares, would you want to retain them?', opts('Yes, all of them', 'Yes, but I might prefer fewer weeks', 'I would consider selling some or all of them', 'Unsure')],
+  ['Your future involvement', 'third', 'single', 'Would you be happy to contribute to the annual running costs through subscriptions?', opts('Yes, at approximately the current level, allowing for inflation', 'Yes, but I would prefer to reduce costs where possible', 'Only if I was using the house regularly', 'Probably not', 'Unsure')],
+  ['Your future involvement', 'second,third', 'single', 'How frequently do you imagine using NAB in the future?', opts('Several weeks every year', 'One or two weeks a year', 'Occasionally, but not every year', 'Rarely or never')],
+  ['Succession', 'founder,second', 'single', 'Do you believe the next generation of your family will want to retain its existing NAB shares and allocated weeks?', opts('Yes, probably all of them', 'Yes, but possibly fewer weeks', 'Uncertain', 'Probably not')],
+  ['Succession', 'founder,second', 'single', 'Do you believe the next generation will be happy to continue paying the annual subscriptions at approximately their current level, allowing for inflation?', opts('Yes', 'Yes, but they would prefer to reduce the cost where possible', 'Only if the house and facilities are improved', 'Uncertain', 'Probably not')],
+  ['Succession', 'founder,second', 'single', 'Do you anticipate any difficulties with passing ownership and responsibility to the next generation?', opts('No, succession is reasonably clear', 'Possibly, because several family members may inherit or share responsibility', 'Possibly, because some family members may not want to contribute financially', 'We haven’t discussed this yet')],
+  ['Weeks and flexibility', 'founder,second,third', 'single', 'Would you be interested in buying additional permanent weeks from another NAB family if they became available?', opts('Yes', 'Possibly, depending on price and season', 'No')],
+  ['Weeks and flexibility', 'third', 'single', 'Would you consider selling some of your family’s permanent weeks if you were not using them?', opts('Yes', 'Possibly, depending on their value', 'No', 'Unsure')],
+  ['Weeks and flexibility', 'founder,second', 'single', 'Would you support exploring a system where families could offer unused weeks to other NAB families for an agreed payment, rather than simply swapping or lending them?', opts('Yes, with different values for different weeks of the year', 'Yes, but with a common rate for all weeks', 'No, retain the existing informal arrangements', 'Unsure')],
+  ['Weeks and flexibility', 'founder,second', 'single', 'Would you support individual families being able to offer their unused weeks to a trusted network of previous guests, friends and extended family, with any payment going to the family offering the week?', opts('Yes', 'Yes, provided there are agreed rules and safeguards', 'No, I would prefer to keep use within the syndicate', 'Unsure')],
+  ['Weeks and flexibility', 'founder,second', 'single', 'If a trusted guest system were introduced, how should prices be determined?', opts('Each family sets its own price for its available weeks', 'NAB establishes suggested prices according to the season', 'NAB establishes fixed prices for all participating families', 'I would not support paid guest use')],
+  ['Weeks and flexibility', 'third', 'single', 'Would you prefer a more flexible system for using your weeks?', opts('Keep the current allocation and informal swapping arrangements', 'Allow paid exchanges of unused weeks between NAB families', 'Allow paid use of unused weeks by trusted friends and previous guests', 'A combination of these options')],
+  ['Weeks and flexibility', 'third', 'single', 'If you could receive payment from trusted guests for weeks you were not using, would this make you more inclined to retain your NAB shares?', opts('Yes, significantly', 'Possibly', 'It wouldn’t make much difference', 'No')],
+  ['Maintenance, improvements and funding', 'founder,second', 'single', 'Which approach to maintaining and improving the house would you prefer?', opts('Continue dealing with issues as they arise', 'Gradually increase subscriptions to build a reserve for future work', 'Make a one-off contribution to undertake a programme of improvements', 'Use income from unused weeks to help fund improvements', 'A combination of the above')],
+  ['Maintenance, improvements and funding', 'third', 'single', 'Which approach to improving the house would you favour?', opts('Keep costs low and repair things as necessary', 'Increase annual subscriptions slightly to fund gradual improvements', 'Make a one-off contribution for a significant programme of improvements', 'Use income from unused weeks to help fund improvements', 'A combination')],
+  ['Maintenance, improvements and funding', 'founder,second,third', 'allocation', 'If NAB had an extra £20,000 to spend on improvements, how would you allocate it?', ALLOCATION, { help: 'Share the £20,000 across these areas according to your priorities. You can put nothing against anything you think is unnecessary.', total: 20000 }],
+  ['Maintenance, improvements and funding', 'founder,second', 'single', 'How much would you be willing to contribute to see the changes you have specified?', opts({ label: 'An additional amount each year (£ thousand)', input: 'amount' }, { label: 'A lump sum (£ thousand)', input: 'amount' }, 'Just money from the yearly charge', 'I don’t want to spend additional money on improvements if possible')],
+  ['Maintenance, improvements and funding', 'third', 'single', 'Would you be willing to contribute to a one-off investment to improve the house?', opts('Yes', 'Possibly, depending on the amount', 'No, I would prefer gradual funding through subscriptions', 'Unsure')],
+  ['Maintenance, improvements and funding', 'founder,second', 'single', 'Over what timescale do you think any improvements should be undertaken?', opts('Within the next 1–2 years', 'Gradually over 3–5 years', 'Only when essential repairs become necessary', 'Dependent on the cost and funding available')],
+  ['Looking ahead', 'third', 'multi', 'What would make you more likely to continue your involvement in NAB?', opts('Lower annual subscriptions', 'Greater flexibility over weeks', 'Ability to earn money from unused weeks', 'Improved heating and comfort', 'Better facilities and furnishings', 'More transparent management and booking arrangements', 'More opportunities to use the house with friends and extended family', 'Keeping NAB largely as it is'), { help: 'Choose up to three.', max: 3 }],
+  ['Looking ahead', 'second,third', 'single', 'Would you be interested in helping with the future management of NAB?', opts('Yes, actively', 'Occasionally, for particular tasks', 'Prefer not to', 'Unsure')],
+  ['Looking ahead', 'founder,second', 'text', 'Are there any other issues you believe NAB should consider as ownership and responsibility pass to future generations?'],
+  ['Looking ahead', 'third', 'text', 'Is there anything else you would like NAB to consider for the future?'],
+];
+if (!q1('SELECT 1 FROM survey_questions')) tx(() => SURVEY_SEED.forEach(([section, versions, kind, text, options, x = {}], k) =>
+  run('INSERT INTO survey_questions (sort,section,versions,kind,text,help,options,max_choices,total) VALUES (?,?,?,?,?,?,?,?,?)', (k + 1) * 10, section, versions, kind, text, x.help || null, options ? JSON.stringify(options) : null, x.max || null, x.total || null)));
+const surveyQ = r => ({ id: r.id, sort: r.sort, section: r.section, versions: r.versions.split(',').filter(v => GENERATIONS[v]), kind: r.kind, text: r.text, help: r.help, options: JSON.parse(r.options || '[]'), max: r.max_choices, total: r.total, active: !!r.active });
+const surveyQuestions = (all = false) => q(`SELECT * FROM survey_questions ${all ? '' : 'WHERE active=1'} ORDER BY sort, id`).map(surveyQ);
+const surveyRate = new Map();   // submissions per address in the last hour (the form is public)
+const familyLabel = r => r.family_id ? famName(r.family_id) : r.family_other ? `${r.family_other} (not listed)` : 'Not given';
+// a response's answers, checked against the questions in its generation's set
+function cleanAnswers(gen, raw) {
+  const out = {};
+  for (const qn of surveyQuestions().filter(x => x.versions.includes(gen))) {
+    const a = raw && raw[qn.id]; if (a == null || a === '') continue;
+    if (qn.kind === 'single') { const c = Number(a.choice); if (!Number.isInteger(c) || !qn.options[c]) continue; const o = { choice: c };
+      if (qn.options[c].input === 'amount' && a.input !== '' && a.input != null) { const n = Number(a.input); if (!isNaN(n) && n >= 0) o.input = round2(n); }
+      if (qn.options[c].input === 'text' && a.input) o.input = String(a.input).slice(0, 300); out[qn.id] = o; }
+    else if (qn.kind === 'multi') { const cs = [...new Set((a.choices || []).map(Number))].filter(c => Number.isInteger(c) && qn.options[c]);
+      if (qn.max && cs.length > qn.max) fail(400, `Choose up to ${qn.max} for “${qn.text}”`); if (cs.length) out[qn.id] = { choices: cs.sort((x, y) => x - y) }; }
+    else if (qn.kind === 'allocation') { const am = qn.options.map((_, k) => { const n = Number((a.amounts || [])[k]) || 0; if (n < 0) fail(400, 'Amounts can’t be negative'); return round2(n); });
+      const t = am.reduce((x, y) => x + y, 0); if (!t) continue;
+      if (qn.total && Math.abs(t - qn.total) > 0.5) fail(400, `The £${qn.total.toLocaleString('en-GB')} for improvements adds up to £${t.toLocaleString('en-GB')}: share out exactly £${qn.total.toLocaleString('en-GB')}, or leave it all blank`);
+      out[qn.id] = { amounts: am, ...(a.other ? { other: String(a.other).slice(0, 300) } : {}) }; }
+    else if (qn.kind === 'text') { const t = String(a.text || '').trim().slice(0, 5000); if (t) out[qn.id] = { text: t }; }
+  }
+  return out;
+}
+// public: the questions, the families to choose from, and (logged in) your own earlier answers
+route('GET', '/api/survey', ({ user }) => {
+  const s = settings(), mine = user ? q1('SELECT * FROM survey_responses WHERE user_id=?', user.id) : null;
+  return { open: s.survey_open !== '0', title: s.survey_title, intro: s.survey_intro, generations: Object.entries(GENERATIONS).map(([key, label]) => ({ key, label, help: GEN_HELP[key] })),
+    families: q('SELECT id, name FROM families WHERE active=1 ORDER BY name'), questions: surveyQuestions(),
+    me: user ? { name: user.name, email: user.email, family_id: isFamily(user) ? user.family_id : null, logged_in: true } : null,
+    mine: mine ? { generation: mine.generation, family_id: mine.family_id, family_other: mine.family_other, name: mine.name, email: mine.email, answers: JSON.parse(mine.answers), at: mine.updated_at || mine.created_at } : null };
+});
+route('POST', '/api/survey', ({ user, body, req }) => {
+  const s = settings(); if (s.survey_open === '0') fail(400, 'The questionnaire is closed');
+  if (body.website) return { ok: true };   // a box only robots fill in
+  const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim(), now = Date.now(), hits = (surveyRate.get(ip) || []).filter(t => now - t < 3600e3);
+  if (hits.length >= 20 && !user) fail(429, 'Too many questionnaires from here in the last hour. Please try again later.'); surveyRate.set(ip, [...hits, now]);
+  const gen = GENERATIONS[body.generation] ? body.generation : fail(400, 'Say which generation you are');
+  const name = String(body.name || '').trim().slice(0, 120); if (!name) fail(400, 'Enter your name');
+  const fam = body.family_id && body.family_id !== 'other' ? (q1('SELECT id FROM families WHERE id=? AND active=1', body.family_id) || fail(400, 'Choose your family')).id : null;
+  const other = fam ? null : String(body.family_other || '').trim().slice(0, 120) || null; if (!fam && !other) fail(400, 'Choose your family, or type its name');
+  const email = String(body.email || '').trim().slice(0, 200) || null, answers = JSON.stringify(cleanAnswers(gen, body.answers || {}));
+  const was = user ? q1('SELECT id FROM survey_responses WHERE user_id=?', user.id) : null;
+  if (was) run("UPDATE survey_responses SET generation=?, family_id=?, family_other=?, name=?, email=?, answers=?, updated_at=datetime('now') WHERE id=?", gen, fam, other, name, email, answers, was.id);
+  else run('INSERT INTO survey_responses (generation,family_id,family_other,name,email,user_id,answers) VALUES (?,?,?,?,?,?,?)', gen, fam, other, name, email, user ? user.id : null, answers);
+  return { ok: true, updated: !!was };
+});
+// the results for the families: who has answered (by family and generation) and a summary of each question; names stay with the site admin
+route('GET', '/api/survey/results', ({ user, query }) => {
+  need(user, user && (isFamily(user) || user.is_site_admin), 'The results are for the syndicate families');
+  const all = q('SELECT * FROM survey_responses ORDER BY created_at').map(r => ({ ...r, a: JSON.parse(r.answers) }));
+  const gens = Object.keys(GENERATIONS), byGen = Object.fromEntries(gens.map(g => [g, all.filter(r => r.generation === g).length]));
+  const fams = q('SELECT id, name FROM families WHERE active=1 ORDER BY name').map(f => ({ name: f.name, ...Object.fromEntries(gens.map(g => [g, all.filter(r => r.family_id === f.id && r.generation === g).length])), total: all.filter(r => r.family_id === f.id).length }));
+  const others = all.filter(r => !r.family_id); if (others.length) fams.push({ name: 'Other or not listed', ...Object.fromEntries(gens.map(g => [g, others.filter(r => r.generation === g).length])), total: others.length });
+  const gf = GENERATIONS[query.generation] ? query.generation : null, ff = query.family ? Number(query.family) : null;
+  const rs = all.filter(r => (!gf || r.generation === gf) && (!ff || r.family_id === ff));
+  const questions = surveyQuestions().filter(x => !gf || x.versions.includes(gf)).map(qn => {
+    const mine = rs.filter(r => qn.versions.includes(r.generation)), ans = mine.filter(r => r.a[qn.id]), base = { id: qn.id, section: qn.section, text: qn.text, kind: qn.kind, versions: qn.versions, help: qn.help, asked: mine.length, n: ans.length };
+    const per = g => ans.filter(r => r.generation === g);
+    if (qn.kind === 'single' || qn.kind === 'multi') return { ...base, max: qn.max, options: qn.options.map((o, k) => { const hit = r => qn.kind === 'single' ? r.a[qn.id].choice === k : r.a[qn.id].choices.includes(k);
+      const amounts = o.input === 'amount' ? ans.filter(hit).map(r => r.a[qn.id].input).filter(v => v != null) : [];
+      return { label: o.label, count: ans.filter(hit).length, by: Object.fromEntries(gens.map(g => [g, per(g).filter(hit).length])), ...(amounts.length ? { amount_avg: round2(amounts.reduce((x, y) => x + y, 0) / amounts.length), amount_n: amounts.length } : {}) }; }) };
+    if (qn.kind === 'allocation') return { ...base, total: qn.total, options: qn.options.map((o, k) => ({ label: o.label, avg: ans.length ? round2(ans.reduce((x, r) => x + (r.a[qn.id].amounts[k] || 0), 0) / ans.length) : 0,
+      by: Object.fromEntries(gens.map(g => [g, per(g).length ? round2(per(g).reduce((x, r) => x + (r.a[qn.id].amounts[k] || 0), 0) / per(g).length) : null])) })),
+      other: ans.filter(r => r.a[qn.id].other).map(r => ({ text: r.a[qn.id].other, family: familyLabel(r), generation: GENERATIONS[r.generation] })) };
+    return { ...base, comments: ans.map(r => ({ text: r.a[qn.id].text, family: familyLabel(r), generation: GENERATIONS[r.generation], at: r.updated_at || r.created_at })).reverse() };
+  });
+  return { total: all.length, by_generation: byGen, families: fams, filtered: rs.length, generations: Object.entries(GENERATIONS).map(([key, label]) => ({ key, label })), questions,
+    family_list: q('SELECT id, name FROM families WHERE active=1 ORDER BY name'), open: settings().survey_open !== '0', last: all.length ? all[all.length - 1].created_at : null };
+});
+// the site admin: each response, and the questions
+route('GET', '/api/admin/survey/responses', ({ user }) => {
+  needAdmin(user); const qs = Object.fromEntries(surveyQuestions(true).map(x => [x.id, x]));
+  return q('SELECT * FROM survey_responses ORDER BY created_at DESC, id DESC').map(r => ({ id: r.id, name: r.name, email: r.email, family: familyLabel(r), generation: GENERATIONS[r.generation], at: r.updated_at || r.created_at, by_login: !!r.user_id,
+    answers: Object.entries(JSON.parse(r.answers)).map(([id, a]) => { const qn = qs[id]; if (!qn) return null;
+      const text = qn.kind === 'single' ? `${qn.options[a.choice]?.label || '?'}${a.input != null ? `: ${a.input}` : ''}` : qn.kind === 'multi' ? a.choices.map(c => qn.options[c]?.label).join('; ')
+        : qn.kind === 'allocation' ? qn.options.map((o, k) => a.amounts[k] ? `${o.label} £${a.amounts[k].toLocaleString('en-GB')}` : null).filter(Boolean).join('; ') + (a.other ? ` (other: ${a.other})` : '') : a.text;
+      return { question: qn.text, answer: text }; }).filter(Boolean) }));
+});
+route('DELETE', '/api/admin/survey/responses/:id', ({ user, params }) => { needAdmin(user); run('DELETE FROM survey_responses WHERE id=?', params.id); audit(user.id, 'survey.delete_response', { id: params.id }); return { ok: true }; });
+route('GET', '/api/admin/survey/questions', ({ user }) => {
+  needAdmin(user); const counts = {}; for (const r of q('SELECT answers FROM survey_responses')) for (const id of Object.keys(JSON.parse(r.answers))) counts[id] = (counts[id] || 0) + 1;
+  return surveyQuestions(true).map(x => ({ ...x, answers: counts[x.id] || 0 }));
+});
+// options are typed one per line; "[amount]" after one adds a box for an amount, "[specify]" a box for words
+const parseOptions = t => String(t || '').split('\n').map(l => l.trim()).filter(Boolean).slice(0, 20).map(l => { const m = /\s*\[(amount|specify)\]$/i.exec(l);
+  return m ? { label: l.slice(0, m.index).trim(), input: m[1].toLowerCase() === 'amount' ? 'amount' : 'text' } : { label: l }; });
+function saveQuestion(body, id) {
+  const kind = ['single', 'multi', 'allocation', 'text'].includes(body.kind) ? body.kind : fail(400, 'Choose the kind of question');
+  const text = String(body.text || '').trim().slice(0, 500); if (!text) fail(400, 'Write the question');
+  const versions = Object.keys(GENERATIONS).filter(g => [].concat(body.versions || []).includes(g)); if (!versions.length) fail(400, 'Choose at least one generation');
+  const options = kind === 'text' ? [] : parseOptions(body.options); if (kind !== 'text' && options.length < 2) fail(400, 'Give at least two options, one per line');
+  const v = [String(body.section || '').trim().slice(0, 120) || null, versions.join(','), kind, text, String(body.help || '').trim().slice(0, 500) || null, kind === 'text' ? null : JSON.stringify(options),
+    kind === 'multi' ? Math.max(1, Number(body.max) || options.length) : null, kind === 'allocation' ? Math.max(1, Number(body.total) || 20000) : null, body.active === false || body.active === 'false' ? 0 : 1];
+  if (id) run('UPDATE survey_questions SET section=?, versions=?, kind=?, text=?, help=?, options=?, max_choices=?, total=?, active=? WHERE id=?', ...v, id);
+  else run('INSERT INTO survey_questions (section,versions,kind,text,help,options,max_choices,total,active,sort) VALUES (?,?,?,?,?,?,?,?,?,?)', ...v, ((q1('SELECT MAX(sort) m FROM survey_questions') || {}).m || 0) + 10);
+}
+route('POST', '/api/admin/survey/questions', ({ user, body }) => { needAdmin(user); saveQuestion(body); audit(user.id, 'survey.question_add', { text: body.text }); return { ok: true }; });
+route('PUT', '/api/admin/survey/questions/:id', ({ user, params, body }) => { needAdmin(user); q1('SELECT 1 FROM survey_questions WHERE id=?', params.id) || fail(404, 'Not found'); saveQuestion(body, Number(params.id)); audit(user.id, 'survey.question_edit', { id: params.id }); return { ok: true }; });
+route('POST', '/api/admin/survey/questions/:id/move', ({ user, params, body }) => {
+  needAdmin(user); const list = q('SELECT id FROM survey_questions ORDER BY sort, id').map(r => r.id), k = list.indexOf(Number(params.id)), j = k + (body.dir === 'up' ? -1 : 1);
+  if (k < 0) fail(404, 'Not found'); if (j < 0 || j >= list.length) return { ok: true };
+  [list[k], list[j]] = [list[j], list[k]]; tx(() => list.forEach((id, n) => run('UPDATE survey_questions SET sort=? WHERE id=?', (n + 1) * 10, id))); return { ok: true };
+});
+// a question nobody has answered goes; one with answers is switched off instead, so its answers stay in the results' records
+route('DELETE', '/api/admin/survey/questions/:id', ({ user, params }) => {
+  needAdmin(user); const used = q('SELECT answers FROM survey_responses').some(r => params.id in JSON.parse(r.answers));
+  if (used) run('UPDATE survey_questions SET active=0 WHERE id=?', params.id); else run('DELETE FROM survey_questions WHERE id=?', params.id);
+  audit(user.id, 'survey.question_delete', { id: params.id, kept: used }); return { ok: true, switched_off: used };
+});
+
 // ---------------------------------------------------------------- maintenance
 // Anyone who logs in can report a problem at the house. Families see every report (so nothing is reported twice); trusted friends
 // see their own. The site admin keeps each one up to date. A quote for the work is a cost, waiting on the Service charge page.
@@ -1974,6 +2131,18 @@ const server = http.createServer(async (req, res) => {
     const g = currentUser(req) && q1('SELECT photo, photo_type FROM guides WHERE id=?', gp[1]);
     if (!g || !g.photo_type) { res.writeHead(404); return res.end(); }
     res.writeHead(200, { 'Content-Type': g.photo_type, 'Cache-Control': 'private, max-age=86400' }); return res.end(Buffer.from(g.photo));
+  }
+  if (url.pathname === '/api/admin/survey/export') {   // every response as a spreadsheet (CSV), one column per question
+    const u = currentUser(req); if (!u || !u.is_site_admin) { res.writeHead(403); return res.end('Site admin only'); }
+    const qs = surveyQuestions(true), cell = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const cols = qs.flatMap(x => x.kind === 'allocation' ? x.options.map(o => [x, o]) : [[x]]);
+    const head = ['Submitted', 'Name', 'Email', 'Family', 'Generation', ...cols.map(([x, o]) => o ? `${x.text} – ${o.label}` : x.text)];
+    const rows = q('SELECT * FROM survey_responses ORDER BY created_at').map(r => { const a = JSON.parse(r.answers);
+      return [r.updated_at || r.created_at, r.name, r.email, familyLabel(r), GENERATIONS[r.generation], ...cols.map(([x, o]) => { const v = a[x.id]; if (!v) return '';
+        if (x.kind === 'single') return `${x.options[v.choice]?.label || ''}${v.input != null ? `: ${v.input}` : ''}`; if (x.kind === 'multi') return v.choices.map(c => x.options[c]?.label).join('; ');
+        if (x.kind === 'allocation') { const k = x.options.indexOf(o); return `${v.amounts[k] || 0}${o.input === 'text' && v.other ? ` (${v.other})` : ''}`; } return v.text; })]; });
+    res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="nab-questionnaire-${today()}.csv"` });
+    return res.end('\ufeff' + [head, ...rows].map(r => r.map(cell).join(',')).join('\r\n'));
   }
   if (url.pathname === '/api/admin/backup') {   // a copy of the whole database, for the site admin to keep
     const u = currentUser(req); if (!u || !u.is_site_admin) { res.writeHead(403); return res.end('Site admin only'); }

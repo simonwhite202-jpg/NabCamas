@@ -81,9 +81,9 @@ Everyone lands on the **Overview** (Home), headed *Welcome to Camas*, with who's
 | Who | Navigation | Needs your attention shows |
 |---|---|---|
 | Trusted friend | Home, Available weeks, My bookings, Maintenance, House guide, My details | Bookings to pay for |
-| Family member | Home, Calendar, Enquiries, Bookings, Service charge, Upgrades, Maintenance, House guide, Family & friends | Bookings to pay for, and first refusals to take or pass |
+| Family member | Home, Calendar, Enquiries, Bookings, Service charge, Upgrades, Maintenance, House guide, Shares, Manifesto, Questionnaire, Family & friends | Bookings to pay for, and first refusals to take or pass |
 | Family admin | The same, plus Account | Also: inaccuracies reported in the house guide, enquiries to answer (release, using it or not sure yet), friends' booking enquiries, undecided weeks in the next 16 weeks, the balance to pay, and people who haven't set up their login |
-| Site admin | A separate login with no family: Home, Calendar, Upgrades, Maintenance, House guide, Payments, Service charge, Weeks, Lets, Families, Users, Settings, Activity | Syndicate jobs: maintenance issues open (urgent ones in red), house guide inaccuracies, costs waiting to be adopted, payments to confirm, families owing money, families with no admin, service charges not issued, let-income pots not shared out, next year's weeks not set up, demo logins still active, email not switched on, and storage problems. Home also shows balances, credits, the pot and recent activity. |
+| Site admin | A separate login with no family: Home, Calendar, Upgrades, Maintenance, House guide, Shares, Manifesto, Questionnaire, Payments, Service charge, Weeks, Lets, Families, Users, Settings, Activity | Syndicate jobs: maintenance issues open (urgent ones in red), house guide inaccuracies, costs waiting to be adopted, payments to confirm, families owing money, families with no admin, service charges not issued, let-income pots not shared out, next year's weeks not set up, demo logins still active, email not switched on, and storage problems. Home also shows balances, credits, the pot and recent activity. |
 
 The panels are:
 - **Coming up:** the family's next weeks, or a friend's bookings.
@@ -122,6 +122,14 @@ Opening a page you don't have access to takes you back to Home.
 | Add a guide | — | ✓ | ✓ | ✓ |
 | Edit a guide, mark reports as sorted | — | Their own guides | ✓ | ✓ |
 | Check in / Not in residence | — | During their family's week | During their family's week | — |
+| See the share register and shares for sale | — | ✓ | ✓ | ✓ |
+| Offer the family's shares for sale; register interest in another family's | — | — | ✓ | — |
+| Record a sale or a transfer of shares | — | — | — | ✓ |
+| Comment on the Manifesto, suggest wording, reply | — | ✓ | ✓ | ✓ |
+| Accept suggestions, edit the Manifesto's text | — | — | — | ✓ |
+| Fill in the questionnaire | No login needed: anyone with the link, from the sign-in page | ✓ | ✓ | ✓ |
+| See the questionnaire results (families and generations) | — | ✓ | ✓ | ✓ |
+| See each response and edit the questions | — | — | — | ✓ |
 
 ## Gaps in the brief and how they're handled
 
@@ -249,6 +257,33 @@ Opening a page you don't have access to takes you back to Home.
 - **Reporting an inaccuracy.** Anyone who can read a guide, trusted friends included, can **Report an inaccuracy**. The site admin and the guide's author are told, and every family admin's Overview lists it until it's sorted. On the guide, editors see the report with **Mark as sorted**; the person who reported it is thanked when it is.
 - **Start afresh** leaves the house guide alone: it's content, not test activity.
 
+**Shares**
+- **The share register** shows each family's shares for any year, and its share of the house. The agreed price per share is set in **Settings** (£8,650 to start with: a 52nd of about £450,000).
+- **Offering shares.** A family admin offers some of the family's shares to the other syndicate families: how many, an asking price per share (the agreed price unless they choose another), the year the sale would take effect from, and a closing date for interest (28 days by default, set in Settings). A family has one offer open at a time. The other families' admins and the site admin are told, and it's on each family admin's Overview.
+- **Interest.** Another family's admin registers how many shares the family would like, with a note, until the closing date; they can change it or withdraw it. Registering interest isn't a commitment. If more shares are wanted than offered, they're shared out in proportion to holdings (one share at a time to the family holding the most shares per share it would get, up to what each asked for).
+- **Recording the sale (site admin).** The sale itself is completed outside the portal, under the syndicate's articles and any shareholders' agreement. The site admin then records it: who gets how many (filled in from the proportions above, and changeable), the price per share and the year it takes effect. From that year, the shares move, so the weeks and the service charge follow them; earlier years stay as they were. If those years' charges are already issued, the site admin is offered a re-issue. Reallocate weeks on **Weeks** for any year that's already allocated. The site admin can instead **close the offer without a sale**, and the family can **withdraw** it while it's open.
+- **Transfers without an offer.** **Record a transfer…** moves shares between families from a year: a holding split between the next generation's households (add the new household on **Families** first), a gift, or a sale agreed another way. Every sale and transfer is listed under *Transfers recorded*.
+- The site admin's Overview lists offers that have closed for interest, so the sale can be recorded or the offer closed.
+
+**Manifesto**
+- **The page.** *Manifesto* holds the Nab Camas 2.0 proposal, "Nab Camas: making the most of our house", the syndicate paper. Its text is loaded from `content/manifesto.md` the first time the site starts; after that it lives in the database.
+- **Comments and suggestions.** Family members and admins (and the site admin) can comment on any heading, paragraph, point or table with the speech bubble beside it, or **suggest different wording** for it. Anyone can reply. Comments show under the part they're on; the bubble counts the open ones. **Comment on the whole manifesto** adds a general comment.
+- **The site admin** accepts a suggestion (its wording goes straight into the text and the comment stays with the new wording), declines it with an optional note, marks comments as resolved or reopens them, and can delete any comment. Whoever made a comment is told what happened to it; the site admin is told about new comments and replies.
+- **Editing the text (site admin).** **Edit the text…** opens the whole manifesto as Markdown (# headings, - points, **bold**, | tables). The text before each edit is kept, and **Earlier versions** loads one back. Comments stay with paragraphs whose wording doesn't change; comments on changed wording are kept under *On wording that has since changed*.
+- Trusted friends don't see it.
+
+**Questionnaire: "NAB: your house, your future"**
+- **No login needed.** The sign-in page has a card linking to the questionnaire (`/#/survey`), so anyone in the families can fill it in without a login. Logged-in people can fill it in from the Questionnaire page too: their name and family are filled in, and filling it in again replaces their earlier answers.
+- **Generation first.** The first question is which generation you are: founder member, second generation or third generation. Each then sees its own questions, drawn from the syndicate's two questionnaires:
+  - **Founders** (12 questions): the succession questionnaire for existing directors and shareholders.
+  - **Third generation** (14): the next-generation questionnaire.
+  - **Second generation** (15): the succession questions, plus how important NAB is to them, how often they'd use it, and whether they'd help manage it.
+  - Questions in more than one version are shared, so the answers can be compared across generations. The £20,000 improvements question is the same for all three, with every area from both questionnaires (including drainage, and sauna and hot tub). The founders' question about holding a separate next-generation questionnaire is left out, since this questionnaire now asks each generation.
+- **Answering.** Family (or a family not listed), name and optional email; then the questions, one card per section. "Choose up to three" stops at three; the £20,000 adds up as you go and must be shared out exactly (or left blank); an answer can carry an amount (e.g. a lump sum in £ thousands). Every question is optional. A hidden box catches robots, and one address can send at most 20 an hour.
+- **Results (families and the site admin).** The **Questionnaire** page shows how many have answered, by generation and by family, then a summary of every question: bars for the share who chose each answer (split by generation when all generations are shown), the average for each £20,000 area, the amounts given, and every comment with its family and generation. Names aren't shown to the families. Filter by generation and by family. **The numbers** under each question gives the figures as a table.
+- **The site admin** also sees **Responses** (name, email, family, generation and every answer, with **Delete** for duplicates or tests, and **Download as a spreadsheet**, one column per question) and **Questions**: open or close the questionnaire, edit its title and introduction, copy the link, and add, edit, reorder or remove questions and choose which generations each is asked of. A question with answers is switched off rather than deleted.
+- **Start afresh** leaves questionnaire responses and Manifesto comments alone; delete test responses on the Responses list.
+
 **Families and shares (site admin)**
 - Shares are set **per year**: pick the year at the top of **Families**, edit each family's shares for that year (one share = one week), then press **Save**. The shares must total **52**: a running total shows how far off you are. Save becomes clickable as soon as you change something, and if the total isn't 52 it says so and saves nothing. That year's service charges are charged per share, so changing 2026 never changes 2027. **Fill in from the {year} allocation** copies the week allocation into the boxes (nothing is saved until you press Save). Names and colours are saved with the same button. **Add family** starts a new family on 0 shares.
 - A year without its own figures uses the most recent figure set for this year or later.
@@ -267,7 +302,7 @@ Opening a page you don't have access to takes you back to Home.
 - **Payments to confirm** and **Top-ups expected** work as before.
 
 **Start afresh (Settings, site admin)**
-- **Check what would be removed** lists, from the live data, everything that will go: bookings and lets, enquiries and questions, upgrades and quotes, maintenance reports, top-ups, bank balances, notices and account lines, plus the weeks whose plans (and check-ins) reset to Undecided. The house guide is kept. **Every login is kept**, the demo logins (@example.com) included.
+- **Check what would be removed** lists, from the live data, everything that will go: bookings and lets, enquiries and questions, upgrades and quotes, share offers, maintenance reports, top-ups, bank balances, notices and account lines, plus the weeks whose plans (and check-ins) reset to Undecided. The house guide is kept. **Every login is kept**, the demo logins (@example.com) included.
 - **Download a backup first** saves a copy of the whole database.
 - **Remove it all** (type RESET) does it. Logins, families, who holds each week, budgets and settings are kept. Service charges are reissued from the budgets: **2026 marked paid in full**, **2027 left unpaid** (if there's no 2027 budget yet, add it and press *Issue charges*). The 2027 allocation goes back to draft. To get rid of a demo login later, open it under **Users** and press **Remove**.
 
@@ -287,7 +322,7 @@ Opening a page you don't have access to takes you back to Home.
   - **Green:** money arriving or accepting (Paid, Paid in full, Accept).
   - **Plain:** everything else.
   - **Red outline:** removing, cancelling or withdrawing.
-- **Shared pages:** Upgrades, Maintenance and House guide are the same pages for every role; what you can do on them depends on your role.
+- **Shared pages:** Upgrades, Maintenance, House guide, Shares, Manifesto and Questionnaire are the same pages for every role; what you can do on them depends on your role.
 - **Admin page titles** match the menu: Payments, Service charge, Weeks, Lets, Families, Users, Settings, Activity. Old links to `#/admin/budget`, `#/admin/expenditure`, `#/expenditure` and `#/admin/credits` still work.
 
 ## Clean-up (November 2026)

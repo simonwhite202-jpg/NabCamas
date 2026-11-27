@@ -390,3 +390,46 @@ ol.queue > li.done { opacity: .55; }
 .mreply { margin-top: 8px; padding-left: 10px; border-left: 2px solid var(--line); }
 .mquote { margin: 0 0 12px; padding: 8px 12px; border-left: 3px solid var(--line); color: var(--ink-2); }
 @media (max-width: 640px) { .manifesto { padding: var(--sp-4) var(--sp-2); } .mthreads { margin-right: 8px; } }
+
+/* the questionnaire: a page of its own (no login), one card per section */
+:root { --gen-founder: #257de0; --gen-second: #f47230; --gen-third: #00b894; }
+.survey-page { min-height: 100vh; background: var(--bg); }
+.survey-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px max(16px, calc((100vw - 860px) / 2)); background: var(--woodland); }
+.survey-head .wordmark { color: #fff; padding: 0; }
+.survey-main { max-width: 860px; margin: 0 auto; padding: var(--sp-6) 16px var(--sp-7); }
+.survey-main .lead { font-size: var(--fs-lg, 1.1rem); color: var(--ink-2); max-width: 70ch; }
+.sq { border: 0; padding: 0; margin: 0; min-width: 0; }
+.sq legend { font-weight: 600; padding: 0; margin-bottom: 6px; line-height: 1.45; }
+.sq .qnum { color: var(--ink-2); font-weight: 500; }
+.sopts { display: grid; gap: 6px; }
+.sopt { display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); cursor: pointer; }
+.sopt:has(input:checked) { border-color: var(--woodland); background: var(--st-yours-soft); }
+.sopt > input { margin-top: 3px; }
+.sopt > span { flex: 1; min-width: 200px; }
+.sopt .sinput { max-width: 140px; }
+.gens { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr)); gap: 8px; }
+.gen { display: flex; gap: 10px; align-items: flex-start; padding: 12px; border: 1px solid var(--line); border-radius: var(--r-md); cursor: pointer; background: var(--surface); }
+.gen:has(input:checked) { border-color: var(--woodland); background: var(--st-yours-soft); }
+.gen > span { display: flex; flex-direction: column; gap: 2px; }
+.alloc input { width: 100%; }
+.hp { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+.survey-cta { display: flex; flex-direction: column; gap: 6px; margin-top: var(--sp-6); text-decoration: none; color: inherit; border-color: var(--woodland); }
+.survey-cta:hover { background: var(--st-yours-soft); }
+
+/* questionnaire results: stat tiles, then one card per question with thin horizontal bars (square at the baseline, rounded at the end) */
+:root { --chart-single: var(--woodland); --chart-track: #EEF1EC; }
+.qstats { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr)); gap: 12px; margin-top: 4px; }
+.qstats .stat { display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; }
+.qstats .stat b { font-size: var(--fs-2xl); font-weight: 500; line-height: 1.1; }
+.gdot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: baseline; }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; margin: 6px 0; }
+.qcard { margin-bottom: 12px; }
+.qchart { display: grid; gap: 10px; }
+.qrow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 4px 16px; align-items: center; }
+.qbar { display: flex; align-items: center; gap: 10px; }
+.qtrack { flex: 1; display: flex; gap: 2px; height: 12px; background: var(--chart-track); border-radius: 0 4px 4px 0; overflow: hidden; }
+.qtrack .seg { height: 100%; min-width: 2px; }
+.qtrack .seg:last-child { border-radius: 0 4px 4px 0; }
+.qval { min-width: 64px; text-align: right; color: var(--ink); }
+.qquote { margin: 0; padding: 8px 12px; border-left: 3px solid var(--line); background: var(--surface-2); border-radius: 0 var(--r-sm) var(--r-sm) 0; white-space: pre-line; }
+@media (max-width: 640px) { .qrow { grid-template-columns: 1fr; } }
