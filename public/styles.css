@@ -462,3 +462,5 @@ ol.queue > li.done { opacity: .55; }
 .future { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: var(--sp-6); border-left: 4px solid var(--woodland); }
 @media (max-width: 640px) { .lf-compact input, .lf-compact .btn { width: 100%; } }
 .landing .survey-head { padding-left: max(16px, calc((100vw - 960px) / 2 + 16px)); padding-right: max(16px, calc((100vw - 960px) / 2 + 16px)); }
+.trading-cta { border-left: 4px solid var(--gen-second); padding: var(--sp-6); }
+.famtable th, .famtable td { white-space: nowrap; }

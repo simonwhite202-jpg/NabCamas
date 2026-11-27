@@ -94,12 +94,13 @@ CREATE TABLE IF NOT EXISTS document_versions (id INTEGER PRIMARY KEY, slug TEXT 
 CREATE TABLE IF NOT EXISTS document_comments (id INTEGER PRIMARY KEY, slug TEXT NOT NULL, parent_id INTEGER, block_text TEXT, block_index INTEGER,
   kind TEXT NOT NULL DEFAULT 'comment' CHECK (kind IN ('comment','suggestion','reply')), text TEXT, suggestion TEXT, user_id INTEGER NOT NULL, family_id INTEGER,
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','accepted','declined','resolved')), resolved_by INTEGER, resolved_at TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
--- the questionnaire about NAB's future: its questions (versions = the generations each is asked of; text = the plain wording in the
+-- the questionnaires (surveys: "future" on NAB's future, "trading" on how weeks are traded), each with its questions (versions = the generations each is asked of; text = the plain wording in the
 -- results, texts = its wording for each generation; options as JSON, each with a plain label and any per-generation wording) and the
 -- responses (generation, family, name, and the answers as JSON keyed by question id). user_id when filled in while logged in.
-CREATE TABLE IF NOT EXISTS survey_questions (id INTEGER PRIMARY KEY, sort INTEGER NOT NULL DEFAULT 0, section TEXT, versions TEXT NOT NULL DEFAULT 'founder,second,third',
-  kind TEXT NOT NULL CHECK (kind IN ('single','multi','allocation','text')), text TEXT NOT NULL, texts TEXT, help TEXT, options TEXT, max_choices INTEGER, total REAL, active INTEGER NOT NULL DEFAULT 1);
-CREATE TABLE IF NOT EXISTS survey_responses (id INTEGER PRIMARY KEY, generation TEXT NOT NULL CHECK (generation IN ('founder','second','third')), family_id INTEGER, family_other TEXT,
+CREATE TABLE IF NOT EXISTS surveys (slug TEXT PRIMARY KEY, title TEXT NOT NULL, intro TEXT, open INTEGER NOT NULL DEFAULT 1, sort INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS survey_questions (id INTEGER PRIMARY KEY, survey TEXT NOT NULL DEFAULT 'future', sort INTEGER NOT NULL DEFAULT 0, section TEXT, versions TEXT NOT NULL DEFAULT 'founder,second,third',
+  kind TEXT NOT NULL CHECK (kind IN ('single','multi','allocation','text')), text TEXT NOT NULL, texts TEXT, help TEXT, options TEXT, max_choices INTEGER, total REAL, unit TEXT, active INTEGER NOT NULL DEFAULT 1);
+CREATE TABLE IF NOT EXISTS survey_responses (id INTEGER PRIMARY KEY, survey TEXT NOT NULL DEFAULT 'future', generation TEXT NOT NULL CHECK (generation IN ('founder','second','third')), family_id INTEGER, family_other TEXT,
   name TEXT NOT NULL, email TEXT, user_id INTEGER, answers TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT);
 -- a problem at the house, reported by anyone who logs in and kept up to date by the site admin. urgency: urgent (safety, or the
 -- house can't be used) | soon | whenever. status: open (reported) | in_hand | fixed | closed. photo = one picture, resized in the
@@ -153,7 +154,7 @@ for (const [t, def] of [['weeks', 'end_date TEXT'], ['weeks', 'comment TEXT'], [
   ['weeks', "sale_to TEXT NOT NULL DEFAULT 'all'"], ['weeks', 'released_at TEXT'], ['weeks', 'enquiry_until TEXT'], ['weeks', 'reminded INTEGER NOT NULL DEFAULT 0'],
   ['weeks', 'residence TEXT'], ['weeks', 'residence_by INTEGER'], ['weeks', 'residence_at TEXT'],
   ['sessions', 'viewer_id INTEGER'], ['bookings', 'letting_cost REAL'], ['bookings', 'gift INTEGER'], ['budget_items', 'notes TEXT'], ["budget_items", "funding TEXT NOT NULL DEFAULT 'charge'"], ['ledger', 'entry_date TEXT'],
-  ['enquiries', 'reply TEXT'], ['enquiries', 'replied_at TEXT'], ['outgoing_proposals', 'funding TEXT'], ['outgoing_proposals', 'funding_detail TEXT'], ['survey_questions', 'texts TEXT'], ['document_comments', 'author TEXT']])
+  ['enquiries', 'reply TEXT'], ['enquiries', 'replied_at TEXT'], ['outgoing_proposals', 'funding TEXT'], ['outgoing_proposals', 'funding_detail TEXT'], ['survey_questions', 'texts TEXT'], ['document_comments', 'author TEXT'], ['survey_questions', "survey TEXT NOT NULL DEFAULT 'future'"], ['survey_questions', 'unit TEXT'], ['survey_responses', "survey TEXT NOT NULL DEFAULT 'future'"]])
   try { db.exec(`ALTER TABLE ${t} ADD COLUMN ${def}`); } catch { }
 db.exec("UPDATE users SET is_site_admin = CASE WHEN role='site_admin' THEN 1 ELSE 0 END WHERE is_site_admin <> (role='site_admin')");
 // One-off clean-up: retired features' tables, columns and settings go. They were in-year swaps, change requests, credits and
@@ -211,9 +212,6 @@ const DEFAULT_SETTINGS = {
   members_first_days: '7', enquiry_hours: '48', hold_days: '3', reminder_weeks: '16,8', allow_member_account_charge: '1',
   // shares: the agreed price per share (a 52nd of the house's value), and how many days an offer stays open for interest
   share_price: '8650', share_offer_days: '28',
-  // the questionnaire on the sign-in page: open or closed, its title and introduction
-  survey_open: '1', survey_title: 'NAB: your house, your future',
-  survey_intro: 'As NAB moves towards another generation of family involvement, we’d like to understand how each generation would like to use and look after the house over the next 20 to 25 years. There are no proposed changes or decisions to be made: the questions are exploratory and don’t commit anyone to anything. Please feel free to talk them over with your family.',
   // creating a new year's weeks
   winter_changeover_day: '5', summer_changeover_day: '6', summer_changeover_from: '12', summer_changeover_to: '43', summer_months: '6,7,8', shoulder_months: '4,5,9,10',
   bank_name: 'Syndicate bank account', bank_account_name: 'Nab Camas Syndicate', bank_sort_code: '00-00-00', bank_account_no: '00000000', bank_iban: '',
@@ -1854,24 +1852,83 @@ const SURVEY_SEED = [
 ];
 // the question set, loaded once (an earlier set is removed, or switched off if anyone has answered it, so those answers stay)
 if (!q1("SELECT 1 FROM settings WHERE key='survey_v2'")) tx(() => {
-  if (q1('SELECT 1 FROM survey_responses')) run('UPDATE survey_questions SET active=0'); else run('DELETE FROM survey_questions');
-  const base = ((q1('SELECT MAX(sort) m FROM survey_questions') || {}).m || 0);
-  SURVEY_SEED.forEach(([section, kind, text, texts, options, x = {}], k) => run('INSERT INTO survey_questions (sort,section,versions,kind,text,texts,help,options,max_choices,total) VALUES (?,?,?,?,?,?,?,?,?,?)',
+  if (q1('SELECT 1 FROM survey_responses')) run("UPDATE survey_questions SET active=0 WHERE survey='future'"); else run("DELETE FROM survey_questions WHERE survey='future'");
+  const base = ((q1("SELECT MAX(sort) m FROM survey_questions WHERE survey='future'") || {}).m || 0);
+  SURVEY_SEED.forEach(([section, kind, text, texts, options, x = {}], k) => run("INSERT INTO survey_questions (survey,sort,section,versions,kind,text,texts,help,options,max_choices,total) VALUES ('future',?,?,?,?,?,?,?,?,?,?)",
     base + (k + 1) * 10, section, Object.keys(texts).join(','), kind, text, JSON.stringify(texts), x.help || null, options ? JSON.stringify(options) : null, x.max || null, x.total || null));
   run("INSERT INTO settings (key,value) VALUES ('survey_v2','1')");
 });
+// The second questionnaire: how each family would like weeks to be traded. The same wording for every generation (the first
+// question is still which generation you are, so views can be compared); the results also show each family's answers.
+const all3 = t => ({ founder: t, second: t, third: t });
+const TRADING_SEED = [
+  ['What a share should mean', 'single', 'What a share should entitle a family to', all3('What should a share entitle your family to?'),
+    same('Particular weeks each year (as now)', 'A yearly budget of value (credits) to spend on any weeks', 'A mix: some fixed weeks, and credits for the rest', 'Unsure')],
+  ['What a share should mean', 'single', 'Keeping “our” weeks, or flexibility', all3('How much does your family value keeping “its” weeks, compared with being able to change them?'),
+    same('Keeping our usual weeks matters most', 'Both matter about equally', 'Flexibility matters most', 'Unsure')],
+  ['What a share should mean', 'single', 'The way of sharing and trading weeks', all3('Which way of sharing and trading weeks would your family prefer?'),
+    same('A: allocated weeks, traded for money (how the portal works now)', 'B: request weeks with credits each autumn; weeks nobody requests go into a pool', 'C: keep some “anchor” weeks, and request the rest with credits', 'D: allocate every week fairly by value, trade before sign-off, then use or release', 'Unsure'),
+    { help: 'The four are set out in “Nab Camas: four ways to share and trade our weeks”.' }],
+  ['Changing next year’s weeks', 'single', 'How families change next year’s weeks', all3('Before next year’s allocation is signed off, how should families change weeks with each other?'),
+    same('Ask the site admin, who decides (as now)', 'Swap directly with another family; the site admin records it', 'A trading window, where families swap and pay or receive the difference in value', 'Keep the allocation as it rolls forward, with no changes', 'Unsure')],
+  ['Changing next year’s weeks', 'single', 'Rotating peak weeks', all3('Should peak weeks rotate between families over the years?'),
+    same('Yes, the school-holiday weeks', 'Yes, all the peak weeks (school holidays and summer)', 'No, keep each family’s weeks as they are', 'Unsure')],
+  ['Changing next year’s weeks', 'single', 'School-holiday weeks for families with children', all3('Should families with school-age children get first call on school-holiday weeks?'), same('Yes', 'Yes, but only some of them', 'No', 'Unsure')],
+  ['Releasing and selling weeks', 'single', 'Who gets first chance at a released week', all3('When your family releases a week it won’t use, who should get the first chance to take it?'),
+    same('Families who enquired, then all members, then trusted friends (as now)', 'All members equally, then trusted friends', 'Members and trusted friends at the same time', 'Our family decides each time')],
+  ['Releasing and selling weeks', 'single', 'How long members get first chance', all3('How long should members get first chance before trusted friends can book a released week?'),
+    same('No members-only time', '48 hours', '72 hours', 'A week (like the “Members first” option now)', 'Unsure')],
+  ['Releasing and selling weeks', 'single', 'What members pay for a released week', all3('What should a member pay for another family’s released week?'),
+    same('The same as trusted friends (as now)', 'A discount on the friend price (e.g. three-quarters)', 'A set member price for each season', 'Whatever the releasing family asks')],
+  ['Releasing and selling weeks', 'single', 'Who sets the price of a released week', all3('Who should set the price of a released week?'), same('The releasing family', 'NAB, by season', 'NAB suggests a price, and the family can change it (as now)', 'Unsure')],
+  ['Releasing and selling weeks', 'single', 'Who receives the money when a week lets', all3('When a released week lets, who should receive the money?'),
+    same('The family whose week it was, less a letting cost (as now)', 'The syndicate, to lower everyone’s service charge', 'Split between the family and the syndicate', 'Unsure')],
+  ['Releasing and selling weeks', 'single', 'The letting cost for the maintenance fund', all3('How much of each let should go to the maintenance fund?'), same('Nothing', '£50', '£100 (as now)', 'A share of the price (e.g. 10%)', 'Unsure')],
+  ['Releasing and selling weeks', 'single', 'Letting undecided weeks to trusted friends', all3('Should a family be able to let an undecided week straight to a trusted friend who asks, ahead of other members?'),
+    same('Yes', 'Only close to the date (e.g. within eight weeks)', 'No: members should always come first', 'Unsure')],
+  ['Releasing and selling weeks', 'single', 'Part weeks', all3('Would your family release or book part weeks (three nights or more)?'), same('Yes, often', 'Occasionally', 'No', 'Unsure')],
+  ['Releasing and selling weeks', 'single', 'Refunds when a paid booking is cancelled', all3('If a paid booking is cancelled, what should the guest get back?'),
+    same('A full refund', 'A full refund only if the week is re-let', 'A refund less a fee', 'No refund close to the date', 'Unsure')],
+  ['Fairness and value', 'single', 'Peak weeks earning more', all3('Is it fair that families holding peak weeks earn more when they let them?'),
+    same('Yes, it evens out over time', 'Only if peak weeks rotate', 'No: balance it with payments between families', 'No: value weeks in credits so every share is worth the same', 'Unsure')],
+  ['Fairness and value', 'single', 'Credits that follow letting prices', all3('If week credits are used, should they follow letting prices, so a credit is worth the same in any season?'), same('Yes', 'No', 'Unsure')],
+  ['Fairness and value', 'single', 'Weeks nobody wanted', all3('Who should benefit from weeks nobody wanted?'), same('The families who gave up time', 'Every family, by shares', 'The maintenance fund', 'Unsure')],
+  ['Fairness and value', 'single', 'Unused credits at the end of the year', all3('If credits are used, what should happen to a family’s unused credits at the end of the year?'),
+    same('Carry forward in full', 'Carry forward, up to a limit', 'Turn into a share of income from the weeks nobody wanted', 'Lapse', 'Unsure')],
+  ['Your family’s plans', 'multi', 'What the family expects to do', all3('Over the next few years, does your family expect to…'),
+    same('Use all its weeks', 'Release some weeks most years', 'Buy extra weeks from other families', 'Swap weeks with other families', 'Sell some shares', 'Not sure yet'), { help: 'Choose all that apply.' }],
+  ['Your family’s plans', 'single', 'Weeks released in a typical year', all3('Roughly how many of your family’s weeks do you expect to release in a typical year?'), same('None', '1 or 2', '3 or 4', '5 or more', 'Unsure')],
+  ['Your family’s plans', 'allocation', 'What matters most in trading weeks', all3('Share 100 points between what matters most to your family in how weeks are traded.'),
+    same('Keeping our usual weeks', 'Being able to change weeks', 'Earning from weeks we don’t use', 'Fairness of value between families', 'Keeping it simple', 'Families before friends'),
+    { help: 'Give more points to what matters more. You can give nothing to anything that doesn’t matter to you.', total: 100, unit: 'points' }],
+  ['Your family’s plans', 'text', 'Anything else about trading weeks', all3('Is there anything else about how weeks should be traded that NAB should know?')],
+];
+const seedQuestions = (survey, list) => { const base = ((q1('SELECT MAX(sort) m FROM survey_questions WHERE survey=?', survey) || {}).m || 0);
+  list.forEach(([section, kind, text, texts, options, x = {}], k) => run('INSERT INTO survey_questions (survey,sort,section,versions,kind,text,texts,help,options,max_choices,total,unit) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+    survey, base + (k + 1) * 10, section, Object.keys(texts).join(','), kind, text, JSON.stringify(texts), x.help || null, options ? JSON.stringify(options) : null, x.max || null, x.total || null, x.unit || null)); };
+if (!q1("SELECT 1 FROM surveys WHERE slug='future'")) { const st = Object.fromEntries(q("SELECT key, value FROM settings WHERE key LIKE 'survey_%'").map(r => [r.key, r.value]));
+  run('INSERT INTO surveys (slug,title,intro,open,sort) VALUES (?,?,?,?,1)', 'future', st.survey_title || 'NAB: your house, your future',
+    st.survey_intro || 'As NAB moves towards another generation of family involvement, we’d like to understand how each generation would like to use and look after the house over the next 20 to 25 years. There are no proposed changes or decisions to be made: the questions are exploratory and don’t commit anyone to anything. Please feel free to talk them over with your family.', st.survey_open === '0' ? 0 : 1);
+  run("DELETE FROM settings WHERE key IN ('survey_title','survey_intro','survey_open')"); }
+if (!q1("SELECT 1 FROM surveys WHERE slug='trading'")) tx(() => {
+  run('INSERT INTO surveys (slug,title,intro,open,sort) VALUES (?,?,?,1,2)', 'trading', 'Trading weeks: how should it work?',
+    'The syndicate is deciding how weeks should change hands: before next year’s allocation is signed off, when a family releases a week, and what everyone pays and receives. Tell us how your family would like it to work. It doesn’t commit anyone to anything, and you can talk it over with your family first. If several of you answer, the results show each family’s views together.');
+  seedQuestions('trading', TRADING_SEED); });
 // a question: its wording for each generation it's asked of (older questions have one wording for all), and its options
 const surveyQ = r => { const versions = r.versions.split(',').filter(v => GENERATIONS[v]), t = JSON.parse(r.texts || 'null') || {};
   return { id: r.id, sort: r.sort, section: r.section, versions, kind: r.kind, text: r.text, texts: Object.fromEntries(versions.map(g => [g, t[g] || r.text])), help: r.help,
-    options: JSON.parse(r.options || '[]'), max: r.max_choices, total: r.total, active: !!r.active }; };
+    options: JSON.parse(r.options || '[]'), max: r.max_choices, total: r.total, unit: r.unit || null, active: !!r.active, survey: r.survey }; };
 const optLabel = (o, g) => (o && o.labels && o.labels[g]) || (o && o.label) || '?';
-const surveyQuestions = (all = false) => q(`SELECT * FROM survey_questions ${all ? '' : 'WHERE active=1'} ORDER BY sort, id`).map(surveyQ);
+const surveyQuestions = (slug, all = false) => q(`SELECT * FROM survey_questions WHERE survey=? ${all ? '' : 'AND active=1'} ORDER BY sort, id`, slug).map(surveyQ);
+const getSurvey = slug => q1('SELECT * FROM surveys WHERE slug=?', slug || 'future') || fail(404, 'That questionnaire doesn’t exist');
+const surveyList = () => q('SELECT slug, title, open FROM surveys ORDER BY sort, slug').map(r => ({ ...r, open: !!r.open }));
+const sumText = (n, qn) => qn.unit === 'points' ? `${n.toLocaleString('en-GB')} points` : `£${n.toLocaleString('en-GB')}`;
 const surveyRate = new Map();   // submissions per address in the last hour (the form is public)
 const familyLabel = r => r.family_id ? famName(r.family_id) : r.family_other ? `${r.family_other} (not listed)` : 'Not given';
 // a response's answers, checked against the questions in its generation's set
-function cleanAnswers(gen, raw) {
+function cleanAnswers(slug, gen, raw) {
   const out = {};
-  for (const qn of surveyQuestions().filter(x => x.versions.includes(gen))) {
+  for (const qn of surveyQuestions(slug).filter(x => x.versions.includes(gen))) {
     const a = raw && raw[qn.id]; if (a == null || a === '') continue;
     if (qn.kind === 'single') { const c = Number(a.choice); if (!Number.isInteger(c) || !qn.options[c]) continue; const o = { choice: c };
       if (qn.options[c].input === 'amount' && a.input !== '' && a.input != null) { const n = Number(a.input); if (!isNaN(n) && n >= 0) o.input = round2(n); }
@@ -1880,22 +1937,22 @@ function cleanAnswers(gen, raw) {
       if (qn.max && cs.length > qn.max) fail(400, `Choose up to ${qn.max} for “${qn.text}”`); if (cs.length) out[qn.id] = { choices: cs.sort((x, y) => x - y) }; }
     else if (qn.kind === 'allocation') { const am = qn.options.map((_, k) => { const n = Number((a.amounts || [])[k]) || 0; if (n < 0) fail(400, 'Amounts can’t be negative'); return round2(n); });
       const t = am.reduce((x, y) => x + y, 0); if (!t) continue;
-      if (qn.total && Math.abs(t - qn.total) > 0.5) fail(400, `The £${qn.total.toLocaleString('en-GB')} for improvements adds up to £${t.toLocaleString('en-GB')}: share out exactly £${qn.total.toLocaleString('en-GB')}, or leave it all blank`);
+      if (qn.total && Math.abs(t - qn.total) > 0.5) fail(400, `“${qn.text}” adds up to ${sumText(t, qn)}: share out exactly ${sumText(qn.total, qn)}, or leave it all blank`);
       out[qn.id] = { amounts: am, ...(a.other ? { other: String(a.other).slice(0, 300) } : {}) }; }
     else if (qn.kind === 'text') { const t = String(a.text || '').trim().slice(0, 5000); if (t) out[qn.id] = { text: t }; }
   }
   return out;
 }
 // public: the questions, the families to choose from, and (logged in) your own earlier answers
-route('GET', '/api/survey', ({ user }) => {
-  const s = settings(), mine = user ? q1('SELECT * FROM survey_responses WHERE user_id=?', user.id) : null;
-  return { open: s.survey_open !== '0', title: s.survey_title, intro: s.survey_intro, generations: Object.entries(GENERATIONS).map(([key, label]) => ({ key, label, help: GEN_HELP[key] })),
-    families: q('SELECT id, name FROM families WHERE active=1 ORDER BY name'), questions: surveyQuestions(),
+route('GET', '/api/survey', ({ user, query }) => {
+  const sv = getSurvey(query.s), mine = user ? q1('SELECT * FROM survey_responses WHERE user_id=? AND survey=?', user.id, sv.slug) : null;
+  return { slug: sv.slug, open: !!sv.open, title: sv.title, intro: sv.intro, surveys: surveyList(), generations: Object.entries(GENERATIONS).map(([key, label]) => ({ key, label, help: GEN_HELP[key] })),
+    families: q('SELECT id, name FROM families WHERE active=1 ORDER BY name'), questions: surveyQuestions(sv.slug),
     me: user ? { name: user.name, email: user.email, family_id: isFamily(user) ? user.family_id : null, logged_in: true } : null,
     mine: mine ? { generation: mine.generation, family_id: mine.family_id, family_other: mine.family_other, name: mine.name, email: mine.email, answers: JSON.parse(mine.answers), at: mine.updated_at || mine.created_at } : null };
 });
 route('POST', '/api/survey', ({ user, body, req }) => {
-  const s = settings(); if (s.survey_open === '0') fail(400, 'The questionnaire is closed');
+  const sv = getSurvey(body.survey); if (!sv.open) fail(400, 'The questionnaire is closed');
   if (body.website) return { ok: true };   // a box only robots fill in
   const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim(), now = Date.now(), hits = (surveyRate.get(ip) || []).filter(t => now - t < 3600e3);
   if (hits.length >= 20 && !user) fail(429, 'Too many questionnaires from here in the last hour. Please try again later.'); surveyRate.set(ip, [...hits, now]);
@@ -1903,33 +1960,37 @@ route('POST', '/api/survey', ({ user, body, req }) => {
   const name = String(body.name || '').trim().slice(0, 120); if (!name) fail(400, 'Enter your name');
   const fam = body.family_id && body.family_id !== 'other' ? (q1('SELECT id FROM families WHERE id=? AND active=1', body.family_id) || fail(400, 'Choose your family')).id : null;
   const other = fam ? null : String(body.family_other || '').trim().slice(0, 120) || null; if (!fam && !other) fail(400, 'Choose your family, or type its name');
-  const email = String(body.email || '').trim().slice(0, 200) || null, answers = JSON.stringify(cleanAnswers(gen, body.answers || {}));
-  const was = user ? q1('SELECT id FROM survey_responses WHERE user_id=?', user.id) : null;
+  const email = String(body.email || '').trim().slice(0, 200) || null, answers = JSON.stringify(cleanAnswers(sv.slug, gen, body.answers || {}));
+  const was = user ? q1('SELECT id FROM survey_responses WHERE user_id=? AND survey=?', user.id, sv.slug) : null;
   if (was) run("UPDATE survey_responses SET generation=?, family_id=?, family_other=?, name=?, email=?, answers=?, updated_at=datetime('now') WHERE id=?", gen, fam, other, name, email, answers, was.id);
-  else run('INSERT INTO survey_responses (generation,family_id,family_other,name,email,user_id,answers) VALUES (?,?,?,?,?,?,?)', gen, fam, other, name, email, user ? user.id : null, answers);
+  else run('INSERT INTO survey_responses (survey,generation,family_id,family_other,name,email,user_id,answers) VALUES (?,?,?,?,?,?,?,?)', sv.slug, gen, fam, other, name, email, user ? user.id : null, answers);
   return { ok: true, updated: !!was };
 });
 // the public home page: the questionnaire (how many have answered so far) and the manifesto (its summary and how many comments)
 route('GET', '/api/public', () => {
   const s = settings(), d = q1("SELECT * FROM documents WHERE slug='manifesto'"), blocks = d ? mdBlocks(d.body) : [];
   const k = blocks.findIndex(b => b.type === 'h2' && /summary/i.test(b.text)), summary = (blocks.slice(k + 1).find(b => b.type === 'p') || blocks.find(b => b.type === 'p') || {}).text || '';
-  const n = g => q1(`SELECT COUNT(*) n FROM survey_responses${g ? ' WHERE generation=?' : ''}`, ...(g ? [g] : [])).n;
-  return { site: s.site_name, place: s.place_line, hero: !!s.hero_version, survey: { open: s.survey_open !== '0', title: s.survey_title, intro: s.survey_intro, total: n(), by: Object.fromEntries(Object.keys(GENERATIONS).map(g => [g, n(g)])),
-      generations: Object.entries(GENERATIONS).map(([key, label]) => ({ key, label, help: GEN_HELP[key] })) },
+  const n = (slug, g) => q1(`SELECT COUNT(*) n FROM survey_responses WHERE survey=?${g ? ' AND generation=?' : ''}`, slug, ...(g ? [g] : [])).n;
+  return { site: s.site_name, place: s.place_line, hero: !!s.hero_version, generations: Object.entries(GENERATIONS).map(([key, label]) => ({ key, label, help: GEN_HELP[key] })),
+    surveys: q('SELECT * FROM surveys ORDER BY sort, slug').map(r => ({ slug: r.slug, title: r.title, intro: r.intro, open: !!r.open, total: n(r.slug), by: Object.fromEntries(Object.keys(GENERATIONS).map(g => [g, n(r.slug, g)])) })),
     manifesto: d ? { title: (blocks.find(b => b.type === 'h1') || {}).text || d.title, summary, comments: q1("SELECT COUNT(*) n FROM document_comments WHERE slug='manifesto'").n } : null };
 });
 // the results for the families: who has answered (by family and generation) and a summary of each question; names stay with the site admin
 route('GET', '/api/survey/results', ({ user, query }) => {
   need(user, user && (isFamily(user) || user.is_site_admin), 'The results are for the syndicate families');
-  const all = q('SELECT * FROM survey_responses ORDER BY created_at').map(r => ({ ...r, a: JSON.parse(r.answers) }));
+  const sv = getSurvey(query.s), all = q('SELECT * FROM survey_responses WHERE survey=? ORDER BY created_at', sv.slug).map(r => ({ ...r, a: JSON.parse(r.answers) }));
   const gens = Object.keys(GENERATIONS), byGen = Object.fromEntries(gens.map(g => [g, all.filter(r => r.generation === g).length]));
   const fams = q('SELECT id, name FROM families WHERE active=1 ORDER BY name').map(f => ({ name: f.name, ...Object.fromEntries(gens.map(g => [g, all.filter(r => r.family_id === f.id && r.generation === g).length])), total: all.filter(r => r.family_id === f.id).length }));
   const others = all.filter(r => !r.family_id); if (others.length) fams.push({ name: 'Other or not listed', ...Object.fromEntries(gens.map(g => [g, others.filter(r => r.generation === g).length])), total: others.length });
   const gf = GENERATIONS[query.generation] ? query.generation : null, ff = query.family ? Number(query.family) : null;
   const rs = all.filter(r => (!gf || r.generation === gf) && (!ff || r.family_id === ff));
-  const questions = surveyQuestions().filter(x => !gf || x.versions.includes(gf)).map(qn => {
-    const mine = rs.filter(r => qn.versions.includes(r.generation)), ans = mine.filter(r => r.a[qn.id]), base = { id: qn.id, section: qn.section, text: qn.text, texts: qn.texts, kind: qn.kind, versions: qn.versions, help: qn.help, asked: mine.length, n: ans.length };
+  const famsOf = ans => [...new Set(ans.map(familyLabel))].sort((x, y) => x.localeCompare(y)).map(name => ({ name, rs: ans.filter(r => familyLabel(r) === name) }));
+  const questions = surveyQuestions(sv.slug).filter(x => !gf || x.versions.includes(gf)).map(qn => {
+    const mine = rs.filter(r => qn.versions.includes(r.generation)), ans = mine.filter(r => r.a[qn.id]), base = { id: qn.id, section: qn.section, text: qn.text, texts: qn.texts, kind: qn.kind, versions: qn.versions, help: qn.help, unit: qn.unit, asked: mine.length, n: ans.length };
     const per = g => ans.filter(r => r.generation === g);
+    // each family's answers (how many of its people chose each option, or its average share-out)
+    if (qn.kind === 'single' || qn.kind === 'multi') base.by_family = famsOf(ans).map(f => ({ name: f.name, n: f.rs.length, counts: qn.options.map((_, k) => f.rs.filter(r => qn.kind === 'single' ? r.a[qn.id].choice === k : r.a[qn.id].choices.includes(k)).length) }));
+    if (qn.kind === 'allocation') base.by_family = famsOf(ans).map(f => ({ name: f.name, n: f.rs.length, avgs: qn.options.map((_, k) => round2(f.rs.reduce((x, r) => x + (r.a[qn.id].amounts[k] || 0), 0) / f.rs.length)) }));
     if (qn.kind === 'single' || qn.kind === 'multi') return { ...base, max: qn.max, options: qn.options.map((o, k) => { const hit = r => qn.kind === 'single' ? r.a[qn.id].choice === k : r.a[qn.id].choices.includes(k);
       const amounts = o.input === 'amount' ? ans.filter(hit).map(r => r.a[qn.id].input).filter(v => v != null) : [];
       return { label: o.label, labels: o.labels || null, count: ans.filter(hit).length, by: Object.fromEntries(gens.map(g => [g, per(g).filter(hit).length])), ...(amounts.length ? { amount_avg: round2(amounts.reduce((x, y) => x + y, 0) / amounts.length), amount_n: amounts.length } : {}) }; }) };
@@ -1939,21 +2000,21 @@ route('GET', '/api/survey/results', ({ user, query }) => {
     return { ...base, comments: ans.map(r => ({ text: r.a[qn.id].text, family: familyLabel(r), generation: GENERATIONS[r.generation], at: r.updated_at || r.created_at })).reverse() };
   });
   return { total: all.length, by_generation: byGen, families: fams, filtered: rs.length, generations: Object.entries(GENERATIONS).map(([key, label]) => ({ key, label })), questions,
-    family_list: q('SELECT id, name FROM families WHERE active=1 ORDER BY name'), open: settings().survey_open !== '0', last: all.length ? all[all.length - 1].created_at : null };
+    family_list: q('SELECT id, name FROM families WHERE active=1 ORDER BY name'), slug: sv.slug, title: sv.title, surveys: surveyList(), open: !!sv.open, last: all.length ? all[all.length - 1].created_at : null };
 });
 // the site admin: each response, and the questions
-route('GET', '/api/admin/survey/responses', ({ user }) => {
-  needAdmin(user); const qs = Object.fromEntries(surveyQuestions(true).map(x => [x.id, x]));
-  return q('SELECT * FROM survey_responses ORDER BY created_at DESC, id DESC').map(r => ({ id: r.id, name: r.name, email: r.email, family: familyLabel(r), generation: GENERATIONS[r.generation], at: r.updated_at || r.created_at, by_login: !!r.user_id,
+route('GET', '/api/admin/survey/responses', ({ user, query }) => {
+  needAdmin(user); const sv = getSurvey(query.s), qs = Object.fromEntries(surveyQuestions(sv.slug, true).map(x => [x.id, x]));
+  return q('SELECT * FROM survey_responses WHERE survey=? ORDER BY created_at DESC, id DESC', sv.slug).map(r => ({ id: r.id, name: r.name, email: r.email, family: familyLabel(r), generation: GENERATIONS[r.generation], at: r.updated_at || r.created_at, by_login: !!r.user_id,
     answers: Object.entries(JSON.parse(r.answers)).map(([id, a]) => { const qn = qs[id], g = r.generation; if (!qn) return null;
       const text = qn.kind === 'single' ? `${optLabel(qn.options[a.choice], g)}${a.input != null ? `: ${a.input}` : ''}` : qn.kind === 'multi' ? a.choices.map(c => optLabel(qn.options[c], g)).join('; ')
-        : qn.kind === 'allocation' ? qn.options.map((o, k) => a.amounts[k] ? `${o.label} £${a.amounts[k].toLocaleString('en-GB')}` : null).filter(Boolean).join('; ') + (a.other ? ` (other: ${a.other})` : '') : a.text;
+        : qn.kind === 'allocation' ? qn.options.map((o, k) => a.amounts[k] ? `${o.label} ${sumText(a.amounts[k], qn)}` : null).filter(Boolean).join('; ') + (a.other ? ` (other: ${a.other})` : '') : a.text;
       return { question: qn.texts[g] || qn.text, answer: text }; }).filter(Boolean) }));
 });
 route('DELETE', '/api/admin/survey/responses/:id', ({ user, params }) => { needAdmin(user); run('DELETE FROM survey_responses WHERE id=?', params.id); audit(user.id, 'survey.delete_response', { id: params.id }); return { ok: true }; });
-route('GET', '/api/admin/survey/questions', ({ user }) => {
-  needAdmin(user); const counts = {}; for (const r of q('SELECT answers FROM survey_responses')) for (const id of Object.keys(JSON.parse(r.answers))) counts[id] = (counts[id] || 0) + 1;
-  return surveyQuestions(true).map(x => ({ ...x, answers: counts[x.id] || 0 }));
+route('GET', '/api/admin/survey/questions', ({ user, query }) => {
+  needAdmin(user); const sv = getSurvey(query.s), counts = {}; for (const r of q('SELECT answers FROM survey_responses WHERE survey=?', sv.slug)) for (const id of Object.keys(JSON.parse(r.answers))) counts[id] = (counts[id] || 0) + 1;
+  return surveyQuestions(sv.slug, true).map(x => ({ ...x, answers: counts[x.id] || 0 }));
 });
 // a question as the site admin edits it: the plain wording shown in the results, a wording for each generation it's asked of, and
 // options (each with a plain label, its own wording for any generation, and an optional box for an amount or for words)
@@ -1968,17 +2029,26 @@ function saveQuestion(body, id) {
   if (kind !== 'text' && options.length < 2) fail(400, 'Give at least two options');
   const v = [String(body.section || '').trim().slice(0, 120) || null, Object.keys(texts).join(','), kind, text, JSON.stringify(texts), String(body.help || '').trim().slice(0, 500) || null, kind === 'text' ? null : JSON.stringify(options),
     kind === 'multi' ? Math.max(1, Number(body.max) || options.length) : null, kind === 'allocation' ? Math.max(1, Number(body.total) || 20000) : null, body.active === false || body.active === 'false' ? 0 : 1];
-  if (id) run('UPDATE survey_questions SET section=?, versions=?, kind=?, text=?, texts=?, help=?, options=?, max_choices=?, total=?, active=? WHERE id=?', ...v, id);
-  else run('INSERT INTO survey_questions (section,versions,kind,text,texts,help,options,max_choices,total,active,sort) VALUES (?,?,?,?,?,?,?,?,?,?,?)', ...v, ((q1('SELECT MAX(sort) m FROM survey_questions') || {}).m || 0) + 10);
+  const unit = kind === 'allocation' && body.unit === 'points' ? 'points' : null;
+  if (id) run('UPDATE survey_questions SET section=?, versions=?, kind=?, text=?, texts=?, help=?, options=?, max_choices=?, total=?, active=?, unit=? WHERE id=?', ...v, unit, id);
+  else { const slug = getSurvey(body.survey).slug;
+    run('INSERT INTO survey_questions (section,versions,kind,text,texts,help,options,max_choices,total,active,unit,survey,sort) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)', ...v, unit, slug, ((q1('SELECT MAX(sort) m FROM survey_questions WHERE survey=?', slug) || {}).m || 0) + 10); }
 }
 route('POST', '/api/admin/survey/questions', ({ user, body }) => { needAdmin(user); saveQuestion(body); audit(user.id, 'survey.question_add', { text: body.text }); return { ok: true }; });
 route('PUT', '/api/admin/survey/questions/:id', ({ user, params, body }) => { needAdmin(user); q1('SELECT 1 FROM survey_questions WHERE id=?', params.id) || fail(404, 'Not found'); saveQuestion(body, Number(params.id)); audit(user.id, 'survey.question_edit', { id: params.id }); return { ok: true }; });
 route('POST', '/api/admin/survey/questions/:id/move', ({ user, params, body }) => {
-  needAdmin(user); const list = q('SELECT id FROM survey_questions ORDER BY sort, id').map(r => r.id), k = list.indexOf(Number(params.id)), j = k + (body.dir === 'up' ? -1 : 1);
+  needAdmin(user); const qn = q1('SELECT survey FROM survey_questions WHERE id=?', params.id) || fail(404, 'Not found');
+  const list = q('SELECT id FROM survey_questions WHERE survey=? ORDER BY sort, id', qn.survey).map(r => r.id), k = list.indexOf(Number(params.id)), j = k + (body.dir === 'up' ? -1 : 1);
   if (k < 0) fail(404, 'Not found'); if (j < 0 || j >= list.length) return { ok: true };
   [list[k], list[j]] = [list[j], list[k]]; tx(() => list.forEach((id, n) => run('UPDATE survey_questions SET sort=? WHERE id=?', (n + 1) * 10, id))); return { ok: true };
 });
 // a question nobody has answered goes; one with answers is switched off instead, so its answers stay in the results' records
+// a questionnaire's title, introduction, and whether it's open
+route('PUT', '/api/admin/surveys/:slug', ({ user, params, body }) => {
+  needAdmin(user); const sv = getSurvey(params.slug), title = String(body.title ?? sv.title).trim().slice(0, 200) || sv.title;
+  run('UPDATE surveys SET title=?, intro=?, open=? WHERE slug=?', title, String(body.intro ?? sv.intro ?? '').trim().slice(0, 3000), body.open === undefined ? sv.open : body.open ? 1 : 0, sv.slug);
+  audit(user.id, 'survey.settings', { survey: sv.slug, open: body.open }); return { ok: true };
+});
 route('DELETE', '/api/admin/survey/questions/:id', ({ user, params }) => {
   needAdmin(user); const used = q('SELECT answers FROM survey_responses').some(r => params.id in JSON.parse(r.answers));
   if (used) run('UPDATE survey_questions SET active=0 WHERE id=?', params.id); else run('DELETE FROM survey_questions WHERE id=?', params.id);
@@ -2220,16 +2290,17 @@ const server = http.createServer(async (req, res) => {
     if (!g || !g.photo_type) { res.writeHead(404); return res.end(); }
     res.writeHead(200, { 'Content-Type': g.photo_type, 'Cache-Control': 'private, max-age=86400' }); return res.end(Buffer.from(g.photo));
   }
-  if (url.pathname === '/api/admin/survey/export') {   // every response as a spreadsheet (CSV), one column per question
+  if (url.pathname === '/api/admin/survey/export') {   // a questionnaire's responses as a spreadsheet (CSV), one column per question
     const u = currentUser(req); if (!u || !u.is_site_admin) { res.writeHead(403); return res.end('Site admin only'); }
-    const qs = surveyQuestions(true), cell = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const sv = q1('SELECT * FROM surveys WHERE slug=?', url.searchParams.get('s') || 'future'); if (!sv) { res.writeHead(404); return res.end('No such questionnaire'); }
+    const qs = surveyQuestions(sv.slug, true), cell = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
     const cols = qs.flatMap(x => x.kind === 'allocation' ? x.options.map(o => [x, o]) : [[x]]);
     const head = ['Submitted', 'Name', 'Email', 'Family', 'Generation', ...cols.map(([x, o]) => o ? `${x.text} – ${o.label}` : x.text)];
-    const rows = q('SELECT * FROM survey_responses ORDER BY created_at').map(r => { const a = JSON.parse(r.answers);
+    const rows = q('SELECT * FROM survey_responses WHERE survey=? ORDER BY created_at', sv.slug).map(r => { const a = JSON.parse(r.answers);
       return [r.updated_at || r.created_at, r.name, r.email, familyLabel(r), GENERATIONS[r.generation], ...cols.map(([x, o]) => { const v = a[x.id]; if (!v) return '';
         if (x.kind === 'single') return `${x.options[v.choice]?.label || ''}${v.input != null ? `: ${v.input}` : ''}`; if (x.kind === 'multi') return v.choices.map(c => x.options[c]?.label).join('; ');
         if (x.kind === 'allocation') { const k = x.options.indexOf(o); return `${v.amounts[k] || 0}${o.input === 'text' && v.other ? ` (${v.other})` : ''}`; } return v.text; })]; });
-    res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="nab-questionnaire-${today()}.csv"` });
+    res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="nab-${sv.slug}-questionnaire-${today()}.csv"` });
     return res.end('\ufeff' + [head, ...rows].map(r => r.map(cell).join(',')).join('\r\n'));
   }
   if (url.pathname === '/api/admin/backup') {   // a copy of the whole database, for the site admin to keep
