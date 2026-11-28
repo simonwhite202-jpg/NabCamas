@@ -297,7 +297,7 @@ async function viewHome(main) {
   if (h.admin_home) return adminHome(main, h, greet);
   const weekRow = (x, right) => `<button class="list-row" data-open-week="${x.week_id}" data-year="${x.year}"><span class="grow" style="min-width:0"><b>${esc(x.title)}</b><div class="tiny muted">${esc(x.detail || '')}</div></span>${right || ''}</button>`;
   const links = friend ? [['#/calendar', 'Browse available weeks'], ['#/bookings', 'My bookings'], ['#/guide', 'House guide'], ['#/maintenance', 'Report a maintenance issue'], ['#/people', 'Update my details']]
-    : [['#/calendar', 'Browse the calendar'], ['#/weeks', isFamAdmin() ? 'Set your household’s weeks' : 'Your household’s weeks'], ['#/enquiries', 'Enquiries'], ['#/upgrades', 'Suggest an upgrade'], ['#/maintenance', 'Report a maintenance issue'], ['#/guide', 'House guide'], ['#/people', isFamAdmin() ? 'Add family or friends' : 'Add a trusted friend'], ...(isFamAdmin() ? [['#/account', 'Household account']] : [])];
+    : [['#/calendar', 'Browse the calendar'], ['#/weeks', isFamAdmin() ? 'Set your household’s weeks' : 'Your household’s weeks'], ['#/enquiries', 'Enquiries'], ['#/upgrades', 'Suggest an upgrade'], ['#/maintenance', 'Report a maintenance issue'], ['#/maintenance/tasks', 'Regular tasks'], ['#/guide', 'House guide'], ['#/people', isFamAdmin() ? 'Add family or friends' : 'Add a trusted friend'], ...(isFamAdmin() ? [['#/account', 'Household account']] : [])];
   const f = h.family, c = f && f.lets;
   const going = h.upcoming.find(x => ['using', 'booked', 'reserved'].includes(x.plan)) || null;
   const upTag = x => x.plan === 'using' || x.plan === 'booked' ? '<span class="tag booked">Going</span>' : x.plan === 'reserved' ? '<span class="tag pending">Awaiting payment</span>' : x.plan === 'let' ? '<span class="tag booked">Let</span>' : x.plan === 'released' ? '<span class="tag available">Released</span>' : x.plan === 'swap' ? '<span class="tag outline">Will swap</span>' : '<span class="tag">Undecided</span>';
@@ -1474,14 +1474,18 @@ function issueCard(i, d) {
     ${q ? `<div class="small row" style="margin-top:8px;gap:6px">${icon('receipt')} Quote ${money(q.amount, 2)}${q.quote_from ? ` from ${esc(q.quote_from)}` : ''} <span class="badge ${q.tone}">${esc(q.label)}</span></div>` : ''}
     ${btns ? `<div class="row" style="margin-top:10px;gap:8px;flex-wrap:wrap">${btns}</div>` : ''}</div>`;
 }
+const maintTabs = (d, on) => d.can_tasks ? `<div class="seg mtabs" role="tablist" aria-label="Maintenance">${[['problems', 'Problems reported', d.issues.filter(i => i.status === 'open' || i.status === 'in_hand').length], ['tasks', 'Regular tasks', d.tasks.filter(t => t.active && t.state === 'due').length]]
+  .map(([k, l, n]) => `<button role="tab" data-mtab="${k}" class="${k === on ? 'on' : ''}" aria-selected="${k === on}">${l}${n ? ` <span class="badge ${k === 'tasks' ? 'amber' : ''}">${n}</span>` : ''}</button>`).join('')}</div>` : '';
 async function viewMaintenance(main) {
   const d = await api('/maintenance'), live = i => i.status === 'open' || i.status === 'in_hand', open = d.issues.filter(live), done = d.issues.filter(i => !live(i));
-  main.innerHTML = `<h1>Maintenance</h1><p class="muted" style="max-width:75ch">Report anything at the house that needs fixing or looking at: a leak, a broken appliance, a damp patch, a light that’s out. The site admin is told straight away and keeps each report up to date until it’s fixed. ${d.all_reports ? 'Everyone in the syndicate can see the reports, so check the list before reporting something again.' : 'You can see the reports you’ve made.'}</p>
+  const bindTabs = () => main.querySelectorAll('[data-mtab]').forEach(b => b.onclick = () => { location.hash = b.dataset.mtab === 'tasks' ? '#/maintenance/tasks' : '#/maintenance'; });
+  if (d.can_tasks && location.hash.startsWith('#/maintenance/tasks')) { viewTasks(main, d); bindTabs(); return; }
+  main.innerHTML = `<h1>Maintenance</h1>${maintTabs(d, 'problems')}<p class="muted" style="max-width:75ch">Report anything at the house that needs fixing or looking at: a leak, a broken appliance, a damp patch, a light that’s out. The site admin is told straight away and keeps each report up to date until it’s fixed. ${d.all_reports ? 'Everyone in the syndicate can see the reports, so check the list before reporting something again.' : 'You can see the reports you’ve made.'}</p>
     <div class="grid-2" style="align-items:start">
       <form class="card" id="mif"><h3>${icon('wrench')} Report an issue</h3>${issueFields(d)}<button class="btn primary">Report</button></form>
       <section class="stack"><h2 style="margin:0">Open issues</h2>${open.map(i => issueCard(i, d)).join('') || '<div class="card flat empty small">Nothing reported at the moment</div>'}
         ${done.length ? `<h2 style="margin:8px 0 0">Fixed and closed</h2>${done.map(i => issueCard(i, d)).join('')}` : ''}</section></div>`;
-  const reload = () => viewMaintenance(main), find = id => d.issues.find(i => i.id == id);
+  const reload = () => viewMaintenance(main), find = id => d.issues.find(i => i.id == id); bindTabs();
   $('#mif', main).onsubmit = guard(async e => { e.preventDefault(); const b = e.target.querySelector('button.primary'); b.disabled = true;
     try { await api('/maintenance', { body: await formWithPhoto(e.target) }); } finally { b.disabled = false; } toast('Reported. The site admin has been told'); reload(); });
   main.querySelectorAll('[data-iss-edit]').forEach(x => x.onclick = () => { const i = find(x.dataset.issEdit);
@@ -1503,6 +1507,77 @@ async function viewMaintenance(main) {
       <div class="field"><label>Details (optional)</label><textarea name="details" rows="3" placeholder="What it covers, how long the quote is valid…">${esc(c.details || '')}</textarea></div>
       <div class="row" style="justify-content:flex-end;gap:8px"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">${c.id ? 'Save' : 'Add quote'}</button></div></form>`);
     $('#miq', m).onsubmit = guard(async e => { e.preventDefault(); await api(`/maintenance/${i.id}/quote`, { body: formData(e.target) }); closeOverlay(); toast('Quote saved: waiting to be adopted'); reload(); }); });
+}
+
+// Regular tasks: jobs that need doing every few months. Whoever is at the house does any that are due and ticks them off;
+// the site admin keeps the list. Due first, then due within the month, then up to date.
+const TASK_SUGGESTIONS = [
+  ['Test the smoke and carbon monoxide alarms', 3, 'Safety (alarms, extinguishers)', '', 'Press the test button on each alarm. Replace the battery in any that are weak, and note it if you used the last spare.'],
+  ['Check the fire extinguishers and fire blanket', 12, 'Safety (alarms, extinguishers)', '', 'Check each gauge is in the green and nothing is damaged or missing.'],
+  ['Check and restock the first aid kit', 12, 'Safety (alarms, extinguishers)', '', 'Replace anything used or out of date.'],
+  ['Check the torches and spare batteries', 6, 'Safety (alarms, extinguishers)', '', ''],
+  ['Clean the cooker hood filters', 6, 'Kitchen', '', 'Soak the metal filters in hot soapy water, or put them through the dishwasher.'],
+  ['Clean the dishwasher filter', 3, 'Kitchen', '', 'Twist out the filter at the bottom, rinse it and put it back.'],
+  ['Clean the washing machine filter and drawer', 6, 'Kitchen', '', ''],
+  ['Descale the kettle and shower heads', 6, 'Bathrooms', '', ''],
+  ['Wash the duvets, pillows and mattress protectors', 6, 'Bedrooms', '', ''],
+  ['Bleed the radiators', 12, 'Heating and hot water', 'Autumn', 'Use the radiator key, with a cloth to catch drips, until water comes out instead of air.'],
+  ['Clear the gutters and drains of leaves', 12, 'Outside, garden and drive', 'Late autumn', ''],
+  ['Drain and cover the outside taps', 12, 'Water and drainage', 'Before the frosts', ''],
+];
+const TASK_STATE = { due: ['amber', 'Due'], soon: ['', 'Due soon'], ok: ['green', 'Up to date'] };
+const isoToday = () => new Date().toLocaleDateString('en-CA');
+function taskCard(t, d) {
+  const last = t.history[0], [tone, label] = t.active ? TASK_STATE[t.state] : ['', 'Switched off'];
+  return `<div class="card flat task ${t.active ? 'task-' + t.state : ''}" data-task="${t.id}"><div class="row between" style="align-items:flex-start;gap:12px"><div style="min-width:0"><b>${esc(t.title)}</b>
+      <div class="row" style="gap:6px;margin-top:4px;flex-wrap:wrap"><span class="tag">${icon('repeat')}${esc(t.every)}</span>${t.best_time ? `<span class="tag">${icon('sun-medium')}${esc(t.best_time)}</span>` : ''}${t.area ? `<span class="tag outline">${esc(t.area)}</span>` : ''}</div></div>
+      <span class="badge ${tone}">${label}</span></div>
+    ${t.details ? `<p class="small" style="margin:8px 0 0;white-space:pre-line">${esc(t.details)}</p>` : ''}
+    <p class="tiny muted" style="margin:8px 0 0">${last ? `Last done ${dfmt(last.done_on, { day: 'numeric', month: 'short', year: 'numeric' })} by ${esc(last.by)}${last.family ? ` (${esc(last.family)})` : ''}` : 'Not done yet'}${t.active && t.next_due ? ` · next due ${t.state === 'due' ? 'now' : dfmt(t.next_due, { month: 'long', year: 'numeric' })}` : ''}</p>
+    ${last && last.note ? `<p class="small" style="margin:4px 0 0">“${esc(last.note)}”</p>` : ''}
+    <div class="row" style="gap:8px;margin-top:10px;flex-wrap:wrap">${t.active ? `<button class="btn sm ${t.state === 'due' ? 'primary' : ''}" data-tdone="${t.id}">${icon('check')}Mark as done…</button>` : ''}
+      ${d.can_manage_tasks ? `<button class="btn sm" data-tedit="${t.id}">Edit…</button>` : ''}</div>
+    ${t.history.length ? `<details class="small" style="margin-top:10px"><summary class="muted" style="cursor:pointer">History (${t.done_count})</summary><ul class="task-log">${t.history.map(l => `<li><span>${dfmt(l.done_on, { day: 'numeric', month: 'short', year: 'numeric' })} · ${esc(l.by)}${l.family ? ` (${esc(l.family)})` : ''}${l.note ? `: “${esc(l.note)}”` : ''}</span>${l.can_undo ? `<button class="btn sm" data-tundo="${l.id}">Undo</button>` : ''}</li>`).join('')}</ul></details>` : ''}</div>`;
+}
+function viewTasks(main, d) {
+  const act = d.tasks.filter(t => t.active), off = d.tasks.filter(t => !t.active), admin = d.can_manage_tasks;
+  const group = (st, h, note) => { const xs = act.filter(t => t.state === st); return xs.length ? `<section class="stack"><h2 style="margin:0">${h} <span class="muted small">${xs.length}</span></h2>${note ? `<p class="small muted" style="margin:-6px 0 0">${note}</p>` : ''}${xs.map(t => taskCard(t, d)).join('')}</section>` : ''; };
+  main.innerHTML = `<h1>Maintenance</h1>${maintTabs(d, 'tasks')}<p class="muted" style="max-width:75ch">Jobs that need doing at the house every few months. When you visit, look down the list, do any you can, and tick them off so the next family knows. If you find something that needs fixing, report it under Problems reported.</p>
+    ${admin ? pageBar('', `<button class="btn primary" data-tadd>${icon('plus')}Add a task…</button><button class="btn" data-tsuggest>${icon('list-checks')}Add common tasks…</button>`) : ''}
+    ${act.length ? `<div class="stack" style="gap:24px">${group('due', 'Due now', 'Never done, or due again.')}${group('soon', 'Due in the next month')}${group('ok', 'Up to date')}</div>`
+      : `<div class="card empty">${admin ? 'No regular tasks yet. Add the house’s regular jobs, or start with some common ones.' : 'No regular tasks yet. The site admin will add them.'}</div>`}
+    ${admin && off.length ? `<details style="margin-top:24px"><summary class="small muted" style="cursor:pointer">Switched off (${off.length})</summary><div class="stack" style="margin-top:8px">${off.map(t => taskCard(t, d)).join('')}</div></details>` : ''}`;
+  const reload = () => viewMaintenance(main), find = id => d.tasks.find(t => t.id == id);
+  main.querySelectorAll('[data-tdone]').forEach(x => x.onclick = () => { const t = find(x.dataset.tdone);
+    const m = openModal(`<form id="mtd"><h2>Mark as done</h2><p style="margin-top:0"><b>${esc(t.title)}</b> <span class="muted small">· ${esc(t.every)}</span></p>
+      <div class="field"><label>Done on</label><input name="done_on" type="date" required value="${isoToday()}" max="${isoToday()}"></div>
+      <div class="field"><label>Anything to note? (optional)</label><textarea name="note" rows="3" maxlength="1000" placeholder="e.g. Used the last spare battery: we need more"></textarea><p class="tiny muted" style="margin:4px 0 0">A note is shown with the task and sent to the site admin.</p></div>
+      <div class="row" style="justify-content:flex-end;gap:8px"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">${icon('check')}Done</button></div></form>`);
+    $('#mtd', m).onsubmit = guard(async e => { e.preventDefault(); const r = await api(`/maintenance/tasks/${t.id}/done`, { body: formData(e.target) }); closeOverlay();
+      toast(`Thank you. Next due ${dfmt(r.next_due, { month: 'long', year: 'numeric' })}`); reload(); }); });
+  main.querySelectorAll('[data-tundo]').forEach(x => x.onclick = guard(async () => { if (!confirm('Undo this tick? Use it if it was ticked by mistake.')) return; await api('/maintenance/tasks/log/' + x.dataset.tundo, { method: 'DELETE' }); toast('Undone'); reload(); }));
+  if (!admin) return;
+  const form = t => { const m = openModal(`<form id="mtf"><h2>${t ? 'Edit the task' : 'Add a regular task'}</h2>
+      <div class="field"><label>Task</label><input name="title" required maxlength="200" value="${esc(t ? t.title : '')}" placeholder="e.g. Bleed the radiators"></div>
+      <div class="grid-2" style="gap:12px"><div class="field"><label>How often</label><select name="every_months">${Object.entries(d.every).map(([k, l]) => `<option value="${k}" ${(t ? t.every_months : 12) == k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+        <div class="field"><label>Best time (optional)</label><input name="best_time" maxlength="80" value="${esc(t && t.best_time || '')}" placeholder="e.g. Autumn, before the frosts"></div></div>
+      <div class="field"><label>Area (optional)</label><select name="area"><option value="">–</option>${d.areas.map(a => `<option ${t && t.area === a ? 'selected' : ''}>${esc(a)}</option>`).join('')}</select></div>
+      <div class="field"><label>How to do it (optional)</label><textarea name="details" rows="4" placeholder="What to do, and where to find what’s needed">${esc(t && t.details || '')}</textarea></div>
+      ${t ? `<label class="check"><input type="checkbox" name="active" ${t.active ? 'checked' : ''}><span><b>In use</b>Switch off to stop asking for it; its history stays.</span></label>` : ''}
+      <div class="row between" style="gap:8px;margin-top:12px">${t ? `<button type="button" class="btn sm danger" id="mtdel">${t.done_count ? 'Switch off' : 'Delete'}</button>` : '<span></span>'}<span class="row" style="gap:8px"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">${t ? 'Save' : 'Add'}</button></span></div></form>`);
+    $('#mtf', m).onsubmit = guard(async e => { e.preventDefault(); const v = formData(e.target); if (t) v.active = e.target.active.checked;
+      await api(t ? '/maintenance/tasks/' + t.id : '/maintenance/tasks', { method: t ? 'PUT' : 'POST', body: v }); closeOverlay(); toast(t ? 'Saved' : 'Added'); reload(); });
+    const del = $('#mtdel', m); if (del) del.onclick = guard(async () => { if (!confirm(t.done_count ? 'Switch this task off? Its history stays.' : 'Delete this task?')) return;
+      const r = await api('/maintenance/tasks/' + t.id, { method: 'DELETE' }); closeOverlay(); toast(r.switched_off ? 'Switched off' : 'Deleted'); reload(); }); };
+  $('[data-tadd]', main).onclick = () => form(null);
+  main.querySelectorAll('[data-tedit]').forEach(x => x.onclick = () => form(find(x.dataset.tedit)));
+  $('[data-tsuggest]', main).onclick = () => { const have = new Set(d.tasks.map(t => t.title.toLowerCase())), list = TASK_SUGGESTIONS.filter(x => !have.has(x[0].toLowerCase()));
+    const m = openModal(`<form id="mts"><h2>Add common tasks</h2><p class="small muted" style="margin-top:0">Tick the ones that apply to the house. You can change how often, and add how to do each one, afterwards.</p>
+      ${list.length ? `<div class="stack" style="gap:6px">${list.map((x, k) => `<label class="check"><input type="checkbox" name="s${k}"><span><b>${esc(x[0])}</b>${esc(d.every[x[1]])}${x[3] ? ` · ${esc(x[3])}` : ''}</span></label>`).join('')}</div>` : '<p class="small">They’re all on the list already.</p>'}
+      <div class="row" style="justify-content:flex-end;gap:8px;margin-top:12px"><button type="button" class="btn" data-close>Cancel</button>${list.length ? '<button class="btn primary">Add the ticked tasks</button>' : ''}</div></form>`);
+    $('#mts', m).onsubmit = guard(async e => { e.preventDefault(); const pick = list.filter((_, k) => e.target['s' + k].checked); if (!pick.length) return toast('Tick at least one');
+      for (const [title, every_months, area, best_time, details] of pick) await api('/maintenance/tasks', { body: { title, every_months, area, best_time, details } });
+      closeOverlay(); toast(`${pick.length} task${pick.length > 1 ? 's' : ''} added`); reload(); }); };
 }
 
 // ------------------------------------------------------------ house guide

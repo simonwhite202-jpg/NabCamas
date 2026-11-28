@@ -115,6 +115,10 @@ CREATE TABLE IF NOT EXISTS poll_votes (poll_id INTEGER NOT NULL, family_id INTEG
 -- a problem at the house, reported by anyone who logs in and kept up to date by the site admin. urgency: urgent (safety, or the
 -- house can't be used) | soon | whenever. status: open (reported) | in_hand | fixed | closed. photo = one picture, resized in the
 -- browser. A quote for the work is a cost (costs.issue_id).
+CREATE TABLE IF NOT EXISTS maintenance_tasks (id INTEGER PRIMARY KEY, title TEXT NOT NULL, details TEXT, area TEXT, every_months INTEGER NOT NULL DEFAULT 12, best_time TEXT,
+  active INTEGER NOT NULL DEFAULT 1, created_by INTEGER, created_at TEXT DEFAULT CURRENT_TIMESTAMP, updated_at TEXT);
+CREATE TABLE IF NOT EXISTS maintenance_task_log (id INTEGER PRIMARY KEY, task_id INTEGER NOT NULL, user_id INTEGER NOT NULL, family_id INTEGER, done_on TEXT NOT NULL, note TEXT,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS maintenance_issues (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, family_id INTEGER, title TEXT NOT NULL, area TEXT,
   urgency TEXT NOT NULL DEFAULT 'soon' CHECK (urgency IN ('urgent','soon','whenever')), details TEXT, photo BLOB, photo_type TEXT,
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','in_hand','fixed','closed')), update_note TEXT, updated_by INTEGER, updated_at TEXT,
@@ -662,6 +666,8 @@ route('GET', '/api/home', ({ user }) => {
     for (const { year } of q('SELECT DISTINCT year FROM budget_items ORDER BY year')) { const b = budgetSummary(year); if (b.total && !b.generated) syndicate.push({ tone: 'action', title: `${b.label || year} service charges not issued yet`, detail: `Budget ${money(b.total)} at ${money(b.rate)} a share.`, link: '#/admin/overview', cta: 'Payments' }); }
     const issues = q("SELECT urgency FROM maintenance_issues WHERE status IN ('open','in_hand')"), urgent = issues.filter(i => i.urgency === 'urgent').length;
     if (issues.length) syndicate.push({ tone: urgent ? 'urgent' : 'action', title: `${issues.length} maintenance issue${issues.length > 1 ? 's' : ''} open${urgent ? `, ${urgent} urgent` : ''}`, detail: 'Reported by families and friends. Mark each one In hand, then Fixed, with a note for whoever reported it.', link: '#/maintenance', cta: 'Maintenance' });
+    const tdue = dueTasks();
+    if (tdue.length) syndicate.push({ tone: 'info', title: `${tdue.length} regular task${tdue.length > 1 ? 's' : ''} due at the house`, detail: `${tdue.slice(0, 3).map(t => t.title).join(' · ')}${tdue.length > 3 ? ' …' : ''}. Families tick them off on the Maintenance page when they visit.`, link: '#/maintenance/tasks', cta: 'Regular tasks' });
     const mc = q1("SELECT COUNT(*) n FROM document_comments WHERE parent_id IS NULL AND status='open'").n;
     if (mc) syndicate.push({ tone: 'info', title: `${mc} comment${mc > 1 ? 's and suggestions' : ' or suggestion'} open on the Manifesto`, detail: 'Reply, accept or decline suggestions, and mark comments as resolved.', link: '#/manifesto', cta: 'Manifesto' });
     const grs = q1("SELECT COUNT(*) n FROM guide_reports WHERE status='open'").n;
@@ -716,6 +722,8 @@ route('GET', '/api/home', ({ user }) => {
     return { admin_home: true, residence, attention: syndicate, balances: balances(), lets: { year, rows: c.rows, income: c.income }, activity, counts, notifications: notes,
       system: { database: DB_FILE, volume: VOLUME || null, on_railway: ON_RAILWAY, data_since: since, email: !!(process.env.RESEND_API_KEY && process.env.EMAIL_FROM) } };
   }
+  if (residence.now && residence.now.can_check_in) { const due = dueTasks();
+    if (due.length) attention.unshift({ tone: 'action', title: `While you’re at the house: ${due.length} regular task${due.length > 1 ? 's are' : ' is'} due`, detail: `${due.slice(0, 3).map(t => t.title).join(' · ')}${due.length > 3 ? ' …' : ''}. Do any you can, and tick them off so the next family knows.`, link: '#/maintenance/tasks', cta: 'See the tasks' }); }
   return { residence, attention, upcoming: [...trips, ...upcoming].sort((a, b) => a.start.localeCompare(b.start)).slice(0, 6), available, enquiries: myEnquiries, family, syndicate, notifications: notes,
     next_meeting: isFamily(user) ? (m => m ? { title: m.title, date: m.date, items: q1('SELECT COUNT(*) n FROM agenda_items WHERE meeting_id=?', m.id).n } : null)(nextMeeting()) : null,
     system: user.is_site_admin ? { database: DB_FILE, volume: VOLUME || null, on_railway: ON_RAILWAY, data_since: since, email: !!(process.env.RESEND_API_KEY && process.env.EMAIL_FROM) } : null };
@@ -2243,7 +2251,62 @@ route('GET', '/api/maintenance', ({ user }) => {
   need(user, true);
   const rows = q(`SELECT * FROM maintenance_issues WHERE (status IN ('open','in_hand') OR COALESCE(updated_at, created_at) >= date('now','-12 months'))
     ORDER BY status NOT IN ('open','in_hand'), CASE urgency WHEN 'urgent' THEN 0 WHEN 'soon' THEN 1 ELSE 2 END, created_at DESC, id DESC`).filter(i => canSeeIssue(user, i));
-  return { issues: rows.map(i => issueView(i, user)), areas: AREAS, urgency: URGENCY, statuses: ISSUE_STATUS, all_reports: isFamily(user) || !!user.is_site_admin };
+  const tasks = canDoTasks(user) ? q('SELECT * FROM maintenance_tasks ORDER BY title').map(t => taskView(t, user)) : null;
+  return { issues: rows.map(i => issueView(i, user)), areas: AREAS, urgency: URGENCY, statuses: ISSUE_STATUS, all_reports: isFamily(user) || !!user.is_site_admin,
+    tasks, every: TASK_EVERY, can_tasks: canDoTasks(user), can_manage_tasks: !!user.is_site_admin };
+});
+// ---- regular tasks: jobs to do every few months. Anyone in the families can tick one off when they visit; the site admin keeps the list.
+const TASK_EVERY = { 1: 'Every month', 3: 'Every 3 months', 6: 'Twice a year', 12: 'Once a year', 24: 'Every 2 years' };
+const canDoTasks = u => !!u && (isFamily(u) || !!u.is_site_admin);
+const addMonthsIso = (d, n) => { const x = new Date(d + 'T00:00:00Z'), day = x.getUTCDate(); x.setUTCDate(1); x.setUTCMonth(x.getUTCMonth() + n);
+  x.setUTCDate(Math.min(day, new Date(Date.UTC(x.getUTCFullYear(), x.getUTCMonth() + 1, 0)).getUTCDate())); return x.toISOString().slice(0, 10); };
+// due: never done, or its next date has come; soon: within 30 days
+function taskState(t) {
+  const last = q1('SELECT * FROM maintenance_task_log WHERE task_id=? ORDER BY done_on DESC, id DESC LIMIT 1', t.id), next = last ? addMonthsIso(last.done_on, t.every_months) : null;
+  return { last, next, state: !last || next <= today() ? 'due' : next <= addDaysIso(today(), 30) ? 'soon' : 'ok' };
+}
+const dueTasks = () => q('SELECT * FROM maintenance_tasks WHERE active=1 ORDER BY title').filter(t => taskState(t).state === 'due');
+function taskView(t, user) {
+  const st = taskState(t), log = q('SELECT * FROM maintenance_task_log WHERE task_id=? ORDER BY done_on DESC, id DESC LIMIT 8', t.id);
+  return { id: t.id, title: t.title, details: t.details, area: t.area, every_months: t.every_months, every: TASK_EVERY[t.every_months] || `Every ${t.every_months} months`, best_time: t.best_time,
+    active: !!t.active, state: st.state, next_due: st.next, done_count: q1('SELECT COUNT(*) n FROM maintenance_task_log WHERE task_id=?', t.id).n,
+    history: log.map(l => ({ id: l.id, done_on: l.done_on, by: nameOf(l.user_id), family: l.family_id ? famName(l.family_id) : null, note: l.note,
+      can_undo: !!user.is_site_admin || l.user_id === user.id })) };
+}
+const taskFields = body => { const title = String(body.title || '').trim().slice(0, 200); if (!title) fail(400, 'Give the task a name');
+  const every = Number(body.every_months); if (!TASK_EVERY[every]) fail(400, 'Choose how often it needs doing');
+  return { title, details: String(body.details || '').trim().slice(0, 3000) || null, area: AREAS.includes(body.area) ? body.area : null, every_months: every,
+    best_time: String(body.best_time || '').trim().slice(0, 80) || null }; };
+const getTask = id => q1('SELECT * FROM maintenance_tasks WHERE id=?', id) || fail(404, 'That task has been removed');
+route('POST', '/api/maintenance/tasks', ({ user, body }) => {
+  needAdmin(user); const f = taskFields(body);
+  const id = Number(run('INSERT INTO maintenance_tasks (title,details,area,every_months,best_time,created_by) VALUES (?,?,?,?,?,?)', f.title, f.details, f.area, f.every_months, f.best_time, user.id).lastInsertRowid);
+  audit(user.id, 'task.add', { id, title: f.title }); return { id };
+});
+route('PUT', '/api/maintenance/tasks/:id', ({ user, params, body }) => {
+  needAdmin(user); const t = getTask(params.id), f = taskFields({ ...t, ...body }), active = body.active === undefined ? t.active : body.active === true || body.active === 'true' || body.active === 'on' ? 1 : 0;
+  run("UPDATE maintenance_tasks SET title=?, details=?, area=?, every_months=?, best_time=?, active=?, updated_at=datetime('now') WHERE id=?", f.title, f.details, f.area, f.every_months, f.best_time, active, t.id);
+  audit(user.id, 'task.edit', { id: t.id }); return { ok: true };
+});
+// a task that has been done is switched off (its history stays); one never done is removed
+route('DELETE', '/api/maintenance/tasks/:id', ({ user, params }) => {
+  needAdmin(user); const t = getTask(params.id), used = q1('SELECT 1 FROM maintenance_task_log WHERE task_id=?', t.id);
+  if (used) run("UPDATE maintenance_tasks SET active=0, updated_at=datetime('now') WHERE id=?", t.id); else run('DELETE FROM maintenance_tasks WHERE id=?', t.id);
+  audit(user.id, used ? 'task.off' : 'task.delete', { id: t.id }); return { switched_off: !!used };
+});
+route('POST', '/api/maintenance/tasks/:id/done', ({ user, params, body }) => {
+  need(user, canDoTasks(user), 'Regular tasks are for the syndicate families'); const t = getTask(params.id); if (!t.active) fail(400, 'That task has been switched off');
+  const on = /^\d{4}-\d{2}-\d{2}$/.test(String(body.done_on || '')) ? body.done_on : today();
+  if (on > today()) fail(400, 'That date is in the future'); if (on < addDaysIso(today(), -366)) fail(400, 'Choose a date in the last year');
+  const note = String(body.note || '').trim().slice(0, 1000) || null;
+  const id = Number(run('INSERT INTO maintenance_task_log (task_id,user_id,family_id,done_on,note) VALUES (?,?,?,?,?)', t.id, user.id, isFamily(user) ? user.family_id : null, on, note).lastInsertRowid);
+  if (note) notify(siteAdmins().filter(i => i !== user.id), `${user.name}${isFamily(user) ? ` (${famName(user.family_id)})` : ''} did “${t.title}” and noted: ${note.slice(0, 200)}`, '#/maintenance/tasks');
+  audit(user.id, 'task.done', { task: t.id, on }); return { id, next_due: addMonthsIso(on, t.every_months) };
+});
+route('DELETE', '/api/maintenance/tasks/log/:id', ({ user, params }) => {
+  const l = q1('SELECT * FROM maintenance_task_log WHERE id=?', params.id) || fail(404, 'Already removed');
+  need(user, user && (user.is_site_admin || l.user_id === user.id), 'Only whoever ticked it off can undo it');
+  run('DELETE FROM maintenance_task_log WHERE id=?', l.id); audit(user.id, 'task.undo', { task: l.task_id }); return { ok: true };
 });
 route('POST', '/api/maintenance', ({ user, body }) => {
   need(user, true); const t = issueText(body), ph = issuePhoto(body.photo);

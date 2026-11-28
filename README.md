@@ -85,9 +85,9 @@ Everyone lands on the **Overview** (Home), headed *Welcome to Camas*, with who's
 | Who | Navigation | Needs your attention shows |
 |---|---|---|
 | Trusted friend | Overview, Available weeks, My bookings, Maintenance, House guide, My details | Bookings to pay for |
-| Family member | Overview; **Weeks:** Calendar, Enquiries, Bookings; **Money:** Service charge, Shares; **The house:** Upgrades, Maintenance, House guide; **Have your say:** Meetings, Questionnaire, Manifesto; Family & friends | Bookings to pay for, and first refusals to take or pass |
+| Family member | Overview; **Weeks:** Calendar, Enquiries, Bookings; **Money:** Service charge, Shares; **The house:** Upgrades, Maintenance, House guide; **Have your say:** Meetings, Questionnaire, Manifesto; Family & friends | Bookings to pay for, first refusals to take or pass, and the regular tasks due while the family is at the house |
 | Family admin | The same, plus Account (under Money) | Also: polls to vote in for the family, inaccuracies reported in the house guide, enquiries to answer (release, using it or not sure yet), friends' booking enquiries, undecided weeks in the next 16 weeks, the balance to pay, and people who haven't set up their login |
-| Site admin | A separate login with no family: Overview; **Weeks:** Calendar, Weeks, Lets; **Money:** Payments, Service charge, Shares; **The house:** Upgrades, Maintenance, House guide; **Have your say:** Meetings, Questionnaire, Manifesto; **Admin:** Families, Users, Settings, Activity | Syndicate jobs: polls past their closing date, questions waiting with no next meeting set up, maintenance issues open (urgent ones in red), house guide inaccuracies, costs waiting to be adopted, payments to confirm, families owing money, families with no admin, service charges not issued, let-income pots not shared out, next year's weeks not set up, demo logins still active, email not switched on, and storage problems. Home also shows balances, credits, the pot and recent activity. |
+| Site admin | A separate login with no family: Overview; **Weeks:** Calendar, Weeks, Lets; **Money:** Payments, Service charge, Shares; **The house:** Upgrades, Maintenance, House guide; **Have your say:** Meetings, Questionnaire, Manifesto; **Admin:** Families, Users, Settings, Activity | Syndicate jobs: regular tasks due at the house, polls past their closing date, questions waiting with no next meeting set up, maintenance issues open (urgent ones in red), house guide inaccuracies, costs waiting to be adopted, payments to confirm, families owing money, families with no admin, service charges not issued, let-income pots not shared out, next year's weeks not set up, demo logins still active, email not switched on, and storage problems. Home also shows balances, credits, the pot and recent activity. |
 
 The panels are:
 - **Coming up:** the family's next weeks, or a friend's bookings.
@@ -122,6 +122,8 @@ Opening a page you don't have access to takes you back to Home.
 | Adopt, bump or cancel a cost | — | — | — | ✓ |
 | Report a maintenance issue | ✓ (sees only their own) | ✓ | ✓ | ✓ |
 | Update a maintenance issue (In hand, Fixed, Closed) | — | — | — | ✓ |
+| See regular tasks and tick them off (and undo their own) | — | ✓ | ✓ | ✓ |
+| Add, edit and switch off regular tasks | — | — | — | ✓ |
 | Read the house guide, report an inaccuracy | ✓ | ✓ | ✓ | ✓ |
 | Add a guide | — | ✓ | ✓ | ✓ |
 | Edit a guide, mark reports as sorted | — | Their own guides | ✓ | ✓ |
@@ -257,6 +259,14 @@ Opening a page you don't have access to takes you back to Home.
 - **The reporter** can edit a report, or withdraw it, until the site admin has picked it up.
 - **Quotes.** A family admin or the site admin can **Add a quote…** (amount, who quoted, details). It becomes a cost waiting to be adopted on the Service charge page, and the report shows the quote and how it's getting on (waiting, put forward, adopted, cancelled).
 - The site admin's Overview shows how many reports are open, and how many are urgent.
+
+**Regular tasks (Maintenance)**
+- **What they are:** jobs that need doing at the house every so often (testing the alarms, cleaning filters, bleeding the radiators, clearing the gutters), done by whoever is visiting. The Maintenance page has two tabs, **Problems reported** and **Regular tasks** (`/#/maintenance/tasks`); the tab shows how many tasks are due. Families and the site admin see the tasks; trusted friends don't.
+- **Each task** has how often (every month, every 3 months, twice a year, once a year or every 2 years), an optional best time ("Autumn, before the frosts"), an area, and how to do it.
+- **Due first.** A task is **due** if it has never been done or its next date has come, **due soon** if it's due within the month, and **up to date** otherwise. The page lists them in that order, with when each was last done, by whom and their note.
+- **Ticking off.** Anyone in the families can **Mark as done…**, with the date (today by default, never in the future) and an optional note. A note is shown on the task and sent to the site admin, e.g. "Used the last spare battery". Whoever ticked a task (or the site admin) can **Undo** it from its history.
+- **The site admin** adds and edits tasks (**Add a task…**), or starts from a list of common ones (**Add common tasks…**). Removing a task that has been done switches it off and keeps its history; one never done is deleted.
+- **Reminders.** The family at the house this week (the one that can check in) sees "While you're at the house: N regular tasks are due" on its Overview. The site admin's Overview shows how many are due.
 
 **House guide**
 - **What it's for:** how things work at the house, grouped into sections (arriving and leaving, heating and hot water, water and drainage, electrics and Wi-Fi, kitchen, rubbish, safety and emergencies, outside, local area). Each guide opens in place; web addresses become links; a guide can have one photo. **Search** shows just the guides that match.

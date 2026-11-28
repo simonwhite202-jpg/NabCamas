@@ -500,3 +500,11 @@ ol.queue > li.done { opacity: .55; }
 .past-meeting > summary::-webkit-details-marker { display: none; }
 .past-meeting .minutes { padding: 0 16px 16px; max-width: 75ch; line-height: 1.55; }
 .minutes h4 { margin: 14px 0 4px; }
+
+/* maintenance: the tabs, and regular tasks */
+.mtabs { margin: 0 0 var(--sp-4); }
+.mtabs .badge { margin-left: 4px; }
+.task-due { border-left: 4px solid var(--st-pending); }
+.task .tag .ico { width: 14px; height: 14px; margin-right: 4px; vertical-align: -2px; }
+.task-log { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; }
+.task-log li { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
