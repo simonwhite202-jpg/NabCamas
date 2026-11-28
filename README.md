@@ -120,6 +120,7 @@ Opening a page you don't have access to takes you back to Home.
 | Suggest an upgrade | — | ✓ | ✓ | ✓ |
 | Add a quote to a maintenance report | — | — | ✓ | ✓ |
 | Adopt, bump or cancel a cost | — | — | — | ✓ |
+| Delete an upgrade or cost for good (not adopted: for test entries and duplicates) | — | — | — | ✓ |
 | Report a maintenance issue | ✓ (sees only their own) | ✓ | ✓ | ✓ |
 | Update a maintenance issue (In hand, Fixed, Closed) | — | — | — | ✓ |
 | See regular tasks and tick them off (and undo their own) | — | ✓ | ✓ | ✓ |

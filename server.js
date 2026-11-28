@@ -1432,7 +1432,8 @@ function costView(c, user) {
   return { id: c.id, kind: c.kind, title: c.title, amount: c.amount, quote_from: c.quote_from, details: c.details, status: c.status, year: c.year, funding: c.funding,
     label, tone, issue, family: c.family_id ? famName(c.family_id) : null, by: nameOf(c.user_id), created_at: c.created_at, history: costHistory(c),
     can_edit: admin ? waiting || live : waiting && mine, can_withdraw: waiting && mine && !admin,
-    can_adopt: admin && waiting, can_bump: admin && live, can_cancel: admin && (waiting || live), can_reinstate: admin && c.status === 'cancelled' };
+    can_adopt: admin && waiting, can_bump: admin && live, can_cancel: admin && (waiting || live), can_reinstate: admin && c.status === 'cancelled',
+    can_delete: admin && c.status !== 'adopted' };
 }
 const getCost = id => q1('SELECT * FROM costs WHERE id=?', id) || fail(404, 'That cost has been removed');
 const costText = (body, was = {}) => { const v = { title: was.title, amount: was.amount, quote_from: was.quote_from, details: was.details, ...body };
@@ -1528,6 +1529,11 @@ route('POST', '/api/admin/costs/:id/cancel', ({ user, params, body }) => {
       withHistory(c, user, `Cancelled${was ? ` (it was in ${c.funding === 'bank' ? `the bank balance in ${was}` : `the ${was} service charge`})` : ''}${note ? `. ${note}` : ''}`), c.id); });
   tellAboutCost(c, user, `“${c.title}” has been cancelled.${note ? ` ${note}` : ''}`);
   audit(user.id, 'cost.cancel', { id: c.id }); return { ok: true, reissue: c.funding === 'charge' ? reissueYears(was) : [] };
+});
+// delete for good (test entries, duplicates): anything not adopted. An adopted cost is cancelled first, which takes it out of its budget.
+route('DELETE', '/api/admin/costs/:id', ({ user, params }) => {
+  needAdmin(user); const c = getCost(params.id); if (c.status === 'adopted') fail(400, 'It’s adopted: cancel it first, then delete it');
+  run('DELETE FROM costs WHERE id=?', c.id); audit(user.id, 'cost.delete', { id: c.id, title: c.title, status: c.status }); return { ok: true };
 });
 route('POST', '/api/admin/costs/:id/reinstate', ({ user, params }) => {
   needAdmin(user); const c = getCost(params.id); if (c.status !== 'cancelled') fail(400, 'Only a cancelled cost can be reinstated');

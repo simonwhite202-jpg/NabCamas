@@ -829,7 +829,8 @@ const lastEvent = c => { const h = c.history[c.history.length - 1]; return h ? `
 function costCard(c) {
   const btns = [c.can_adopt && `<button class="btn sm green" data-adopt="${c.id}">Adopt…</button>`, c.can_bump && `<button class="btn sm" data-bump="${c.id}">Bump or cancel…</button>`,
     c.can_edit && `<button class="btn sm" data-cost-edit="${c.id}">Edit…</button>`, c.can_cancel && c.status === 'waiting' && `<button class="btn sm" data-cost-cancel="${c.id}">Cancel…</button>`,
-    c.can_reinstate && `<button class="btn sm" data-reinstate="${c.id}">Reinstate</button>`, c.can_withdraw && `<button class="btn sm danger" data-cost-withdraw="${c.id}">Withdraw</button>`].filter(Boolean).join('');
+    c.can_reinstate && `<button class="btn sm" data-reinstate="${c.id}">Reinstate</button>`, c.can_withdraw && `<button class="btn sm danger" data-cost-withdraw="${c.id}">Withdraw</button>`,
+    c.can_delete && `<button class="btn sm danger" data-cost-delete="${c.id}">Delete</button>`].filter(Boolean).join('');
   return `<div class="card flat cost" data-cost="${c.id}" style="padding:16px"><div class="row between" style="align-items:flex-start;gap:12px"><div style="min-width:0"><b>${esc(c.title)}</b> <span class="num">· ${costAmount(c)}</span>
       <div class="tiny muted" style="margin-top:2px">${costOrigin(c)} · ${asked(c.created_at)}</div></div>
       <div class="row" style="gap:6px;justify-content:flex-end;flex-wrap:wrap"><span class="tag">${COST_KIND[c.kind]}</span><span class="badge ${c.tone}">${esc(c.label)}</span></div></div>
@@ -855,6 +856,9 @@ async function offerReissue(rs) { for (const { year: y, fixed, calc } of rs || [
 // the actions on cost cards (and on a one-off line in the Service charge table): adopt, bump or cancel, edit, history
 function bindCosts(root, d, reload, more = []) {
   const find = id => d.costs.find(c => c.id == id) || more.find(c => c.id == id);
+  root.querySelectorAll('[data-cost-delete]').forEach(x => x.onclick = guard(async () => { const c = find(x.dataset.costDelete);
+    if (!confirm(`Delete “${c.title}” for good? Use this for test entries and duplicates. To turn something down but keep a record, cancel it instead.`)) return;
+    await api('/admin/costs/' + c.id, { method: 'DELETE' }); toast('Deleted'); reload(); }));
   const yearOpts = sel => d.years.map(y => `<option value="${y}" ${y === sel ? 'selected' : ''}>${y}${d.issued.includes(y) ? ' (charges issued)' : ''}</option>`).join('');
   root.querySelectorAll('[data-adopt]').forEach(x => x.onclick = () => { const c = find(x.dataset.adopt), bank = d.bank;
     const m = openModal(`<form id="adf"><h2>Adopt “${esc(c.title)}”</h2><p class="small muted" style="margin-top:0">${costOrigin(c)} · ${costAmount(c)}</p>
